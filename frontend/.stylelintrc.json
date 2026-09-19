@@ -1,0 +1,1 @@
+{"extends":"stylelint-config-standard-scss","rules":{"selector-class-pattern":null,"no-descending-specificity":null,"scss/operator-no-unspaced":null,"declaration-property-value-no-unknown":null}}

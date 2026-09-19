@@ -1,0 +1,92 @@
+x-backend: &backend
+  image: ${CRM_BACKEND_IMAGE:-reaktiv-crm-backend:local}
+  build: ./backend
+  env_file: ${CRM_ENV_FILE:-.env}
+  environment:
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-crm}
+    STORAGE_DIR: /data/files
+    CLAMAV_HOST: clamav
+    CLAMAV_PORT: 3310
+    ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
+
+services:
+  db:
+    image: postgres:17.9-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-crm}
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - '127.0.0.1:${CRM_DB_PORT:-54329}:5432'
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  clamav:
+    image: clamav/clamav:1.4
+    platform: linux/amd64
+    volumes:
+      - clamav-data:/var/lib/clamav
+    ports:
+      - '127.0.0.1:${CRM_CLAMAV_PORT:-3310}:3310'
+    healthcheck:
+      test: ['CMD', 'clamdscan', '--ping', '1']
+      interval: 10s
+      timeout: 5s
+      start_period: 180s
+      retries: 60
+    restart: unless-stopped
+  migrate:
+    <<: *backend
+    command: ['alembic', 'upgrade', 'head']
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+  api:
+    <<: *backend
+    volumes:
+      - files-data:/data/files
+    ports:
+      - '127.0.0.1:${CRM_API_PORT:-8000}:8000'
+    healthcheck:
+      test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/ready", timeout=3)']
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 12
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 120s
+  worker:
+    <<: *backend
+    command: ['python', '-m', 'app.communication.worker']
+    volumes:
+      - files-data:/data/files
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 120s
+  web:
+    image: ${CRM_WEB_IMAGE:-reaktiv-crm-web:local}
+    build: ./frontend
+    ports:
+      - '127.0.0.1:${CRM_HTTP_PORT:-8080}:8080'
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  files-data:
+  clamav-data:
