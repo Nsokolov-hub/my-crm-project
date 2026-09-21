@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-sqlite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies
+        run: pip install -r backend/requirements.lock
+      - name: Audit dependencies
+        run: pip-audit -r backend/requirements.lock || true
+      - name: Check code style
+        run: ruff check backend
+      - name: Run backend SQLite tests
+        run: PYTHONPATH=backend pytest backend/tests -m 'not postgres' -q -p no:cacheprovider --junitxml=backend-sqlite-report.xml
+      - name: Upload Test Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-sqlite-report
+          path: backend-sqlite-report.xml
+
+  backend-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: crm_test
+          POSTGRES_PASSWORD: crm_test_password
+          POSTGRES_DB: crm_test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies
+        run: pip install -r backend/requirements.lock
+      - name: Run Alembic migrations
+        env:
+          DATABASE_URL: postgresql+psycopg://crm_test:crm_test_password@localhost:5432/crm_test_db
+        run: |
+          PYTHONPATH=backend alembic -c backend/alembic.ini upgrade head
+      - name: Run backend PostgreSQL tests
+        env:
+          DATABASE_URL: postgresql+psycopg://crm_test:crm_test_password@localhost:5432/crm_test_db
+        run: |
+          # The step must fail if postgres tests are not found or skipped entirely.
+          # pytest returns 5 if no tests collected, but here we expect tests to run.
+          PYTHONPATH=backend pytest backend/tests -m 'postgres' -q -p no:cacheprovider --junitxml=backend-postgres-report.xml
+      - name: Upload Test Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-postgres-report
+          path: backend-postgres-report.xml
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pnpm
+        run: npm install -g pnpm@11.19.0
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Audit dependencies
+        working-directory: frontend
+        run: pnpm audit || true
+      - name: Check TypeScript
+        working-directory: frontend
+        run: pnpm run typecheck
+      - name: Check ESLint
+        working-directory: frontend
+        run: pnpm exec eslint src
+      - name: Check Stylelint
+        working-directory: frontend
+        run: pnpm exec stylelint "src/**/*.scss"
+      - name: Run frontend tests
+        working-directory: frontend
+        run: pnpm run test -- --reporter=junit --outputFile=frontend-report.xml
+      - name: Build frontend
+        working-directory: frontend
+        run: pnpm run build
+      - name: Upload Test Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-report
+          path: frontend/frontend-report.xml
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
