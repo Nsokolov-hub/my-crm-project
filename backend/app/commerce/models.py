@@ -8,6 +8,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -93,6 +94,7 @@ class Quote(Entity, Base):
 class CalculationProfile(Entity, Base):
     __tablename__ = "calculation_profiles"
     name: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(20), default="draft")
     previous_id: Mapped[str | None] = mapped_column(ForeignKey("calculation_profiles.id"))
     effective_from: Mapped[date] = mapped_column(Date)
     effective_until: Mapped[date | None] = mapped_column(Date)

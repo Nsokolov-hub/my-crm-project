@@ -299,28 +299,56 @@ class SettingInput(Input):
     version: int | None = None
 
 
+from app.core.settings_registry import SETTING_SCHEMAS
+from datetime import date
+from pydantic import ValidationError
+
 @router.get('/settings')
 def list_settings(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     require_permission(db, user, 'admin.settings')
-    return paginate(db, select(AppSetting).order_by(AppSetting.key), 1, 100)
-
+    # Возвращаем только актуальные настройки
+    stmt = select(AppSetting).where(AppSetting.status == 'published').order_by(AppSetting.key)
+    return paginate(db, stmt, 1, 100)
 
 @router.post('/settings')
 def set_setting(body: SettingInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
-    require_permission(db, user, 'admin.settings')
+    # Валидация по схеме из реестра
+    if body.key in SETTING_SCHEMAS:
+        schema, req_perm = SETTING_SCHEMAS[body.key]
+        require_permission(db, user, req_perm)
+        try:
+            body.value = schema.model_validate(body.value).model_dump(mode="json")
+        except ValidationError as e:
+            raise DomainError('INVALID_SETTING_VALUE', f'Ошибка валидации: {e}', 422, 'value')
+    else:
+        require_permission(db, user, 'admin.settings')
+
     if any(x in body.key.lower() for x in ('secret', 'password', 'token', 'api_key')):
         raise DomainError('SECRET_SETTING_FORBIDDEN', 'Секреты задаются через защищённую конфигурацию сервера', 422, 'key')
+    
     advisory(db, f'setting:{body.key}')
-    row = db.scalar(select(AppSetting).where(AppSetting.key == body.key).with_for_update())
+    row = db.scalar(select(AppSetting).where(AppSetting.key == body.key, AppSetting.status == 'published').with_for_update())
     before = serialize(row) if row else None
+    
     if row:
         check_version(row, body.version or 0)
-        row.value = body.value
-        row.version += 1
-        row.author_id = user.id
+        row.status = 'archived'
+        row.effective_until = date.today()
+        new_row = AppSetting(
+            key=body.key, 
+            value=body.value, 
+            author_id=user.id, 
+            previous_id=row.id,
+            version=row.version + 1,
+            status='published',
+            effective_from=date.today()
+        )
+        db.add(new_row)
+        row = new_row
     else:
-        row = AppSetting(key=body.key, value=body.value, author_id=user.id)
+        row = AppSetting(key=body.key, value=body.value, author_id=user.id, status='published', version=1, effective_from=date.today())
         db.add(row)
+        
     db.flush()
     audit(db, user, 'setting', row.id, 'updated', before, serialize(row))
     return serialize(row)
@@ -333,14 +361,103 @@ def list_audit(entity_id: str | None = None, page: int = 1, page_size: int = 25,
     if entity_id:
         stmt = stmt.where(AuditEvent.entity_id == entity_id)
     result = paginate(db, stmt.order_by(AuditEvent.created_at.desc()), page, page_size)
-    # Audit visibility never bypasses separate financial permissions.
-    from app.core.security import can
-    if not all(can(db, user, p) for p in ('finance.purchase.read', 'finance.calculations.read', 'finance.reward.read')):
-        for row in result['items']:
-            row.pop('before', None)
-            row.pop('after', None)
+    from app.core.security import can, has_request_permission
+    from app.commerce.financial import filter_calculation_snapshot, profile_view
+    
+    for row in result['items']:
+        req_id = row.get("request_id")
+        
+        can_purchase = has_request_permission(db, user, req_id, "finance.purchase.read") if req_id else can(db, user, "finance.purchase.read")
+        can_calculations = has_request_permission(db, user, req_id, "finance.calculations.read") if req_id else can(db, user, "finance.calculations.read")
+        can_reward = has_request_permission(db, user, req_id, "finance.reward.read") if req_id else can(db, user, "finance.reward.read")
+        can_profit = has_request_permission(db, user, req_id, "finance.profit.read") if req_id else can(db, user, "finance.profit.read")
+        
+        if row["entity_type"] == "calculation":
+            if row.get("before") and "snapshot" in row["before"]:
+                row["before"]["snapshot"] = filter_calculation_snapshot(db, user, req_id, row["before"]["snapshot"])
+            if row.get("after") and "snapshot" in row["after"]:
+                row["after"]["snapshot"] = filter_calculation_snapshot(db, user, req_id, row["after"]["snapshot"])
+        elif row["entity_type"] == "quote":
+            if not can_purchase:
+                if row.get("before"):
+                    for field in ("price", "sample", "revision_reason"):
+                        row["before"].pop(field, None)
+                if row.get("after"):
+                    for field in ("price", "sample", "revision_reason"):
+                        row["after"].pop(field, None)
+        elif row["entity_type"] == "calculation_profile":
+            if row.get("before") and "definition" in row["before"]:
+                definition = row["before"]["definition"]
+                if not can_reward:
+                    definition.pop("reward_enabled", None)
+                    definition.pop("reward_label", None)
+                    definition.pop("reward_basis", None)
+                if not can_profit:
+                    definition.pop("constants", None)
+                    definition.pop("formulas", None)
+            if row.get("after") and "definition" in row["after"]:
+                definition = row["after"]["definition"]
+                if not can_reward:
+                    definition.pop("reward_enabled", None)
+                    definition.pop("reward_label", None)
+                    definition.pop("reward_basis", None)
+                if not can_profit:
+                    definition.pop("constants", None)
+                    definition.pop("formulas", None)
+        else:
+            if not (can_purchase and can_calculations and can_reward and can_profit):
+                row.pop('before', None)
+                row.pop('after', None)
     return result
 
+
+class WizardInput(Input):
+    company_name: str = Field(min_length=2, max_length=100)
+    timezone: str = Field(default="Europe/Moscow")
+
+@router.post('/setup/wizard')
+def setup_wizard(body: WizardInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_permission(db, user, 'admin.settings')
+    
+    # Check if already setup
+    if db.scalar(select(AppSetting).where(AppSetting.key == 'company_name', AppSetting.status == 'published')):
+        raise DomainError('ALREADY_SETUP', 'Окружение уже настроено', 400)
+        
+    def _add_setting(key: str, val: dict):
+        db.add(AppSetting(key=key, value=val, author_id=user.id, status='published', version=1, effective_from=date.today()))
+        
+    _add_setting('company_name', {'name': body.company_name})
+    _add_setting('timezone', {'timezone': body.timezone})
+    _add_setting('call_results', {'results': ['interested', 'not_interested', 'callback', 'wrong_number', 'meeting_scheduled', 'request_received']})
+    _add_setting('loss_reasons', {'reasons': ['price_too_high', 'went_to_competitor', 'no_budget', 'timing', 'other']})
+    _add_setting('task_reminders', {'default_reminder_minutes': 15})
+    _add_setting('file_policy', {'max_size_mb': 50, 'allowed_extensions': ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'png', 'jpg', 'jpeg']})
+    _add_setting('chat_history_policy', {'retention_days': 365})
+    _add_setting('commercial_rules', {
+        'allow_partial_acceptance': False,
+        'allow_analogues': True,
+        'enforce_multiples': True,
+        'allow_multiple_suppliers': True,
+        'prepayment_exceptions': [],
+        'sale_criteria': 'invoice_paid',
+        'close_criteria': 'delivered',
+        'numbering_format': 'REQ-{YYYY}-{NNNN}'
+    })
+    
+    from app.commerce.models import CalculationProfile
+    from app.commerce.calculator import example_profile
+    db.add(CalculationProfile(
+        name="Базовый финансовый профиль",
+        definition=example_profile(),
+        reason="Автоматически создано мастером настройки",
+        author_id=user.id,
+        status="published",
+        effective_from=date.today(),
+        version=1
+    ))
+    
+    db.flush()
+    return {"status": "ok", "message": "Окружение успешно настроено"}
 
 from app.core.jobs import router as jobs_router  # noqa: E402
 

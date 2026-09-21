@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.errors import error
 from app.core.models import User
-from app.core.security import can, check_request, current_user, require_permission
+from app.core.security import can, check_request, current_user, require_permission, has_request_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.crm.models import Counterparty, RequestItem
 
@@ -100,7 +100,7 @@ def quote_view(db: Session, user: User, quote: Quote) -> dict:
     value["expired"] = quote.valid_until is None or quote.valid_until < date.today()
     item = db.get(RequestItem, quote.item_id)
     value["requires_review"] = item.revision != quote.item_revision
-    if not can(db, user, "finance.purchase.read"):
+    if not has_request_permission(db, user, quote.request_id, "finance.purchase.read"):
         for name in ("price", "sample", "revision_reason"):
             value.pop(name, None)
         # Supplier terms and source files may contain purchase prices.
@@ -248,7 +248,7 @@ def create_quote(
         after=serialize(quote),
         reason=data.revision_reason,
     )
-    return quote_view(db, user, quote)
+    return {"id": quote.id}
 
 
 @router.get("/requests/{request_id}/quotes")
@@ -273,6 +273,10 @@ def list_quotes(
 @router.post("/requests/{request_id}/quotes")
 def add_quote(request_id: str, data: QuoteIn, db: DB, user: Actor):
     check_request(db, user, request_id, "quotes.write")
+    
+    def reconstruct(result: dict) -> dict:
+        return quote_view(db, user, db.get(Quote, result["id"]))
+        
     return idem(
         db,
         user,
@@ -280,6 +284,7 @@ def add_quote(request_id: str, data: QuoteIn, db: DB, user: Actor):
         f"quote:{request_id}",
         data.model_dump(mode="json"),
         lambda: create_quote(db, user, request_id, data),
+        reconstruct,
     )
 
 
@@ -289,6 +294,10 @@ def revise_quote(quote_id: str, data: QuoteIn, db: DB, user: Actor):
     if not previous:
         error("NOT_FOUND", "Квота не найдена", 404)
     check_request(db, user, previous.request_id, "quotes.write")
+    
+    def reconstruct(result: dict) -> dict:
+        return quote_view(db, user, db.get(Quote, result["id"]))
+        
     return idem(
         db,
         user,
@@ -296,6 +305,7 @@ def revise_quote(quote_id: str, data: QuoteIn, db: DB, user: Actor):
         f"quote-revise:{quote_id}",
         data.model_dump(mode="json"),
         lambda: create_quote(db, user, previous.request_id, data, previous),
+        reconstruct,
     )
 
 

@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.core.db import utcnow
 from app.core.errors import error
-from app.core.security import check_request
+from app.core.security import check_request, has_request_permission
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
 
 from .calculator import dec
@@ -50,16 +50,17 @@ def payment_balance(db, payment: Payment) -> dict:
     }
 
 
-def payment_view(db, payment: Payment) -> dict:
+def payment_view(db, user, payment: Payment) -> dict:
+    allocations = []
+    for row in db.scalars(select(PaymentAllocation).where(PaymentAllocation.payment_id == payment.id)).all():
+        invoice = db.get(CommercialDocument, row.invoice_id)
+        if has_request_permission(db, user, invoice.request_id, "requests.read"):
+            allocations.append({**serialize(row), "remaining": str(allocation_balance(db, row))})
+            
     return {
         **serialize(payment),
         **payment_balance(db, payment),
-        "allocations": [
-            {**serialize(row), "remaining": str(allocation_balance(db, row))}
-            for row in db.scalars(
-                select(PaymentAllocation).where(PaymentAllocation.payment_id == payment.id)
-            ).all()
-        ],
+        "allocations": allocations,
         "reversals": [
             serialize(row)
             for row in db.scalars(
@@ -129,7 +130,7 @@ def list_payments(request_id: str, db: DB, user: Actor):
     payments = db.scalars(
         select(Payment).where(Payment.request_id == request_id).order_by(Payment.created_at.desc())
     ).all()
-    return {"items": [payment_view(db, row) for row in payments]}
+    return {"items": [payment_view(db, user, row) for row in payments]}
 
 
 @router.post("/requests/{request_id}/payments")
@@ -176,7 +177,7 @@ def declare_payment(request_id: str, data: PaymentIn, db: DB, user: Actor):
         db.add(obj)
         db.flush()
         audit(db, user, "payment", obj.id, "declare", after=serialize(obj))
-        return {**payment_view(db, obj), "possible_duplicate_ids": [row.id for row in candidates]}
+        return {**payment_view(db, user, obj), "possible_duplicate_ids": [row.id for row in candidates]}
 
     return idem(
         db,
@@ -220,7 +221,7 @@ def confirm_payment(payment_id: str, data: VersionCommand, db: DB, user: Actor):
             "request",
             req.id,
         )
-        return payment_view(db, current)
+        return payment_view(db, user, current)
 
     return idem(
         db,
@@ -274,7 +275,7 @@ def allocate_payment(payment_id: str, data: PaymentAllocateIn, db: DB, user: Act
             db.flush()
             audit(db, user, "payment_allocation", obj.id, "allocate", after=serialize(obj))
         current.version += 1
-        return payment_view(db, current)
+        return payment_view(db, user, current)
 
     return idem(
         db,
@@ -365,7 +366,7 @@ def reverse_payment(payment_id: str, data: PaymentReverseIn, db: DB, user: Actor
                 request_id,
             )
         audit(db, user, "payment_reversal", obj.id, data.kind, after=serialize(obj), reason=data.reason)
-        return payment_view(db, current)
+        return payment_view(db, user, current)
 
     return idem(
         db,

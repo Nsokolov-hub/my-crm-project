@@ -6,7 +6,7 @@ from typing import Any
 from argon2 import PasswordHasher
 from cryptography.fernet import Fernet
 from fastapi import Depends, Request
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -80,6 +80,10 @@ def check_request(db: Session, user: User, entity_id: str, permission: str = 're
         raise DomainError('NOT_FOUND', 'Объект не найден или недоступен', 404)
     return row
 
+def has_request_permission(db: Session, user: User, entity_id: str, permission: str) -> bool:
+    from app.crm.models import Request as CRMRequest
+    return db.scalar(select(CRMRequest).where(CRMRequest.id == entity_id, request_predicate(db, user, permission))) is not None
+
 
 def client_predicate(db: Session, user: User, permission: str = 'clients.read') -> Any:
     from app.crm.models import Counterparty
@@ -99,6 +103,39 @@ def check_client(db: Session, user: User, entity_id: str, permission: str = 'cli
         raise DomainError('NOT_FOUND', 'Объект не найден или недоступен', 404)
     return row
 
+def wave_predicate(db: Session, user: User, permission: str = 'requests.read') -> Any:
+    from app.commerce.models import Wave
+    scope = scope_for(db, user, permission)
+    if scope == 'all':
+        return True
+    if scope in ('own', 'shared'):
+        return Wave.owner_id == user.id
+    return False
+
+def task_predicate(db: Session, user: User) -> Any:
+    from app.crm.models import Task, Request as CRMRequest, Counterparty
+    from app.commerce.models import Wave
+    
+    scope = scope_for(db, user, 'tasks.read')
+    if not scope:
+        return False
+        
+    base = True if scope == 'all' else or_(Task.assignee_id == user.id, Task.author_id == user.id)
+    
+    req_pred = request_predicate(db, user)
+    cli_pred = client_predicate(db, user)
+    wav_pred = wave_predicate(db, user)
+    
+    return and_(
+        base,
+        or_(
+            Task.entity_type.is_(None),
+            and_(Task.entity_type == 'request', Task.entity_id.in_(select(CRMRequest.id).where(req_pred))),
+            and_(Task.entity_type == 'counterparty', Task.entity_id.in_(select(Counterparty.id).where(cli_pred))),
+            and_(Task.entity_type == 'wave', Task.entity_id.in_(select(Wave.id).where(wav_pred))),
+            Task.entity_type.not_in(['request', 'counterparty', 'wave'])
+        )
+    )
 
 def current_user(request: Request, db: Session = Depends(get_db)) -> User:
     token = request.cookies.get('crm_session')

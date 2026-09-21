@@ -56,7 +56,7 @@ def payment_registry(
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
-    return {"items": [payments.payment_view(db, row) for row in rows], "page": page, "page_size": page_size}
+    return {"items": [payments.payment_view(db, user, row) for row in rows], "page": page, "page_size": page_size}
 
 
 @router.get("/approvals", tags=["Реестры"])

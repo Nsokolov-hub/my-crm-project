@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from sqlalchemy import select
 
 from app.core.errors import DomainError, error
-from app.core.security import check_request, require_permission
+from app.core.security import check_request, has_request_permission, require_permission, can
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.crm.models import Request as CRMRequest
 
@@ -17,35 +17,61 @@ from .schemas import CalculationIn, ProfileIn
 router = APIRouter(tags=["Расчёты и настраиваемые профили"])
 
 
-def financial_access(db, user, request_id: str, permission: str) -> bool:
-    try:
-        check_request(db, user, request_id, permission)
-        return True
-    except DomainError:
-        return False
+def profile_view(db, user, profile: CalculationProfile) -> dict:
+    data = serialize(profile)
+    definition = data.get("definition", {})
+    if not can(db, user, "finance.reward.read"):
+        definition.pop("reward_enabled", None)
+        definition.pop("reward_label", None)
+        definition.pop("reward_basis", None)
+    if not can(db, user, "finance.profit.read"):
+        definition.pop("constants", None)
+        definition.pop("formulas", None)
+    return data
 
-
-def public_calculation(snapshot: dict) -> dict:
-    rows = [
-        {key: copy.deepcopy(value) for key, value in row.items() if key not in ("detail", "quote")}
-        for row in snapshot["lines"]
-    ]
-    return {
-        "lines": rows,
-        "totals": snapshot["totals"],
-        "currency": snapshot["currency"],
-        "algorithm_version": snapshot["algorithm_version"],
-    }
-
+def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> dict:
+    if not snapshot:
+        return snapshot
+        
+    can_purchase = has_request_permission(db, user, request_id, "finance.purchase.read")
+    can_calculations = has_request_permission(db, user, request_id, "finance.calculations.read")
+    can_reward = has_request_permission(db, user, request_id, "finance.reward.read")
+    can_profit = has_request_permission(db, user, request_id, "finance.profit.read")
+    
+    lines = snapshot.get("lines", [])
+    for line in lines:
+        if not can_purchase:
+            line.pop("quote", None)
+            
+        if "detail" in line:
+            if not can_reward:
+                line["detail"].pop("reward", None)
+                line["detail"].pop("manager_bonus", None)
+            if not can_profit:
+                line["detail"].pop("cost", None)
+                line["detail"].pop("profit", None)
+                line["detail"].pop("margin", None)
+            if not can_calculations:
+                line.pop("detail", None)
+                
+    if not can_calculations:
+        snapshot.pop("profile", None)
+        snapshot.pop("input", None)
+        snapshot.pop("expense_allocations", None)
+        snapshot.pop("rates", None)
+        
+    return snapshot
 
 def calculation_view(db, user, calculation: Calculation) -> dict:
     result = serialize(calculation)
-    if not all(
-        financial_access(db, user, calculation.request_id, code)
-        for code in ("finance.purchase.read", "finance.calculations.read", "finance.reward.read")
-    ):
-        result["snapshot"] = public_calculation(calculation.snapshot)
+    
+    snapshot = result.get("snapshot", {})
+    if snapshot:
+        result["snapshot"] = filter_calculation_snapshot(db, user, calculation.request_id, snapshot)
+        
+    if not has_request_permission(db, user, calculation.request_id, "finance.calculations.read"):
         result.pop("reason", None)
+        
     return result
 
 
@@ -56,10 +82,11 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
     profile = db.get(CalculationProfile, data.profile_id)
     if (
         not profile
+        or profile.status != "published"
         or profile.effective_from > date.today()
         or (profile.effective_until and profile.effective_until < date.today())
     ):
-        error("PROFILE_NOT_EFFECTIVE", "Выберите профиль, действующий на дату расчёта")
+        error("PROFILE_NOT_EFFECTIVE", "Выберите активный опубликованный профиль, действующий на дату расчёта")
     selections = []
     for selection in data.selections:
         quote = lock(db, Quote, selection.quote_id)
@@ -102,12 +129,23 @@ def sample_profile(db: DB, user: Actor):
     }
 
 
+    result = serialize(profile)
+    definition = result.get("definition", {})
+    if not can(db, user, "finance.reward.read"):
+        definition.pop("reward_enabled", None)
+        definition.pop("reward_label", None)
+        definition.pop("reward_basis", None)
+    if not can(db, user, "finance.profit.read"):
+        definition.pop("constants", None)
+        definition.pop("formulas", None)
+    return result
+
 @router.get("/profiles")
 def list_profiles(db: DB, user: Actor):
     require_permission(db, user, "finance.calculations.read")
     return {
         "items": [
-            serialize(profile)
+            profile_view(db, user, profile)
             for profile in db.scalars(
                 select(CalculationProfile).order_by(CalculationProfile.created_at.desc())
             ).all()
@@ -147,9 +185,37 @@ def create_profile(data: ProfileIn, db: DB, user: Actor):
             after=serialize(profile),
             reason=data.reason,
         )
-        return serialize(profile)
+        return {"id": profile.id}
 
-    return idem(db, user, data.idempotency_key, "create-profile", data.model_dump(mode="json"), operation)
+    def reconstruct(result: dict) -> dict:
+        profile = db.get(CalculationProfile, result["id"])
+        return profile_view(db, user, profile)
+
+    return idem(db, user, data.idempotency_key, "create-profile", data.model_dump(mode="json"), operation, reconstruct)
+
+
+@router.post("/profiles/{profile_id}/publish")
+def publish_profile(profile_id: str, db: DB, user: Actor):
+    require_permission(db, user, "profiles.write")
+    require_permission(db, user, "templates.write")
+    profile = db.get(CalculationProfile, profile_id)
+    if not profile:
+        error("PROFILE_NOT_FOUND", "Профиль не найден", 404)
+    if profile.status == "published":
+        error("PROFILE_ALREADY_PUBLISHED", "Профиль уже опубликован", 400)
+    
+    # Архивируем предыдущий опубликованный профиль, если это новая версия
+    if profile.previous_id:
+        prev = db.get(CalculationProfile, profile.previous_id)
+        if prev and prev.status == "published":
+            prev.status = "archived"
+            prev.effective_until = date.today()
+    
+    profile.status = "published"
+    profile.effective_from = date.today()
+    db.flush()
+    audit(db, user, "calculation_profile", profile.id, "publish", after=serialize(profile))
+    return profile_view(db, user, profile)
 
 
 @router.post("/requests/{request_id}/calculations/preview")
@@ -158,8 +224,7 @@ def preview_calculation(request_id: str, data: CalculationIn, db: DB, user: Acto
     require_permission(db, user, "finance.purchase.read", request_id)
     require_permission(db, user, "finance.calculations.read", request_id)
     result = build_calculation(db, user, request_id, data)
-    if not financial_access(db, user, request_id, "finance.reward.read"):
-        result = public_calculation(result)
+    result = filter_calculation_snapshot(db, user, request_id, result)
     return {"saved": False, "snapshot": result}
 
 
@@ -195,6 +260,10 @@ def save_calculation(request_id: str, data: CalculationIn, db: DB, user: Actor):
             after={"digest": obj.digest, "profile_id": obj.profile_id},
             reason=data.reason,
         )
+        return {"id": obj.id}
+
+    def reconstruct(result: dict) -> dict:
+        obj = db.get(Calculation, result["id"])
         return calculation_view(db, user, obj)
 
     return idem(
@@ -204,6 +273,7 @@ def save_calculation(request_id: str, data: CalculationIn, db: DB, user: Actor):
         f"save-calculation:{request_id}",
         data.model_dump(mode="json"),
         operation,
+        reconstruct,
     )
 
 

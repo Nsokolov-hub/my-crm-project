@@ -77,7 +77,7 @@ def reminder_at(due_at: datetime, policy: ReminderPolicy) -> datetime:
 
 def schedule_reminders(db: Session, now: datetime | None = None) -> int:
     now = aware(now or utcnow())
-    setting = db.scalar(select(AppSetting).where(AppSetting.key == 'task_reminders'))
+    setting = db.scalar(select(AppSetting).where(AppSetting.key == 'task_reminders', AppSetting.status == 'published'))
     try:
         policy = ReminderPolicy.model_validate(setting.value if setting else {})
     except ValidationError:

@@ -69,6 +69,15 @@ def crm(tmp_path, monkeypatch):
     app.dependency_overrides[get_db] = get_session
     try:
         with TestClient(app) as client:
+            res1 = client.post("/api/v1/auth/login", json={"email": "owner@example.com", "password": PASSWORD})
+            assert res1.status_code == 200, res1.text
+            client.headers["X-CSRF-Token"] = res1.json()["csrf_token"]
+            res2 = client.post("/api/v1/setup/wizard", json={"company_name": "Test Company"})
+            assert res2.status_code == 200, res2.text
+            client.headers.pop("X-CSRF-Token", None)
+            client.cookies.clear()
+            client.cookies.clear()
+            client.cookies.clear()
             yield {"client": client, "sessions": sessions, "admin": admin, "manager": manager}
     finally:
         app.dependency_overrides.pop(get_db, None)

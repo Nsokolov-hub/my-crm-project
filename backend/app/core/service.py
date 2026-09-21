@@ -51,7 +51,7 @@ def check_version(obj: Entity, version: int) -> None:
         raise DomainError('VERSION_CONFLICT', 'Запись изменена другим сотрудником. Обновите данные и повторите изменение.', 409, 'version')
 
 
-def idem(db: Session, user: User, key: str | None, scope: str, payload: Any, operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+def idem(db: Session, user: User, key: str | None, scope: str, payload: Any, operation: Callable[[], dict[str, Any]], reconstruct: Callable[[dict[str, Any]], dict[str, Any]] | None = None) -> dict[str, Any]:
     if not key or len(key) > 128:
         raise DomainError('IDEMPOTENCY_KEY_REQUIRED', 'Передайте ключ повторяемости операции', 422, 'Idempotency-Key')
     digest = hashlib.sha256(json.dumps(plain(payload), sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
@@ -60,10 +60,14 @@ def idem(db: Session, user: User, key: str | None, scope: str, payload: Any, ope
     if previous:
         if previous.payload_hash != digest:
             raise DomainError('IDEMPOTENCY_CONFLICT', 'Этот ключ уже использован для другой операции', 409)
+        if reconstruct:
+            return reconstruct(previous.result)
         return previous.result
     result = plain(operation())
     db.add(IdempotencyRecord(user_id=user.id, scope=scope, key=key, payload_hash=digest, result=result))
     db.flush()
+    if reconstruct:
+        return reconstruct(result)
     return result
 
 

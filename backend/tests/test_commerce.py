@@ -111,6 +111,7 @@ def commerce(tmp_path, monkeypatch):
     app.dependency_overrides[get_db] = get_session
     app.dependency_overrides[current_user] = actor
     state["client"] = TestClient(app)
+    state["client"].post("/api/v1/setup/wizard", json={"company_name": "Test Company"})
     yield state
     engine.dispose()
 
@@ -172,6 +173,7 @@ def prepare(env, with_invoice=False):
             "definition": example_profile(),
         },
     )
+    command(env, f"/profiles/{profile['id']}/publish")
     payload = {
         "request_version": 1,
         "profile_id": profile["id"],

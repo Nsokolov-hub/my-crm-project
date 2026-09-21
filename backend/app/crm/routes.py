@@ -10,6 +10,7 @@ from app.core.models import AppSetting, AuditEvent, User
 from app.core.security import (
     can,
     check_client,
+    task_predicate,
     check_request,
     client_predicate,
     current_user,
@@ -146,9 +147,7 @@ def create_contact(entity_id: str, body: ContactInput, user: User = Depends(curr
 @router.get('/tasks')
 def tasks(status: str | None = None, q: str = '', entity_id: str | None = None, overdue: bool = False, page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     require_permission(db, user, 'tasks.read')
-    stmt = select(Task)
-    if scope_for(db, user, 'tasks.read') != 'all':
-        stmt = stmt.where(or_(Task.assignee_id == user.id, Task.author_id == user.id))
+    stmt = select(Task).where(task_predicate(db, user))
     if status:
         stmt = stmt.where(Task.status == status)
     if q:
@@ -201,9 +200,10 @@ CALL_RESULTS = ['no_answer', 'callback', 'interested', 'request_received', 'reje
 
 
 def valid_call(db: Session, result: str, next_at: Any, reason: str | None) -> None:
-    setting = db.scalar(select(AppSetting).where(AppSetting.key == 'call_results'))
-    allowed = setting.value.get('values', CALL_RESULTS) if setting else CALL_RESULTS
-    if result not in allowed:
+    setting = db.scalar(select(AppSetting).where(AppSetting.key == 'call_results', AppSetting.status == 'published'))
+    if not setting:
+        raise DomainError('SETUP_REQUIRED', 'Справочник результатов звонка не настроен. Заполните его в настройках организации.', 409)
+    if result not in setting.value.get('results', []):
         raise DomainError('CALL_RESULT_INVALID', 'Выберите результат из справочника', 422, 'result')
     if result == 'callback' and not next_at:
         raise DomainError('NEXT_ACTION_REQUIRED', 'Для перезвона укажите дату следующего действия', 422, 'next_at')
@@ -308,7 +308,14 @@ def request_detail(entity_id: str, user: User = Depends(current_user), db: Sessi
     result['owner_name'] = db.get(User, row.owner_id).name
     result['members'] = list(db.scalars(select(RequestMember.user_id).where(RequestMember.request_id == row.id)))
     result['next_task'] = None
-    task = db.scalar(select(Task).where(Task.entity_type == 'request', Task.entity_id == row.id, Task.status.in_(['assigned', 'in_progress'])).order_by(Task.due_at))
+    task = db.scalar(
+        select(Task).where(
+            Task.entity_type == 'request', 
+            Task.entity_id == row.id, 
+            Task.status.in_(['assigned', 'in_progress']),
+            task_predicate(db, user)
+        ).order_by(Task.due_at)
+    )
     if task:
         result['next_task'] = serialize(task)
     return result
@@ -338,6 +345,13 @@ def edit_request(entity_id: str, body: RequestPatch, user: User = Depends(curren
         if body.commercial_stage == 'closed_lost':
             if not body.loss_reason:
                 raise DomainError('LOSS_REASON_REQUIRED', 'Укажите причину закрытия без продажи', 422, 'loss_reason')
+            
+            setting = db.scalar(select(AppSetting).where(AppSetting.key == 'loss_reasons', AppSetting.status == 'published'))
+            if not setting:
+                raise DomainError('SETUP_REQUIRED', 'Справочник причин отказа не настроен. Заполните его в настройках организации.', 409)
+            if body.loss_reason not in setting.value.get('reasons', []):
+                raise DomainError('LOSS_REASON_INVALID', 'Выберите причину из справочника', 422, 'loss_reason')
+
             from app.commerce.models import Execution
             if db.scalar(select(Execution.id).where(Execution.request_id == row.id).limit(1)):
                 raise DomainError('ACCEPTED_COMPOSITION_EXISTS', 'Сначала оформите согласованную отмену принятого состава', 409)

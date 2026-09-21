@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from typing import Any
 
 from sqlalchemy import (
@@ -6,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Date,
     ForeignKey,
     Integer,
     String,
@@ -114,6 +115,11 @@ class OutboxEvent(Entity):
 
 class AppSetting(Entity):
     __tablename__ = 'app_settings'
-    key: Mapped[str] = mapped_column(String(100), unique=True)
+    key: Mapped[str] = mapped_column(String(100), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    previous_id: Mapped[str | None] = mapped_column(ForeignKey('app_settings.id'))
+    effective_from: Mapped[date] = mapped_column(Date, default=date.today)
+    effective_until: Mapped[date | None] = mapped_column(Date)
     value: Mapped[dict[str, Any]] = mapped_column(JSON)
+    reason: Mapped[str | None] = mapped_column(Text)
     author_id: Mapped[str] = mapped_column(ForeignKey('users.id'))

@@ -24,7 +24,7 @@ from app.core.config import settings
 from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
 from app.core.models import AppSetting, Notification, OutboxEvent, User
-from app.core.security import can, current_user, request_predicate, require_permission, scope_for
+from app.core.security import can, current_user, request_predicate, require_permission, scope_for, task_predicate
 from app.core.service import advisory, audit, check_version, idem, serialize
 from app.core.service import page as paginate
 
@@ -330,12 +330,26 @@ def read_chat(entity_id: str, body: ReadInput, user: User = Depends(current_user
 def notifications(read: bool | None = None, page: int = 1, page_size: int = 25,
                   user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
     statement = select(Notification).where(Notification.user_id == user.id)
+    
+    from app.crm.models import Task
+    statement = statement.where(
+        or_(
+            Notification.entity_type != 'task',
+            Notification.entity_id.in_(select(Task.id).where(task_predicate(db, user)))
+        )
+    )
+    
     if read is not None:
         statement = statement.where(Notification.read.is_(read))
     result = paginate(db, statement.order_by(Notification.created_at.desc(), Notification.id), page, page_size)
     # Notification titles contain no financial data; access is checked again when following the object link.
     result['unread'] = db.scalar(select(func.count()).select_from(Notification).where(
-        Notification.user_id == user.id, Notification.read.is_(False))) or 0
+        Notification.user_id == user.id, Notification.read.is_(False),
+        or_(
+            Notification.entity_type != 'task',
+            Notification.entity_id.in_(select(Task.id).where(task_predicate(db, user)))
+        )
+    )) or 0
     return result
 
 
@@ -363,7 +377,7 @@ def upload_file(file: Annotated[UploadFile, File()], entity_type: Annotated[str,
     if permission := FILE_PERMISSIONS.get(classification):
         source_request_id = entity_id if entity_type == 'request' else getattr(source, 'request_id', None)
         require_permission(db, user, permission, source_request_id)
-    policy = db.scalar(select(AppSetting).where(AppSetting.key == 'file_policy'))
+    policy = db.scalar(select(AppSetting).where(AppSetting.key == 'file_policy', AppSetting.status == 'published'))
     maximum = settings.max_file_size
     if policy and isinstance(policy.value.get('max_file_size'), int):
         maximum = max(1024, min(100 * 1024 * 1024, policy.value['max_file_size']))

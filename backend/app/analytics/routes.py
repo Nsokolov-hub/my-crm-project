@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.db import get_db, utcnow
 from app.core.models import User
-from app.core.security import current_user, request_predicate, require_permission, scope_for
+from app.core.security import current_user, request_predicate, require_permission, scope_for, task_predicate
 from app.core.service import audit, plain, serialize
 from app.crm.models import Call, Counterparty, Request, Task
 
@@ -37,9 +37,8 @@ def report_data(db: Session, user: User, date_from: date | None, date_to: date |
     won_closed = db.scalar(select(func.count()).select_from(Request).where(*closed_filter, Request.sale_confirmed_at.is_not(None), Request.commercial_stage != 'closed_lost')) or 0
     sales = db.scalar(select(func.count()).select_from(Request).where(visible, Request.sale_confirmed_at >= start, Request.sale_confirmed_at < finish)) or 0
     active = db.scalar(select(func.count()).select_from(Request).where(visible, Request.closed_at.is_(None), Request.archived.is_(False))) or 0
-    task_pred = True if scope_for(db, user, 'tasks.read') == 'all' else or_(Task.assignee_id == user.id, Task.author_id == user.id)
-    tasks = db.scalars(select(Task).where(task_pred, Task.status.in_(['assigned', 'in_progress'])).order_by(Task.due_at).limit(8)).all()
-    overdue = db.scalar(select(func.count()).select_from(Task).where(task_pred, Task.status.in_(['assigned', 'in_progress']), Task.due_at < utcnow())) or 0
+    tasks = db.scalars(select(Task).where(task_predicate(db, user), Task.status.in_(['assigned', 'in_progress'])).order_by(Task.due_at).limit(8)).all()
+    overdue = db.scalar(select(func.count()).select_from(Task).where(task_predicate(db, user), Task.status.in_(['assigned', 'in_progress']), Task.due_at < utcnow())) or 0
     with_tasks = select(Task.entity_id).where(Task.entity_type == 'request', Task.status.in_(['assigned', 'in_progress']))
     missing = db.scalar(select(func.count()).select_from(Request).where(visible, Request.closed_at.is_(None), Request.id.not_in(with_tasks))) or 0
     invoice_ids = select(CommercialDocument.id).where(CommercialDocument.request_id.in_(allowed), CommercialDocument.kind == 'invoice', CommercialDocument.status != 'cancelled')
