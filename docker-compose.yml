@@ -20,6 +20,7 @@ services:
       - '127.0.0.1:${CRM_DB_PORT:-54329}:5432'
     volumes:
       - db-data:/var/lib/postgresql/data
+      - ./scripts/postgres:/docker-entrypoint-initdb.d
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
       interval: 5s
@@ -49,6 +50,12 @@ services:
     restart: 'no'
   api:
     <<: *backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://crm_api:crm_api_password@db:5432/${POSTGRES_DB:-crm}
+      STORAGE_DIR: /data/files
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
     volumes:
       - files-data:/data/files
     ports:
@@ -66,6 +73,12 @@ services:
     stop_grace_period: 120s
   worker:
     <<: *backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://crm_api:crm_api_password@db:5432/${POSTGRES_DB:-crm}
+      STORAGE_DIR: /data/files
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
     command: ['python', '-m', 'app.communication.worker']
     volumes:
       - files-data:/data/files

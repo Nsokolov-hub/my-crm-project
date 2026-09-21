@@ -14,3 +14,8 @@
 - [x] Зафиксировать команды
 - [x] Добавить реальные frontend-регрессии
 - [x] CI: сборка, линтеры, sqlite, postgres
+
+## S02: Проверить миграции, ограничения и неизменяемую историю
+- [x] Тесты триггеров на защиту данных в test_postgres_history.py
+- [x] Генерация недостающих constraints (alembic check)
+- [x] Разделение ролей PostgreSQL в init-скрипте и docker-compose
