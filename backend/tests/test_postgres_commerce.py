@@ -14,18 +14,18 @@ from threading import Barrier, Lock
 from uuid import uuid4
 
 import pytest
-from alembic import command as migrations
 from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateSchema, DropSchema
 from test_commerce import approve, command, fund, get, prepare, wave
 
+from alembic import command as migrations
 from app.commerce.models import (
     Manufacturer,
     Payment,
@@ -36,7 +36,7 @@ from app.commerce.models import (
 )
 from app.commerce.routes import router
 from app.core.config import settings
-from app.core.db import Base, get_db
+from app.core.db import get_db
 from app.core.errors import DomainError
 from app.core.models import AuditEvent, IdempotencyRecord, PermissionGrant, User
 from app.core.security import PERMISSIONS, current_user

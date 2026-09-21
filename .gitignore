@@ -17,3 +17,5 @@ test-results/
 .DS_Store
 
 .pnpm-store/
+deliverables/
+*.tsbuildinfo

@@ -25,6 +25,7 @@ input,
 select,
 textarea {
   font: inherit;
+  outline-offset: 4px;
 }
 
 button,
@@ -49,12 +50,6 @@ a {
   text-decoration: none;
 }
 
-button,
-input,
-select,
-textarea {
-  outline-offset: 4px;
-}
 
 :focus-visible {
   outline: 2px solid $purple;

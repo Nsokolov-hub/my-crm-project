@@ -1,0 +1,9 @@
+# Отчет о приемке (Acceptance Report)
+
+## S00: Принять репозиторий и зафиксировать исходное состояние
+- [x] Зафиксировать точный commit SHA в `docs/baseline.md`.
+- [x] Проверить `.gitignore` и обновить.
+- [x] Составить реестр фактических маршрутов и экранов в `docs/baseline.md`.
+- [x] Запустить доступные baseline-проверки.
+- [x] Создать `docs/acceptance-report.md`, `docs/defects.md`, `docs/progress.md`.
+- [x] Создать фикстуры пользователей.
