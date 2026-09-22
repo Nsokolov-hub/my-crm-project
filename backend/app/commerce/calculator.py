@@ -166,12 +166,16 @@ def distribute(
     if not bases or any(value < 0 for value in bases.values()) or sum(bases.values()) <= 0:
         error("ZERO_ALLOCATION_BASE", "База распределения равна нулю; выберите другой метод")
     total = sum(bases.values())
-    result = {
-        key: (amount * value / total).quantize(quantum, rounding=ROUNDING[rounding])
-        for key, value in bases.items()
-    }
-    winner = min(bases, key=lambda key: (-bases[key], key))
-    result[winner] += amount - sum(result.values())
+    result = {}
+    accum_f = Decimal("0")
+    accum_d = Decimal("0")
+    rm = ROUNDING[rounding]
+    for key, value in sorted(bases.items(), key=lambda kv: (-kv[1], kv[0])):
+        accum_f += (amount * value) / total
+        target = accum_f.quantize(quantum, rounding=rm)
+        alloc = target - accum_d
+        result[key] = alloc
+        accum_d += alloc
     if any(value < 0 for value in result.values()):
         error("ALLOCATION_PRECISION", "Точность валюты не позволяет распределить статью выбранным способом")
     return result

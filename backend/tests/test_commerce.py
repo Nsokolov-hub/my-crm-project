@@ -326,9 +326,14 @@ def test_a08_rounding_distribution_and_no_binary_float():
         dec(0.1)
     assert distribute(
         Decimal("1.00"), {"b": Decimal("1"), "a": Decimal("1"), "c": Decimal("1")}, Decimal("0.01"), "half_up"
-    ) == {"b": Decimal("0.33"), "a": Decimal("0.34"), "c": Decimal("0.33")}
+    ) == {"a": Decimal("0.33"), "b": Decimal("0.34"), "c": Decimal("0.33")}
     with pytest.raises(DomainError):
         distribute(Decimal("1"), {"a": Decimal("0")}, Decimal("0.01"), "half_up")
+
+def test_a11_partial_amount_rounding():
+    bases = {"p1": Decimal("1"), "p2": Decimal("1"), "p3": Decimal("1"), "p4": Decimal("1")}
+    result = distribute(Decimal("0.02"), bases, Decimal("0.01"), "half_up")
+    assert result == {"p1": Decimal("0.01"), "p2": Decimal("0.00"), "p3": Decimal("0.01"), "p4": Decimal("0.00")}
 
 
 def test_a03_rfq_saved_file_not_sent_and_omits_finances(commerce):
