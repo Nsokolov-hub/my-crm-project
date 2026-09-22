@@ -13,7 +13,7 @@ PROTECTED = {
     "request_item_revisions": (),
     "quotes": (),
     "calculations": (),
-    "calculation_profiles": (),
+    "calculation_profiles": ("status", "effective_until", "version"),
     "payment_allocations": (),
     "payment_reversals": (),
     "fulfillment_events": (),

@@ -148,7 +148,7 @@ def template(user: User = Depends(current_user), db: Session = Depends(get_db)) 
 
 
 @router.post("/imports/preview")
-async def preview(
+def preview(
     file: UploadFile = File(),
     mapping: str = Form("{}"),
     user: User = Depends(current_user),
@@ -158,7 +158,7 @@ async def preview(
     require_permission(db, user, "clients.write")
     if not (file.filename or "").lower().endswith(".xlsx"):
         raise DomainError("IMPORT_TYPE_INVALID", "Загрузите файл XLSX без макросов")
-    data = await file.read(settings.max_file_size + 1)
+    data = file.file.read(settings.max_file_size + 1)
     if len(data) > settings.max_file_size:
         raise DomainError("FILE_TOO_LARGE", "Размер файла превышает разрешённый предел", 413)
     try:
@@ -171,6 +171,7 @@ async def preview(
         raise DomainError(
             "MAPPING_INVALID", "Сопоставление колонок должно быть JSON-объектом", field="mapping"
         ) from None
+    
     parsed = parse_rows(data, columns)
     key = f"imports/{uuid4().hex}.xlsx"
     path = settings.storage_dir / key

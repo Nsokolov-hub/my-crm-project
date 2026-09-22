@@ -39,7 +39,8 @@ def postgres_history(monkeypatch):
     
     try:
         with engine.begin() as conn:
-            config = Config('backend/alembic.ini')
+            ini_path = 'alembic.ini' if os.path.exists('alembic.ini') else 'backend/alembic.ini'
+            config = Config(ini_path)
             config.attributes['connection'] = conn
             
             # Step 1: Migrate up to initial_schema

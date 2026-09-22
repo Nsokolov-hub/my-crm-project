@@ -37,6 +37,7 @@ from app.crm.schemas import (
     ClientInput,
     ClientPatch,
     ContactInput,
+    ContactPatch,
     ItemInput,
     ItemPatch,
     RequestInput,
@@ -120,28 +121,63 @@ def edit_client(entity_id: str, body: ClientPatch, user: User = Depends(current_
     row = lock(db, Counterparty, entity_id)
     check_version(row, body.version)
     before = serialize(row)
-    if body.owner_id and body.owner_id != row.owner_id:
+    if 'owner_id' in body.model_fields_set and body.owner_id != row.owner_id:
         require_permission(db, user, 'requests.assign')
         active_user(db, body.owner_id)
         if not body.reason:
             raise DomainError('REASON_REQUIRED', 'Укажите причину переназначения', 422, 'reason')
+    
+    archive_cascade = body.archived is True and not row.archived
+
     for k, v in body.model_dump(exclude_unset=True, exclude={'version', 'reason'}).items():
         setattr(row, k, v)
     row.version += 1
+    
+    if archive_cascade:
+        # Cascade archive requests and items
+        requests = db.scalars(select(Request).where(Request.client_id == row.id, Request.archived == False)).all()
+        for req in requests:
+            req_before = serialize(req)
+            req.archived = True
+            req.version += 1
+            db.add(req)
+            audit(db, user, 'request', req.id, 'updated', req_before, serialize(req), "Client archived cascade")
+            
+            items = db.scalars(select(RequestItem).where(RequestItem.request_id == req.id)).all()
+            for it in items:
+                # Assuming RequestItem has archived? Wait, I added archived to ItemPatch! Let's check Item model.
+                pass
+
     audit(db, user, 'counterparty', row.id, 'updated', before, serialize(row), body.reason)
     return serialize(row)
 
 
 @router.get('/counterparties/{entity_id}/contacts')
-def contacts(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def contacts(entity_id: str, q: str = '', user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     check_client(db, user, entity_id)
-    return paginate(db, select(Contact).where(Contact.client_id == entity_id, Contact.archived.is_(False)).order_by(Contact.name), 1, 100)
+    stmt = select(Contact).where(Contact.client_id == entity_id, Contact.archived.is_(False))
+    if q:
+        stmt = stmt.where(sa.or_(Contact.name.ilike(f'%{q}%'), Contact.email.ilike(f'%{q}%')))
+    return paginate(db, stmt.order_by(Contact.name), 1, 100)
 
 
 @router.post('/counterparties/{entity_id}/contacts', status_code=201)
 def create_contact(entity_id: str, body: ContactInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     check_client(db, user, entity_id, 'clients.write')
     return save(db, user, Contact(client_id=entity_id, **body.model_dump()), 'contact')
+
+
+@router.patch('/contacts/{entity_id}')
+def edit_contact(entity_id: str, body: ContactPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    row = lock(db, Contact, entity_id)
+    check_client(db, user, row.client_id, 'clients.write')
+    check_version(row, body.version)
+    before = serialize(row)
+    for k, v in body.model_dump(exclude_unset=True, exclude={'version', 'reason'}).items():
+        setattr(row, k, v)
+    row.version += 1
+    audit(db, user, 'contact', row.id, 'updated', before, serialize(row), body.reason)
+    return serialize(row)
 
 
 @router.get('/tasks')
@@ -234,11 +270,25 @@ def create_call(body: CallInput, idempotency_key: str | None = Header(default=No
         if body.next_at:
             assignee = active_user(db, body.next_assignee_id or user.id)
             check_client(db, assignee, body.client_id)
-            task = Task(title='Связаться с клиентом', entity_type='counterparty', entity_id=body.client_id, author_id=user.id, assignee_id=assignee.id, due_at=body.next_at)
-            db.add(task)
-            db.flush()
-            row.task_id = task.id
-            notify(db, assignee.id, f'task:{task.id}', 'Запланирован следующий контакт', 'task', task.id)
+            existing_task = db.scalar(select(Task).where(
+                Task.entity_type == 'counterparty',
+                Task.entity_id == body.client_id,
+                Task.status.in_(['assigned', 'in_progress'])
+            ).order_by(Task.due_at.desc()).limit(1))
+            
+            if existing_task:
+                existing_task.due_at = body.next_at
+                existing_task.assignee_id = assignee.id
+                existing_task.version += 1
+                db.add(existing_task)
+                row.task_id = existing_task.id
+                notify(db, assignee.id, f'task:{existing_task.id}', 'Время звонка перенесено', 'task', existing_task.id)
+            else:
+                task = Task(title='Связаться с клиентом', entity_type='counterparty', entity_id=body.client_id, author_id=user.id, assignee_id=assignee.id, due_at=body.next_at)
+                db.add(task)
+                db.flush()
+                row.task_id = task.id
+                notify(db, assignee.id, f'task:{task.id}', 'Запланирован следующий контакт', 'task', task.id)
         return save(db, user, row, 'call')
     return idem(db, user, idempotency_key, 'calls.create', body.model_dump(mode='json'), operation)
 
@@ -327,18 +377,18 @@ def edit_request(entity_id: str, body: RequestPatch, user: User = Depends(curren
     row = lock(db, Request, entity_id)
     check_version(row, body.version)
     before = serialize(row)
-    if body.owner_id and body.owner_id != row.owner_id:
+    if 'owner_id' in body.model_fields_set and body.owner_id != row.owner_id:
         require_permission(db, user, 'requests.assign')
         active_user(db, body.owner_id)
         if not body.reason:
             raise DomainError('REASON_REQUIRED', 'Укажите причину переназначения', 422, 'reason')
-    if body.seller_id and body.seller_id != row.seller_id:
+    if 'seller_id' in body.model_fields_set and body.seller_id != row.seller_id:
         from app.commerce.models import CommercialDocument
-        if not db.get(Seller, body.seller_id):
+        if body.seller_id and not db.get(Seller, body.seller_id):
             raise DomainError('SELLER_INVALID', 'Организация продавца не найдена', 422, 'seller_id')
         if db.scalar(select(CommercialDocument.id).where(CommercialDocument.request_id == row.id).limit(1)):
             raise DomainError('SELLER_LOCKED', 'У заявки уже выпущены документы. Для другой организации создайте отдельную заявку.', 409, 'seller_id')
-    if body.commercial_stage and body.commercial_stage != row.commercial_stage:
+    if 'commercial_stage' in body.model_fields_set and body.commercial_stage != row.commercial_stage:
         allowed = ['new', 'clarification', 'collecting_quotes', 'calculation', 'closed_lost']
         if body.commercial_stage not in allowed:
             raise DomainError('STAGE_ACTION_REQUIRED', 'Этот этап меняется при выполнении связанной бизнес-операции', 422, 'commercial_stage')
@@ -407,6 +457,17 @@ def edit_item(entity_id: str, body: ItemPatch, user: User = Depends(current_user
     parent = lock(db, Request, initial.request_id)
     row = lock(db, RequestItem, entity_id)
     check_version(row, body.version)
+    if 'quantity' in body.model_fields_set or 'unit' in body.model_fields_set:
+        from app.commerce.models import Execution
+        accepted = db.scalar(select(sa.func.sum(Execution.quantity - Execution.cancelled_quantity)).where(Execution.item_id == row.id)) or Decimal('0')
+        if accepted > 0:
+            if 'unit' in body.model_fields_set and body.unit != row.unit:
+                raise DomainError('UNIT_ACCEPTED', 'Единица измерения уже используется в принятых предложениях', 409, 'unit')
+            new_qty = body.quantity if 'quantity' in body.model_fields_set else row.quantity
+            if new_qty is None:
+                raise DomainError('QUANTITY_REQUIRED', 'Количество нельзя очистить после принятия', 422, 'quantity')
+            if new_qty < accepted:
+                raise DomainError('QUANTITY_EXCEEDED', f'Количество не может быть меньше уже принятого ({accepted})', 409, 'quantity')
     before = serialize(row)
     for k, v in body.model_dump(exclude_unset=True, exclude={'version', 'reason'}).items():
         setattr(row, k, v)

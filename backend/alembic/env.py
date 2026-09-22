@@ -5,6 +5,9 @@ import app.crm.models  # noqa: F401
 from alembic import context
 from app.core.config import settings
 from app.core.db import Base, engine
+from app.core.models import *  # noqa
+from app.crm.models import *  # noqa
+from app.commerce.models import *  # noqa
 
 config = context.config
 target_metadata = Base.metadata

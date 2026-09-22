@@ -75,7 +75,8 @@ def postgres_commerce(tmp_path, monkeypatch):
     try:
         with engine.begin() as connection:
             assert connection.scalar(text("SELECT current_schema()")) == schema
-            config = Config('backend/alembic.ini')
+            ini_path = 'alembic.ini' if os.path.exists('alembic.ini') else 'backend/alembic.ini'
+            config = Config(ini_path)
             config.attributes['connection'] = connection
             migrations.upgrade(config, 'head')
         sessions = sessionmaker(engine, expire_on_commit=False)

@@ -116,6 +116,7 @@ class RequestItem(Entity):
     purity: Mapped[str | None] = mapped_column(String(200))
     packaging: Mapped[str | None] = mapped_column(String(200))
     allow_analogue: Mapped[bool] = mapped_column(Boolean, default=False)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default='false')
     desired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     comment: Mapped[str | None] = mapped_column(Text)
     revision: Mapped[int] = mapped_column(default=1)
