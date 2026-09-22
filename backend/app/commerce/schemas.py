@@ -71,6 +71,7 @@ class QuoteIn(Command):
     requires_confirmation: bool = False
     is_analogue: bool = False
     sample: bool = False
+    attachments: list = Field(default_factory=list)
     terms: dict = Field(default_factory=dict)
     revision_reason: str = ""
 

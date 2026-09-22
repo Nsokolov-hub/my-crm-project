@@ -60,6 +60,7 @@ class SupplierRequest(Entity, Base):
     sha256: Mapped[str] = mapped_column(String(64))
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     sent_channel: Mapped[str | None] = mapped_column(String(200))
+    author_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
 
 
 class Quote(Entity, Base):
@@ -86,6 +87,7 @@ class Quote(Entity, Base):
     requires_confirmation: Mapped[bool] = mapped_column(Boolean, default=False)
     is_analogue: Mapped[bool] = mapped_column(Boolean, default=False)
     sample: Mapped[bool] = mapped_column(Boolean, default=False)
+    attachments: Mapped[list] = mapped_column(JSON, default=list)
     terms: Mapped[dict] = mapped_column(JSON, default=dict)
     revision_reason: Mapped[str] = mapped_column(Text, default="")
     author_id: Mapped[str] = mapped_column(ForeignKey("users.id"))

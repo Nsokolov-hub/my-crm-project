@@ -340,6 +340,47 @@ def test_parallel_product_imports_resolve_to_one_variant(postgres_commerce):
     assert different_package.json()["id"] != responses[0].json()["id"]
 
 
+def test_a04_parallel_quotes_resolve_to_one_product(postgres_commerce):
+    env = postgres_commerce
+    state = prepare(env)
+    body = {
+        "name": "Метанол",
+        "cas": "67-56-1",
+        "manufacturer": "Тестовый Завод",
+        "purity": "99.9%",
+        "packaging": "100 мл",
+        "unit": "ml",
+        "package_quantity": "100",
+    }
+    quote_payload = {
+        "item_id": env["item_id"],
+        "item_revision": 1,
+        "supplier_id": env["supplier_id"],
+        "price": "100",
+        "currency": "RUB",
+        "price_unit": "ml",
+        "available_quantity": "1000",
+        "requires_confirmation": True,
+        "product": body
+    }
+    
+    import uuid
+    responses = concurrent_posts(
+        env,
+        [
+            (
+                f"/requests/{env['request_id']}/quotes",
+                {**quote_payload, "idempotency_key": str(uuid.uuid4()), "product": {**body, "manufacturer": maker}}
+            )
+            for maker in ("Тестовый Завод", " тестовый завод  ", "ТЕСТОВЫЙ ЗАВОД")
+        ],
+    )
+    assert [response.status_code for response in responses] == [200] * 3, [r.json() for r in responses]
+    assert len({response.json()["product"]["id"] for response in responses}) == 1
+    assert len({response.json()["id"] for response in responses}) == 3
+    with env["sessions"]() as db:
+        assert db.scalar(select(func.count()).select_from(Product)) == 2
+
 def test_parallel_retries_return_one_payment_and_one_business_event(postgres_commerce):
     env = postgres_commerce
     state = prepare(env, with_invoice=True)

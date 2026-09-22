@@ -309,12 +309,24 @@ def revise_quote(quote_id: str, data: QuoteIn, db: DB, user: Actor):
     )
 
 
+def rfq_view(db: Session, rfq: SupplierRequest) -> dict:
+    value = serialize(rfq)
+    requires_review = False
+    for snapshot_item in rfq.snapshot.get("items", []):
+        current = db.get(RequestItem, snapshot_item["id"])
+        if current and current.revision != snapshot_item.get("revision", 0):
+            requires_review = True
+            break
+    value["requires_review"] = requires_review
+    return value
+
+
 @router.get("/requests/{request_id}/rfqs")
 def list_rfqs(request_id: str, db: DB, user: Actor):
     check_request(db, user, request_id)
     return {
         "items": [
-            serialize(row)
+            rfq_view(db, row)
             for row in db.scalars(
                 select(SupplierRequest)
                 .where(SupplierRequest.request_id == request_id)
@@ -381,6 +393,7 @@ def create_rfq(request_id: str, data: RfqIn, db: DB, user: Actor):
             snapshot=snapshot,
             file_key=metadata["key"],
             sha256=metadata["sha256"],
+            author_id=user.id,
         )
         db.add(obj)
         db.flush()
