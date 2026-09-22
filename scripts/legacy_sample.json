@@ -1,0 +1,56 @@
+{
+  "users": [
+    {
+      "legacy_id": "U100",
+      "email": "old_manager@example.com",
+      "name": "Иван Исторический"
+    }
+  ],
+  "counterparties": [
+    {
+      "legacy_id": "C200",
+      "external_id": "INN_7701234567",
+      "name": "ООО Старый Клиент"
+    }
+  ],
+  "sellers": [
+    {
+      "legacy_id": "S300",
+      "external_id": "INN_7712345678",
+      "name": "Наше Юрлицо (Архив)"
+    }
+  ],
+  "requests": [
+    {
+      "legacy_id": "R400",
+      "number": "REQ-2022-001",
+      "title": "Закупка реагентов 2022",
+      "client_legacy_id": "C200",
+      "owner_legacy_id": "U100",
+      "stage": "closed",
+      "archived": true,
+      "created_at": "2022-05-10T10:00:00Z",
+      "legacy_calculation": {
+        "totals": {
+          "RUB": 150000.50
+        },
+        "invoice": {
+          "number": "INV-2022-001",
+          "seller_legacy_id": "S300",
+          "total": 150000.50,
+          "currency": "RUB"
+        }
+      }
+    }
+  ],
+  "payments": [
+    {
+      "external_id": "PAY-2022-100",
+      "amount": 150000.50,
+      "currency": "RUB",
+      "client_legacy_id": "C200",
+      "seller_legacy_id": "S300",
+      "request_legacy_id": "R400"
+    }
+  ]
+}
