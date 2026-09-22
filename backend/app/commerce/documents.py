@@ -14,8 +14,8 @@ from app.crm.models import Request as CRMRequest
 
 from .calculator import ROUNDING, convert, dec
 from .files import document_files, read_file
-from .models import Calculation, CommercialDocument, Execution, Quote
-from .procurement import DB, Actor, check_quote
+from .models import Calculation, CommercialDocument, Execution, Quote, Product
+from .procurement import DB, Actor, check_quote, validate_quantity
 from .schemas import AcceptanceIn, InvoiceIn, ProposalIn, SentIn
 
 router = APIRouter(tags=["Коммерческие документы"])
@@ -250,6 +250,9 @@ def accept_proposal(proposal_id: str, data: AcceptanceIn, db: DB, user: Actor):
                     "ANALOGUE_APPROVAL",
                     "Для аналога нужны разрешение в потребности и основание согласия клиента",
                 )
+            product = db.get(Product, quote.product_id)
+            validate_quantity(quote, product, selected.quantity, source["unit"])
+            
             existing = db.scalars(select(Execution).where(Execution.item_id == item.id)).all()
             accepted = sum(
                 (convert(ex.quantity - ex.cancelled_quantity, ex.unit, item.unit) for ex in existing),

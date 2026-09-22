@@ -67,7 +67,7 @@ class Quote(Entity, Base):
     __tablename__ = "quotes"
     __table_args__ = (
         CheckConstraint("price >= 0 AND available_quantity > 0 AND minimum_quantity >= 0 AND multiple > 0"),
-        UniqueConstraint("previous_id"),
+        
     )
     request_id: Mapped[str] = mapped_column(ForeignKey("requests.id"), index=True)
     item_id: Mapped[str] = mapped_column(ForeignKey("request_items.id"), index=True)
