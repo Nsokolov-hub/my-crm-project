@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     clamav_host: str = '127.0.0.1'
     clamav_port: int = 3310
     require_mfa: bool = False
+    crm_api_password: str = 'crm_api_password'
+    crm_backup_password: str = 'crm_backup_password'
 
     def verify(self) -> None:
         if self.environment == 'production':

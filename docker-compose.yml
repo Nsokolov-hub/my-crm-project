@@ -16,6 +16,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-crm}
       POSTGRES_USER: ${POSTGRES_USER:-crm}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      CRM_API_PASSWORD: ${CRM_API_PASSWORD:-crm_api_password}
+      CRM_BACKUP_PASSWORD: ${CRM_BACKUP_PASSWORD:-crm_backup_password}
     ports:
       - '127.0.0.1:${CRM_DB_PORT:-54329}:5432'
     volumes:
@@ -43,7 +45,7 @@ services:
     restart: unless-stopped
   migrate:
     <<: *backend
-    command: ['alembic', 'upgrade', 'head']
+    command: ['sh', '-c', 'python -m app.core.init_roles && alembic upgrade head']
     depends_on:
       db:
         condition: service_healthy
@@ -51,7 +53,7 @@ services:
   api:
     <<: *backend
     environment:
-      DATABASE_URL: postgresql+psycopg://crm_api:crm_api_password@db:5432/${POSTGRES_DB:-crm}
+      DATABASE_URL: postgresql+psycopg://crm_api:${CRM_API_PASSWORD:-crm_api_password}@db:5432/${POSTGRES_DB:-crm}
       STORAGE_DIR: /data/files
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
@@ -74,7 +76,7 @@ services:
   worker:
     <<: *backend
     environment:
-      DATABASE_URL: postgresql+psycopg://crm_api:crm_api_password@db:5432/${POSTGRES_DB:-crm}
+      DATABASE_URL: postgresql+psycopg://crm_api:${CRM_API_PASSWORD:-crm_api_password}@db:5432/${POSTGRES_DB:-crm}
       STORAGE_DIR: /data/files
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
