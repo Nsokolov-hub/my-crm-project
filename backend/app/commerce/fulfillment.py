@@ -200,7 +200,7 @@ def cancel_execution(execution_id: str, data: ExecutionCancelIn, db: DB, user: A
                 error("HAS_INVOICE", "Нельзя отменить или пересмотреть исполнение, по которому выставлен счёт. Сначала отмените счёт.")
 
         allocs = db.scalars(
-            select(WaveAllocation).where(WaveAllocation.execution_id == current.id, WaveAllocation.active == True)
+            select(WaveAllocation).where(WaveAllocation.execution_id == current.id, WaveAllocation.active.is_(True))
         ).all()
         if allocs:
             error("HAS_ALLOCATION", "Нельзя отменить или пересмотреть исполнение, которое распределено в волны. Сначала отмените распределения.")
@@ -247,7 +247,7 @@ def revise_execution(execution_id: str, data: ExecutionReviseIn, db: DB, user: A
                 error("HAS_INVOICE", "Нельзя отменить или пересмотреть исполнение, по которому выставлен счёт. Сначала отмените счёт.")
 
         allocs = db.scalars(
-            select(WaveAllocation).where(WaveAllocation.execution_id == current.id, WaveAllocation.active == True)
+            select(WaveAllocation).where(WaveAllocation.execution_id == current.id, WaveAllocation.active.is_(True))
         ).all()
         if allocs:
             error("HAS_ALLOCATION", "Нельзя отменить или пересмотреть исполнение, которое распределено в волны. Сначала отмените распределения.")
