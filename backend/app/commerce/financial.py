@@ -1,11 +1,10 @@
-import copy
 from datetime import date
 
 from fastapi import APIRouter
 from sqlalchemy import select
 
-from app.core.errors import DomainError, error
-from app.core.security import check_request, has_request_permission, require_permission, can
+from app.core.errors import error
+from app.core.security import can, check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.crm.models import Request as CRMRequest
 
@@ -129,16 +128,6 @@ def sample_profile(db: DB, user: Actor):
     }
 
 
-    result = serialize(profile)
-    definition = result.get("definition", {})
-    if not can(db, user, "finance.reward.read"):
-        definition.pop("reward_enabled", None)
-        definition.pop("reward_label", None)
-        definition.pop("reward_basis", None)
-    if not can(db, user, "finance.profit.read"):
-        definition.pop("constants", None)
-        definition.pop("formulas", None)
-    return result
 
 @router.get("/profiles")
 def list_profiles(db: DB, user: Actor):

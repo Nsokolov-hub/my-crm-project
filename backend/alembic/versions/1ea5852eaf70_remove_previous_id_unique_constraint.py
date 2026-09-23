@@ -1,6 +1,6 @@
 """remove previous_id unique constraint"""
+
 from alembic import op
-import sqlalchemy as sa
 
 revision = '1ea5852eaf70'
 down_revision = '1d28538f5e8f'

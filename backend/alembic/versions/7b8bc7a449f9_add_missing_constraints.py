@@ -1,6 +1,6 @@
 """Add missing constraints"""
+
 from alembic import op
-import sqlalchemy as sa
 
 revision = '7b8bc7a449f9'
 down_revision = '51eab019a784'

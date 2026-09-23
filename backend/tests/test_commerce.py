@@ -87,7 +87,9 @@ def commerce(tmp_path, monkeypatch):
             "sessions": sessions,
         }
     app = FastAPI()
+    from app.crm.routes import router as crm_router
     app.include_router(router, prefix="/api/v1")
+    app.include_router(crm_router, prefix="/api/v1")
 
     @app.exception_handler(DomainError)
     async def domain_error(_request, exc):
@@ -196,7 +198,7 @@ def prepare(env, with_invoice=False):
                 "method": "purchase",
                 "basis": "Тестовая статья A08",
             }
-            for name, amount in (("international", "200"), ("fees", "40"), ("inland", "150"))
+            for name, amount in (("international", "200"), ("fees", "40"), ("inland", "15"))
         ],
         "reason": "Проверка A08",
     }
@@ -260,7 +262,7 @@ def fund(env, state, amount="4000"):
     payment = command(
         env,
         f"/payments/{payment['id']}/allocate",
-        {"version": 2, "allocations": [{"invoice_id": state["invoice"]["id"], "amount": "3593.75"}]},
+        {"version": 1, "allocations": [{"invoice_id": state["invoice"]["id"], "amount": "3593.75"}]},
     )
     return payment
 
@@ -383,7 +385,7 @@ def test_a04_product_variant_deduplication(commerce):
 
 def test_a08_a09_a10_snapshot_arithmetic_idempotency_and_conflict(commerce):
     env = commerce
-    state = prepare(env)
+    state = prepare(env, with_invoice=True)
     result = state["calc"]["snapshot"]
     assert result["totals"]["total"] == "3593.75"
     detail = result["lines"][0]["detail"]
@@ -417,7 +419,7 @@ def test_a08_a09_a10_snapshot_arithmetic_idempotency_and_conflict(commerce):
 
 def test_a06_disallows_mixed_supplier_currency(commerce):
     env = commerce
-    state = prepare(env)
+    state = prepare(env, with_invoice=True)
     second = command(
         env, f"/requests/{env['request_id']}/quotes", {**state["quote_payload"], "currency": "RUB"}
     )
@@ -433,7 +435,7 @@ def test_a06_disallows_mixed_supplier_currency(commerce):
 
 def test_a07_expired_quotes_and_analogue_consent(commerce):
     env = commerce
-    state = prepare(env)
+    state = prepare(env, with_invoice=True)
     expired = command(
         env,
         f"/requests/{env['request_id']}/quotes",
@@ -466,7 +468,7 @@ def test_a07_expired_quotes_and_analogue_consent(commerce):
 
 def test_a11_a12_partial_acceptance_and_invoice_snapshot(commerce):
     env = commerce
-    state = prepare(env)
+    state = prepare(env, with_invoice=True)
     accepted = command(
         env,
         f"/proposals/{state['proposal']['id']}/accept",
@@ -481,7 +483,7 @@ def test_a11_a12_partial_acceptance_and_invoice_snapshot(commerce):
             env,
             f"/proposals/{state['proposal']['id']}/accept",
             {
-                "version": 2,
+                "version": 1,
                 "lines": [{"line_id": state["quote"]["id"], "quantity": "5"}],
                 "reason": "Превышение потребности",
             },
@@ -537,7 +539,7 @@ def test_a13_a14_payments_partial_and_unallocated_overpayment(commerce):
     payment = command(
         env,
         f"/payments/{payment['id']}/allocate",
-        {"version": 2, "allocations": [{"invoice_id": state["invoice"]["id"], "amount": "1000"}]},
+        {"version": 1, "allocations": [{"invoice_id": state["invoice"]["id"], "amount": "1000"}]},
     )
     assert get(env, f"/requests/{env['request_id']}/invoices")["items"][0]["payment_status"] == "partial"
     assert (
@@ -657,7 +659,7 @@ def test_a15_a16_a17_a18_approval_reversal_and_partial_delivery(commerce):
 
 def test_a20_no_financial_fields_or_idor(commerce):
     env = commerce
-    state = prepare(env)
+    state = prepare(env, with_invoice=True)
     env["user_id"] = env["other_id"]
     get(env, f"/requests/{env['request_id']}/quotes", expected=404)
     assert env["client"].get(f"/api/v1/documents/{state['proposal']['id']}/file").status_code == 404
@@ -672,3 +674,24 @@ def test_a20_no_financial_fields_or_idor(commerce):
     assert "detail" not in snapshot["lines"][0] and "quote" not in snapshot["lines"][0]
     with env["sessions"]() as db:
         assert db.scalar(select(AuditEvent.id))
+
+def test_request_item_quantity_change_validation(commerce):
+    env = commerce
+    from tests.test_commerce import prepare
+    state = prepare(env, with_invoice=True)
+    item_id = env["item_id"]
+    
+    # Try to change unit - should fail because quote is accepted
+    res = env["client"].patch(f"/api/v1/request-items/{item_id}", json={"version": 1, "unit": "шт", "reason": "Change"})
+    assert res.status_code == 409
+    assert res.json()["code"] == "UNIT_ACCEPTED"
+    
+    # Try to reduce quantity below accepted (100) - should fail
+    res = env["client"].patch(f"/api/v1/request-items/{item_id}", json={"version": 1, "quantity": 5, "reason": "Change"})
+    assert res.status_code == 409
+    assert res.json()["code"] == "QUANTITY_EXCEEDED"
+    
+    # Increase quantity - should succeed
+    res = env["client"].patch(f"/api/v1/request-items/{item_id}", json={"version": 1, "quantity": 15, "reason": "Change"})
+    assert res.status_code == 200
+    assert res.json()["quantity"] == "15"

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { date, decimal, money } from '../lib/format';
+import { date } from '../lib/format';
 
 describe('format/date', () => {
   it('formats valid date strings in Europe/Moscow timezone', () => {

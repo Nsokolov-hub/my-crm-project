@@ -14,7 +14,7 @@ from app.crm.models import Request as CRMRequest
 
 from .calculator import ROUNDING, convert, dec
 from .files import document_files, read_file
-from .models import Calculation, CommercialDocument, Execution, Quote, Product
+from .models import Calculation, CommercialDocument, Execution, Product, Quote
 from .procurement import DB, Actor, check_quote, validate_quantity
 from .schemas import AcceptanceIn, InvoiceIn, ProposalIn, SentIn
 

@@ -113,8 +113,9 @@ def wave_predicate(db: Session, user: User, permission: str = 'requests.read') -
     return False
 
 def task_predicate(db: Session, user: User) -> Any:
-    from app.crm.models import Task, Request as CRMRequest, Counterparty
     from app.commerce.models import Wave
+    from app.crm.models import Counterparty, Task
+    from app.crm.models import Request as CRMRequest
     
     scope = scope_for(db, user, 'tasks.read')
     if not scope:

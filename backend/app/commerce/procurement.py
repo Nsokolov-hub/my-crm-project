@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.errors import error
 from app.core.models import User
-from app.core.security import can, check_request, current_user, require_permission, has_request_permission
+from app.core.security import check_request, current_user, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.crm.models import Counterparty, RequestItem
 

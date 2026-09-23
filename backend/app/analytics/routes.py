@@ -5,13 +5,13 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.db import get_db, utcnow
 from app.core.models import User
-from app.core.security import current_user, request_predicate, require_permission, scope_for, task_predicate
+from app.core.security import current_user, request_predicate, require_permission, task_predicate
 from app.core.service import audit, plain, serialize
 from app.crm.models import Call, Counterparty, Request, Task
 

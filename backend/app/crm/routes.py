@@ -1,5 +1,7 @@
+from decimal import Decimal
 from typing import Any
 
+import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
@@ -10,13 +12,13 @@ from app.core.models import AppSetting, AuditEvent, User
 from app.core.security import (
     can,
     check_client,
-    task_predicate,
     check_request,
     client_predicate,
     current_user,
     request_predicate,
     require_permission,
     scope_for,
+    task_predicate,
 )
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
 from app.core.service import page as paginate
@@ -135,7 +137,7 @@ def edit_client(entity_id: str, body: ClientPatch, user: User = Depends(current_
     
     if archive_cascade:
         # Cascade archive requests and items
-        requests = db.scalars(select(Request).where(Request.client_id == row.id, Request.archived == False)).all()
+        requests = db.scalars(select(Request).where(Request.client_id == row.id, Request.archived.is_(False))).all()
         for req in requests:
             req_before = serialize(req)
             req.archived = True

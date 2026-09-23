@@ -24,7 +24,14 @@ from app.core.config import settings
 from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
 from app.core.models import AppSetting, Notification, OutboxEvent, User
-from app.core.security import can, current_user, request_predicate, require_permission, scope_for, task_predicate
+from app.core.security import (
+    can,
+    current_user,
+    request_predicate,
+    require_permission,
+    scope_for,
+    task_predicate,
+)
 from app.core.service import advisory, audit, check_version, idem, serialize
 from app.core.service import page as paginate
 

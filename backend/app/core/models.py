@@ -1,12 +1,12 @@
-from datetime import datetime, date
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
-    DateTime,
     Date,
+    DateTime,
     ForeignKey,
     Integer,
     String,

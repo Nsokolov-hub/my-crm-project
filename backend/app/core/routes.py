@@ -1,12 +1,12 @@
 import secrets
 import time
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any, Literal
 
 import pyotp
 from argon2.exceptions import VerificationError
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
@@ -34,6 +34,7 @@ from app.core.security import (
 )
 from app.core.service import advisory, audit, check_version, lock, serialize
 from app.core.service import page as paginate
+from app.core.settings_registry import SETTING_SCHEMAS
 
 router = APIRouter(tags=['Доступ и настройки'])
 
@@ -299,9 +300,7 @@ class SettingInput(Input):
     version: int | None = None
 
 
-from app.core.settings_registry import SETTING_SCHEMAS
-from datetime import date
-from pydantic import ValidationError
+
 
 @router.get('/settings')
 def list_settings(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
@@ -361,8 +360,8 @@ def list_audit(entity_id: str | None = None, page: int = 1, page_size: int = 25,
     if entity_id:
         stmt = stmt.where(AuditEvent.entity_id == entity_id)
     result = paginate(db, stmt.order_by(AuditEvent.created_at.desc()), page, page_size)
+    from app.commerce.financial import filter_calculation_snapshot
     from app.core.security import can, has_request_permission
-    from app.commerce.financial import filter_calculation_snapshot, profile_view
     
     for row in result['items']:
         req_id = row.get("request_id")
@@ -444,8 +443,8 @@ def setup_wizard(body: WizardInput, user: User = Depends(current_user), db: Sess
         'numbering_format': 'REQ-{YYYY}-{NNNN}'
     })
     
-    from app.commerce.models import CalculationProfile
     from app.commerce.calculator import example_profile
+    from app.commerce.models import CalculationProfile
     db.add(CalculationProfile(
         name="Базовый финансовый профиль",
         definition=example_profile(),

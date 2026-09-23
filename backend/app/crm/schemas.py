@@ -1,7 +1,7 @@
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import EmailStr, Field, field_validator, AwareDatetime
+from pydantic import AwareDatetime, EmailStr, Field, field_validator
 
 from app.core.routes import Input
 

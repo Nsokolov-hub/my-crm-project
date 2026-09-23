@@ -1,6 +1,7 @@
 """s04_settings_versions"""
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = '4b7dc5a480e4'
 down_revision = '7b8bc7a449f9'
