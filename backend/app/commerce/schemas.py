@@ -279,3 +279,10 @@ class FulfillmentIn(Command):
     reason: str = Field(min_length=3)
     evidence_file_id: str | None = None
     correction_of: str | None = None
+
+class ExecutionCancelIn(VersionCommand):
+    reason: str = Field(..., min_length=3)
+
+class ExecutionReviseIn(VersionCommand):
+    quantity: str = Field(..., pattern=r"^\d+(\.\d{1,6})?$")
+    reason: str = Field(..., min_length=3)

@@ -66,7 +66,6 @@ class Quote(Entity, Base):
     __tablename__ = "quotes"
     __table_args__ = (
         CheckConstraint("price >= 0 AND available_quantity > 0 AND minimum_quantity >= 0 AND multiple > 0"),
-        
     )
     request_id: Mapped[str] = mapped_column(ForeignKey("requests.id"), index=True)
     item_id: Mapped[str] = mapped_column(ForeignKey("request_items.id"), index=True)
@@ -155,6 +154,8 @@ class Execution(Entity, Base):
     accepted_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     revision: Mapped[int] = mapped_column(default=1)
     financing_deficit: Mapped[bool] = mapped_column(Boolean, default=False)
+    previous_id: Mapped[str | None] = mapped_column(ForeignKey("executions.id"))
+    cancel_reason: Mapped[str | None] = mapped_column(Text)
 
 
 class Payment(Entity, Base):

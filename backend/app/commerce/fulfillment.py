@@ -20,13 +20,25 @@ from .models import (
     CommercialDocument,
     Execution,
     FulfillmentEvent,
+    Product,
     Quote,
     Wave,
     WaveAllocation,
 )
 from .payments import funding_for_execution
 from .procurement import DB, Actor, check_quote
-from .schemas import AllocateWaveIn, ApprovalIn, DecisionIn, FulfillmentIn, TransferIn, WaveIn, WaveUpdate
+from .recalculate import recalculate_funding
+from .schemas import (
+    AllocateWaveIn,
+    ApprovalIn,
+    DecisionIn,
+    ExecutionCancelIn,
+    ExecutionReviseIn,
+    FulfillmentIn,
+    TransferIn,
+    WaveIn,
+    WaveUpdate,
+)
 
 router = APIRouter(tags=["Согласования и поставки"])
 OPEN_WAVES = {"planned", "assembling"}
@@ -160,7 +172,139 @@ def approval_snapshot(db, executions: list[Execution], reviewer_id: str) -> dict
     return {"lines": lines, "reviewer_id": reviewer_id}
 
 
+
+@router.post("/executions/{execution_id}/cancel")
+def cancel_execution(execution_id: str, data: ExecutionCancelIn, db: DB, user: Actor):
+    execution = db.get(Execution, execution_id)
+    if not execution:
+        error("NOT_FOUND", "Исполнение не найдено", 404)
+    check_request(db, user, execution.request_id, "documents.write")
+
+    def operation():
+        commerce_locks(db, [execution])
+        advisory(db, f"request-commerce:{execution.request_id}")
+        current = lock(db, Execution, execution_id)
+        check_version(current, data.version)
+        if current.cancelled_quantity == current.quantity:
+            error("ALREADY_CANCELLED", "Исполнение уже отменено", 409)
+
+        invoices = db.scalars(
+            select(CommercialDocument).where(
+                CommercialDocument.request_id == current.request_id,
+                CommercialDocument.kind == "invoice",
+                CommercialDocument.status != "cancelled"
+            )
+        ).all()
+        for inv in invoices:
+            if any(line.get("execution_id") == current.id for line in inv.snapshot.get("lines", [])):
+                error("HAS_INVOICE", "Нельзя отменить или пересмотреть исполнение, по которому выставлен счёт. Сначала отмените счёт.")
+
+        allocs = db.scalars(
+            select(WaveAllocation).where(WaveAllocation.execution_id == current.id, WaveAllocation.active == True)
+        ).all()
+        if allocs:
+            error("HAS_ALLOCATION", "Нельзя отменить или пересмотреть исполнение, которое распределено в волны. Сначала отмените распределения.")
+
+            
+        current.cancelled_quantity = current.quantity
+        current.cancel_reason = data.reason
+        current.version += 1
+        db.flush()
+        
+        audit(db, user, "execution", current.id, "cancel", reason=data.reason)
+        recalculate_funding(db, current.request_id)
+        recalculate_fulfillment(db, current.request_id)
+        
+        return execution_view(db, current)
+        
+    return idem(db, user, data.idempotency_key, f"cancel-execution:{execution_id}", data.model_dump(mode="json"), operation)
+
+@router.post("/executions/{execution_id}/revise")
+def revise_execution(execution_id: str, data: ExecutionReviseIn, db: DB, user: Actor):
+    execution = db.get(Execution, execution_id)
+    if not execution:
+        error("NOT_FOUND", "Исполнение не найдено", 404)
+    check_request(db, user, execution.request_id, "documents.write")
+
+    def operation():
+        commerce_locks(db, [execution])
+        advisory(db, f"request-commerce:{execution.request_id}")
+        current = lock(db, Execution, execution_id)
+        check_version(current, data.version)
+        
+        if current.cancelled_quantity == current.quantity:
+            error("ALREADY_CANCELLED", "Нельзя редактировать отменённое исполнение")
+
+        invoices = db.scalars(
+            select(CommercialDocument).where(
+                CommercialDocument.request_id == current.request_id,
+                CommercialDocument.kind == "invoice",
+                CommercialDocument.status != "cancelled"
+            )
+        ).all()
+        for inv in invoices:
+            if any(line.get("execution_id") == current.id for line in inv.snapshot.get("lines", [])):
+                error("HAS_INVOICE", "Нельзя отменить или пересмотреть исполнение, по которому выставлен счёт. Сначала отмените счёт.")
+
+        allocs = db.scalars(
+            select(WaveAllocation).where(WaveAllocation.execution_id == current.id, WaveAllocation.active == True)
+        ).all()
+        if allocs:
+            error("HAS_ALLOCATION", "Нельзя отменить или пересмотреть исполнение, которое распределено в волны. Сначала отмените распределения.")
+
+            
+        quote = db.get(Quote, current.quote_id)
+        product = db.get(Product, quote.product_id) if quote else None
+        
+        # We need to validate new quantity
+        from .documents import partial_amount, validate_quantity
+        if quote and product:
+            validate_quantity(quote, product, data.quantity, current.unit)
+            
+        # Revise means creating a NEW execution and cancelling the old one!
+        # "новой редакции/отмены принятого исполнения с причиной, версией и ссылкой на исходный состав."
+        
+        current.cancelled_quantity = current.quantity
+        current.cancel_reason = data.reason
+        current.version += 1
+        
+        calc = db.get(Calculation, db.get(CommercialDocument, current.proposal_id).calculation_id)
+        source = next((line for line in calc.snapshot["lines"] if line["line_id"] == current.line_id), None)
+        
+        existing = db.scalars(select(Execution).where(Execution.item_id == current.item_id)).all()
+        same_line = [ex.snapshot for ex in existing if ex.proposal_id == current.proposal_id and ex.line_id == current.line_id and ex.id != current.id]
+        
+        part = partial_amount(source, data.quantity, same_line, calc.snapshot["profile"])
+        
+        new_execution = Execution(
+            request_id=current.request_id,
+            item_id=current.item_id,
+            proposal_id=current.proposal_id,
+            quote_id=current.quote_id,
+            line_id=current.line_id,
+            quantity=data.quantity,
+            unit=current.unit,
+            snapshot=part,
+            acceptance_reason=current.acceptance_reason,
+            accepted_by=current.accepted_by,
+            revision=current.revision + 1,
+            previous_id=current.id
+        )
+        db.add(new_execution)
+        db.flush()
+        
+        audit(db, user, "execution", current.id, "cancel", reason=f"Пересмотр: {data.reason}")
+        audit(db, user, "execution", new_execution.id, "revise", after=serialize(new_execution), reason=data.reason)
+        
+        recalculate_funding(db, current.request_id)
+        recalculate_fulfillment(db, current.request_id)
+        
+        return execution_view(db, new_execution)
+        
+    return idem(db, user, data.idempotency_key, f"revise-execution:{execution_id}", data.model_dump(mode="json"), operation)
+
 @router.get("/requests/{request_id}/executions")
+
 def list_executions(request_id: str, db: DB, user: Actor):
     check_request(db, user, request_id)
     return {
