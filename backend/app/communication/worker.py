@@ -6,6 +6,7 @@ rolls the transaction back; PostgreSQL SKIP LOCKED permits multiple worker proce
 import argparse
 import logging
 import re
+import signal
 import time
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -237,8 +238,19 @@ def main() -> None:
     parser.add_argument('--interval', type=float, default=2.0)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
+
+    running = True
+
+    def _sig_handler(signum, _frame):
+        nonlocal running
+        logger.info('Received signal %s, initiating graceful worker shutdown...', signum)
+        running = False
+
+    signal.signal(signal.SIGTERM, _sig_handler)
+    signal.signal(signal.SIGINT, _sig_handler)
+
     last_reminder = 0.0
-    while True:
+    while running:
         try:
             remind = time.monotonic() - last_reminder >= 60
             counts = run_once(reminders=remind)
@@ -252,7 +264,12 @@ def main() -> None:
                 raise
         if args.once:
             break
-        time.sleep(max(0.2, min(args.interval, 30)))
+
+        sleep_until = time.monotonic() + max(0.2, min(args.interval, 30))
+        while running and time.monotonic() < sleep_until:
+            time.sleep(0.1)
+
+    logger.info('Worker loop finished cleanly.')
 
 
 if __name__ == '__main__':
