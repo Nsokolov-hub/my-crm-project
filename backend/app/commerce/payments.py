@@ -29,7 +29,7 @@ def allocation_balance(db, allocation: PaymentAllocation) -> Decimal:
     return allocation.amount - reversed_amount
 
 
-def payment_balance(db, payment: Payment) -> dict:
+def payment_balance(db, payment: Payment, user: Actor = None) -> dict:
     allocations = db.scalars(
         select(PaymentAllocation).where(PaymentAllocation.payment_id == payment.id)
     ).all()
@@ -39,34 +39,50 @@ def payment_balance(db, payment: Payment) -> dict:
         )
     ).all()
     refunded = sum((row.amount for row in returns), Decimal("0"))
-    allocated = sum((allocation_balance(db, row) for row in allocations), Decimal("0"))
+
+    total_allocated = sum((allocation_balance(db, row) for row in allocations), Decimal("0"))
+    unallocated = (
+        payment.amount - refunded - total_allocated if payment.status == "confirmed" else Decimal("0")
+    )
+
+    if user:
+        visible_allocated = Decimal("0")
+        for row in allocations:
+            invoice = db.get(CommercialDocument, row.invoice_id)
+            if has_request_permission(db, user, invoice.request_id, "requests.read"):
+                visible_allocated += allocation_balance(db, row)
+        allocated = visible_allocated
+    else:
+        allocated = total_allocated
+
     return {
         "confirmed_amount": str(payment.amount - refunded if payment.status == "confirmed" else Decimal("0")),
         "allocated": str(allocated),
         "refunded": str(refunded),
-        "unallocated": str(
-            payment.amount - refunded - allocated if payment.status == "confirmed" else Decimal("0")
-        ),
+        "unallocated": str(unallocated),
     }
 
 
 def payment_view(db, user, payment: Payment) -> dict:
     allocations = []
+    visible_allocations = set()
     for row in db.scalars(select(PaymentAllocation).where(PaymentAllocation.payment_id == payment.id)).all():
         invoice = db.get(CommercialDocument, row.invoice_id)
         if has_request_permission(db, user, invoice.request_id, "requests.read"):
             allocations.append({**serialize(row), "remaining": str(allocation_balance(db, row))})
-            
+            visible_allocations.add(row.id)
+
+    reversals = []
+    for row in db.scalars(select(PaymentReversal).where(PaymentReversal.payment_id == payment.id)).all():
+        if row.allocation_id and row.allocation_id not in visible_allocations:
+            continue
+        reversals.append(serialize(row))
+
     return {
         **serialize(payment),
-        **payment_balance(db, payment),
+        **payment_balance(db, payment, user),
         "allocations": allocations,
-        "reversals": [
-            serialize(row)
-            for row in db.scalars(
-                select(PaymentReversal).where(PaymentReversal.payment_id == payment.id)
-            ).all()
-        ],
+        "reversals": reversals,
     }
 
 

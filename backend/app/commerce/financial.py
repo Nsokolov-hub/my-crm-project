@@ -28,20 +28,21 @@ def profile_view(db, user, profile: CalculationProfile) -> dict:
         definition.pop("formulas", None)
     return data
 
+
 def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> dict:
     if not snapshot:
         return snapshot
-        
+
     can_purchase = has_request_permission(db, user, request_id, "finance.purchase.read")
     can_calculations = has_request_permission(db, user, request_id, "finance.calculations.read")
     can_reward = has_request_permission(db, user, request_id, "finance.reward.read")
     can_profit = has_request_permission(db, user, request_id, "finance.profit.read")
-    
+
     lines = snapshot.get("lines", [])
     for line in lines:
         if not can_purchase:
             line.pop("quote", None)
-            
+
         if "detail" in line:
             if not can_reward:
                 line["detail"].pop("reward", None)
@@ -52,25 +53,26 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
                 line["detail"].pop("margin", None)
             if not can_calculations:
                 line.pop("detail", None)
-                
+
     if not can_calculations:
         snapshot.pop("profile", None)
         snapshot.pop("input", None)
         snapshot.pop("expense_allocations", None)
         snapshot.pop("rates", None)
-        
+
     return snapshot
+
 
 def calculation_view(db, user, calculation: Calculation) -> dict:
     result = serialize(calculation)
-    
+
     snapshot = result.get("snapshot", {})
     if snapshot:
         result["snapshot"] = filter_calculation_snapshot(db, user, calculation.request_id, snapshot)
-        
+
     if not has_request_permission(db, user, calculation.request_id, "finance.calculations.read"):
         result.pop("reason", None)
-        
+
     return result
 
 
@@ -85,7 +87,9 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         or profile.effective_from > date.today()
         or (profile.effective_until and profile.effective_until < date.today())
     ):
-        error("PROFILE_NOT_EFFECTIVE", "Выберите активный опубликованный профиль, действующий на дату расчёта")
+        error(
+            "PROFILE_NOT_EFFECTIVE", "Выберите активный опубликованный профиль, действующий на дату расчёта"
+        )
     selections = []
     for selection in data.selections:
         quote = lock(db, Quote, selection.quote_id)
@@ -126,7 +130,6 @@ def sample_profile(db: DB, user: Actor):
         "notice": "Условный арифметический пример A08. Пользователь задаёт собственные действующие формулы и ставки.",
         "definition": example_profile(),
     }
-
 
 
 @router.get("/profiles")
@@ -180,7 +183,9 @@ def create_profile(data: ProfileIn, db: DB, user: Actor):
         profile = db.get(CalculationProfile, result["id"])
         return profile_view(db, user, profile)
 
-    return idem(db, user, data.idempotency_key, "create-profile", data.model_dump(mode="json"), operation, reconstruct)
+    return idem(
+        db, user, data.idempotency_key, "create-profile", data.model_dump(mode="json"), operation, reconstruct
+    )
 
 
 @router.post("/profiles/{profile_id}/publish")
@@ -192,14 +197,14 @@ def publish_profile(profile_id: str, db: DB, user: Actor):
         error("PROFILE_NOT_FOUND", "Профиль не найден", 404)
     if profile.status == "published":
         error("PROFILE_ALREADY_PUBLISHED", "Профиль уже опубликован", 400)
-    
+
     # Архивируем предыдущий опубликованный профиль, если это новая версия
     if profile.previous_id:
         prev = db.get(CalculationProfile, profile.previous_id)
         if prev and prev.status == "published":
             prev.status = "archived"
             prev.effective_until = date.today()
-    
+
     profile.status = "published"
     profile.effective_from = date.today()
     db.flush()

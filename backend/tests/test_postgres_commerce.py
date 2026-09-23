@@ -342,7 +342,7 @@ def test_parallel_product_imports_resolve_to_one_variant(postgres_commerce):
 
 def test_a04_parallel_quotes_resolve_to_one_product(postgres_commerce):
     env = postgres_commerce
-    prepare(env)
+    state = prepare(env)
     body = {
         "name": "Метанол",
         "cas": "67-56-1",
@@ -415,3 +415,11 @@ def test_parallel_reuse_of_key_with_different_amount_conflicts(postgres_commerce
     path = f"/requests/{env['request_id']}/payments"
     body = payment_payload(state["invoice"]["id"])
     responses = concurrent_posts(env, [(path, body), (path, {**body, "amount": "2000"})])
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    assert next(response.json() for response in responses if response.status_code == 409)["code"] == (
+        "IDEMPOTENCY_CONFLICT"
+    )
+    winner = next(response.json() for response in responses if response.status_code == 200)
+    with env["sessions"]() as db:
+        assert db.scalar(select(func.count()).select_from(Payment)) == 1
+        assert db.get(Payment, winner["id"]).amount == Decimal(winner["amount"])
