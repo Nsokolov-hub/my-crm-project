@@ -152,7 +152,7 @@ export function Layout() {
               aria-label="Уведомления"
             >
               <Bell size={20} />
-              {Boolean(notifications.data?.total) && <i />}
+              {Boolean(notifications.data?.unread) && <i />}
             </NavLink>
             <span className="topbar-divider" />
             <div className="user-info">

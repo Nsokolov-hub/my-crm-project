@@ -93,7 +93,9 @@ export function FilesPanel({
         >
           <option value="general">Общий для объекта</option>
           <option value="purchase">Закупочные данные</option>
-          <option value="financial">Финансовые данные</option>
+          <option value="calculation">Расчёт</option>
+          <option value="reward">Вознаграждение</option>
+          <option value="profit">Прибыль</option>
         </select>
       </div>
       {files.loading ? (

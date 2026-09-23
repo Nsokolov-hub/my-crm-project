@@ -1,5 +1,7 @@
-from pydantic import BaseModel, Field
 from dataclasses import dataclass
+
+from pydantic import BaseModel, Field
+
 
 @dataclass
 class SettingMeta:

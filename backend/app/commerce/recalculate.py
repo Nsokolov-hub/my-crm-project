@@ -1,9 +1,9 @@
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.commerce.models import Approval, Execution, Wave, WaveAllocation
-from sqlalchemy.orm import Session
 from app.crm.models import Request as CRMRequest
 
 

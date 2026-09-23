@@ -115,6 +115,7 @@ def test_a01_import_90_new_5_updates_5_errors_repeat_and_history(crm):
             db.add(
                 Call(
                     client_id=row.id,
+                    author_id=crm["admin"].id,
                     result="no_answer",
                     occurred_at=datetime.now(timezone.utc),
                 )
@@ -123,7 +124,7 @@ def test_a01_import_90_new_5_updates_5_errors_repeat_and_history(crm):
     for i in range(100):
         values = {
             "external_id": f"new-{i}" if i < 90 else f"existing-{i - 90}",
-            "description": f"Клиент {i}",
+            "name": f"Клиент {i}",
             "contact": f"Контакт {i}",
             "email": f" Person{i}@Example.COM " if i < 95 else "не-почта",
             "phone": "+7 (900) 123-45-67",
@@ -175,7 +176,7 @@ def test_a01_import_90_new_5_updates_5_errors_repeat_and_history(crm):
 
 def test_import_conflict_resolution_pages_and_ownership(crm):
     login(crm)
-    client = post(crm, "/counterparties", {"description": "Существующий", "email": "shared@example.com"})
+    client = post(crm, "/counterparties", {"name": "Существующий", "email": "shared@example.com"})
     data = xlsx(
         [["Организация", "Электронная почта"], *[[f"Строка {i}", "shared@example.com"] for i in range(101)]]
     )
@@ -229,7 +230,7 @@ def test_import_errors_before_writes_formula_lengths_and_numeric_identifiers(crm
 
 def test_a02_callback_then_request_preserves_client_and_history(crm):
     login(crm, "manager@example.com")
-    client = post(crm, "/counterparties", {"description": "Клиент обзвона"})
+    client = post(crm, "/counterparties", {"name": "Клиент обзвона"})
     next_at = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
     post(crm, "/calls", {"client_id": client["id"], "result": "callback"}, 422)
     key = str(uuid4())
@@ -259,15 +260,15 @@ def test_auth_csrf_live_revocation_idor_and_version_conflict(crm):
     with crm["sessions"]() as db:
         assert db.scalar(select(AuthSession)).token_hash != token
     rejected = crm["client"].post(
-        "/api/v1/counterparties", json={"description": "Rejected"}, headers={"X-CSRF-Token": "wrong"}
+        "/api/v1/counterparties", json={"name": "Rejected"}, headers={"X-CSRF-Token": "wrong"}
     )
     assert rejected.status_code == 403
     assert rejected.json()["code"] == "CSRF_INVALID"
     denied_origin = crm["client"].post(
-        "/api/v1/counterparties", json={"description": "Rejected"}, headers={"Origin": "https://untrusted.example"}
+        "/api/v1/counterparties", json={"name": "Rejected"}, headers={"Origin": "https://untrusted.example"}
     )
     assert denied_origin.status_code == 403
-    client = post(crm, "/counterparties", {"description": "Приватный клиент"})
+    client = post(crm, "/counterparties", {"name": "Приватный клиент"})
     request = post(crm, "/requests", {"client_id": client["id"], "title": "Приватная заявка"})
     update = crm["client"].patch(
         f"/api/v1/requests/{request['id']}", json={"version": 1, "title": "Первая правка"}
@@ -308,9 +309,9 @@ def test_mfa_enrollment_gate_and_login_replay(crm, monkeypatch):
 
 def test_contact_search_with_q(crm):
     login(crm)
-    client = post(crm, "/counterparties", {"description": "ООО Ромашка"})
-    post(crm, "/counterparties/" + client["id"] + "/contacts", {"description": "Иван Иванов", "email": "ivan@example.com"})
-    post(crm, "/counterparties/" + client["id"] + "/contacts", {"description": "Петр Петров", "email": "petr@example.com"})
+    client = post(crm, "/counterparties", {"name": "ООО Ромашка"})
+    post(crm, "/counterparties/" + client["id"] + "/contacts", {"name": "Иван Иванов", "email": "ivan@example.com"})
+    post(crm, "/counterparties/" + client["id"] + "/contacts", {"name": "Петр Петров", "email": "petr@example.com"})
     
     # Search by name
     res = crm["client"].get(f"/api/v1/counterparties/{client['id']}/contacts?q=Иван")

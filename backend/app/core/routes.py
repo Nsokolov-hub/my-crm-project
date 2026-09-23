@@ -35,7 +35,6 @@ from app.core.security import (
 from app.core.service import advisory, audit, check_version, lock, serialize
 from app.core.service import page as paginate
 from app.core.settings_registry import SETTING_META
-from app.core.settings_meta import router as meta_router
 
 router = APIRouter(tags=["Доступ и настройки"])
 
@@ -429,6 +428,19 @@ class SettingInput(Input):
     key: str = Field(min_length=1, max_length=100)
     value: dict[str, Any]
     version: int | None = None
+
+
+@router.get("/settings/meta")
+def get_settings_meta() -> dict[str, Any]:
+    res = {}
+    for key, meta in SETTING_META.items():
+        res[key] = {
+            "consumer": meta.consumer,
+            "effect": meta.effect,
+            "is_supported": meta.is_supported,
+            "schema": meta.schema.model_json_schema(),
+        }
+    return res
 
 
 @router.get("/settings")
