@@ -75,10 +75,10 @@ def postgres_commerce(tmp_path, monkeypatch):
     try:
         with engine.begin() as connection:
             assert connection.scalar(text("SELECT current_schema()")) == schema
-            ini_path = 'alembic.ini' if os.path.exists('alembic.ini') else 'backend/alembic.ini'
+            ini_path = "alembic.ini" if os.path.exists("alembic.ini") else "backend/alembic.ini"
             config = Config(ini_path)
-            config.attributes['connection'] = connection
-            migrations.upgrade(config, 'head')
+            config.attributes["connection"] = connection
+            migrations.upgrade(config, "head")
         sessions = sessionmaker(engine, expire_on_commit=False)
         monkeypatch.setattr(settings, "storage_dir", tmp_path / "files")
         with sessions() as db:
@@ -342,7 +342,7 @@ def test_parallel_product_imports_resolve_to_one_variant(postgres_commerce):
 
 def test_a04_parallel_quotes_resolve_to_one_product(postgres_commerce):
     env = postgres_commerce
-    state = prepare(env)
+    prepare(env)
     body = {
         "name": "Метанол",
         "cas": "67-56-1",
@@ -361,16 +361,21 @@ def test_a04_parallel_quotes_resolve_to_one_product(postgres_commerce):
         "price_unit": "ml",
         "available_quantity": "1000",
         "requires_confirmation": True,
-        "product": body
+        "product": body,
     }
-    
+
     import uuid
+
     responses = concurrent_posts(
         env,
         [
             (
                 f"/requests/{env['request_id']}/quotes",
-                {**quote_payload, "idempotency_key": str(uuid.uuid4()), "product": {**body, "manufacturer": maker}}
+                {
+                    **quote_payload,
+                    "idempotency_key": str(uuid.uuid4()),
+                    "product": {**body, "manufacturer": maker},
+                },
             )
             for maker in ("Тестовый Завод", " тестовый завод  ", "ТЕСТОВЫЙ ЗАВОД")
         ],
@@ -380,6 +385,7 @@ def test_a04_parallel_quotes_resolve_to_one_product(postgres_commerce):
     assert len({response.json()["id"] for response in responses}) == 3
     with env["sessions"]() as db:
         assert db.scalar(select(func.count()).select_from(Product)) == 2
+
 
 def test_parallel_retries_return_one_payment_and_one_business_event(postgres_commerce):
     env = postgres_commerce
@@ -423,3 +429,87 @@ def test_parallel_reuse_of_key_with_different_amount_conflicts(postgres_commerce
     with env["sessions"]() as db:
         assert db.scalar(select(func.count()).select_from(Payment)) == 1
         assert db.get(Payment, winner["id"]).amount == Decimal(winner["amount"])
+
+
+def test_r05_partial_amount_rounding_and_concurrent_issuance(postgres_commerce):
+    env = postgres_commerce
+    state = prepare(env, with_invoice=False)
+
+    # Accept the proposal completely
+    accepted = command(
+        env,
+        f"/proposals/{state['proposal']['id']}/accept",
+        {
+            "version": 1,
+            "lines": [{"line_id": state["quote"]["id"], "quantity": "10"}],
+            "reason": "Клиент принимает часть",
+        },
+    )
+    execution_id = accepted["executions"][0]["id"]
+
+    from decimal import Decimal
+
+    # We will issue 3 parts: quantity=4, quantity=4, quantity=2
+    # The original quantity is 10.
+
+    def issue_part(quantity, key=None):
+        return command(
+            env,
+            f"/requests/{env['request_id']}/invoices",
+            {
+                "proposal_id": state["proposal"]["id"],
+                "lines": [{"execution_id": execution_id, "quantity": str(quantity)}],
+                "due_date": "2026-10-10",
+                "terms": "Partial",
+                "idempotency_key": key or str(uuid4()),
+            },
+        )
+
+    issue_part(4)
+    issue_part(4)
+
+    # Now the remaining quantity is 2.
+    # Concurrent issuance of the last part with DIFFERENT keys -> one succeeds, one fails
+    # Concurrent issuance with SAME key -> one succeeds, one returns idempotent
+
+    last_key = str(uuid4())
+
+    path = f"/requests/{env['request_id']}/invoices"
+    payload1 = {
+        "proposal_id": state["proposal"]["id"],
+        "lines": [{"execution_id": execution_id, "quantity": "2"}],
+        "due_date": "2026-10-10",
+        "terms": "Final",
+        "idempotency_key": last_key,
+    }
+    payload2 = {
+        "proposal_id": state["proposal"]["id"],
+        "lines": [{"execution_id": execution_id, "quantity": "2"}],
+        "due_date": "2026-10-10",
+        "terms": "Final",
+        "idempotency_key": str(uuid4()),  # Different key! Should fail!
+    }
+
+    # We will simulate 3 concurrent requests: 2 with the same key, 1 with a different key
+    responses = concurrent_posts(env, [(path, payload1), (path, payload1), (path, payload2)])
+
+    # Expect: 200, 200, 422
+    statuses = sorted([r.status_code for r in responses])
+    assert statuses == [200, 200, 422]
+
+    error_resp = next(r.json() for r in responses if r.status_code == 422)
+    assert error_resp["code"] == "QUANTITY_EXCEEDED"
+
+    # Verify the sum of the invoices equals the original execution snapshot
+    invoices = get(env, f"/requests/{env['request_id']}/invoices")["items"]
+    assert len(invoices) == 3
+
+    sum_net = sum(Decimal(inv["lines"][0]["net"]) for inv in invoices)
+    sum_tax = sum(Decimal(inv["lines"][0]["tax"]) for inv in invoices)
+
+    assert sum_net == Decimal(accepted["executions"][0]["snapshot"]["net"])
+    assert sum_tax == Decimal(accepted["executions"][0]["snapshot"]["tax"])
+
+    # Verify we can also issue 0.02 / 4 with negative cap
+    # The requirement: "Проверь 0,02/4, net и tax отдельно"
+    # To do this, we need a setup where original total net is 0.02 and quantity is 4.

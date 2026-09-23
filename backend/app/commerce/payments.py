@@ -3,6 +3,7 @@ from decimal import Decimal
 from fastapi import APIRouter
 from sqlalchemy import select
 
+from app.commerce.recalculate import recalculate_funding
 from app.core.db import utcnow
 from app.core.errors import error
 from app.core.security import check_request, has_request_permission
@@ -221,6 +222,7 @@ def confirm_payment(payment_id: str, data: VersionCommand, db: DB, user: Actor):
         current.status = "confirmed"
         current.confirmed_by, current.confirmed_at = user.id, utcnow()
         current.version += 1
+        recalculate_funding(db, req.id)
         audit(
             db,
             user,
@@ -291,6 +293,13 @@ def allocate_payment(payment_id: str, data: PaymentAllocateIn, db: DB, user: Act
             db.flush()
             audit(db, user, "payment_allocation", obj.id, "allocate", after=serialize(obj))
         current.version += 1
+        affected_requests = {payment.request_id}
+        for row in data.allocations:
+            invoice = db.get(CommercialDocument, row.invoice_id)
+            if invoice:
+                affected_requests.add(invoice.request_id)
+        for rid in affected_requests:
+            recalculate_funding(db, rid)
         return payment_view(db, user, current)
 
     return idem(

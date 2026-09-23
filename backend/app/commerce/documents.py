@@ -58,14 +58,22 @@ def partial_amount(original: dict, quantity: Decimal, previous: list[dict], prof
     result = copy.deepcopy(original)
     result["quantity"] = str(quantity)
     for column in ("net", "tax"):
+        remaining = dec(original[column]) - sum((dec(row[column]) for row in previous), Decimal("0"))
         if previous_quantity + quantity == original_quantity:
-            amount = dec(original[column]) - sum((dec(row[column]) for row in previous), Decimal("0"))
+            amount = remaining
         else:
             amount = (dec(original[column]) * quantity / original_quantity).quantize(
                 quantum, rounding=ROUNDING[profile["rounding"]]
             )
+            # Cannot issue more than remaining
+            amount = min(amount, remaining)
+        # Cannot issue negative amounts
+        amount = max(amount, Decimal("0"))
         result[column] = str(amount)
+
     result["total"] = str(dec(result["net"]) + dec(result["tax"]))
+    if dec(result["total"]) < 0:
+        error("NEGATIVE_TOTAL", "Сумма не может быть отрицательной")
     return result
 
 
@@ -252,7 +260,7 @@ def accept_proposal(proposal_id: str, data: AcceptanceIn, db: DB, user: Actor):
                 )
             product = db.get(Product, quote.product_id)
             validate_quantity(quote, product, selected.quantity, source["unit"])
-            
+
             existing = db.scalars(select(Execution).where(Execution.item_id == item.id)).all()
             accepted = sum(
                 (convert(ex.quantity - ex.cancelled_quantity, ex.unit, item.unit) for ex in existing),

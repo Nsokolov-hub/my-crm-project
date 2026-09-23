@@ -4,6 +4,7 @@ from decimal import Decimal
 from fastapi import APIRouter
 from sqlalchemy import select
 
+from app.commerce.recalculate import recalculate_fulfillment
 from app.core.db import utcnow
 from app.core.errors import error
 from app.core.models import User
@@ -294,8 +295,8 @@ def decide_approval(approval_id: str, data: DecisionIn, db: DB, user: Actor):
                     "sale_confirmed",
                     after={"sale_confirmed_at": req.sale_confirmed_at},
                 )
-            req.commercial_stage = "sale_confirmed"
             req.version += 1
+            recalculate_fulfillment(db, req.id)
         approval.status, approval.reason = data.decision, data.reason
         approval.decided_by, approval.decided_at = user.id, utcnow()
         approval.version += 1
@@ -613,6 +614,7 @@ def record_event(allocation_id: str, data: FulfillmentIn, db: DB, user: Actor):
         db.add(obj)
         db.flush()
         audit(db, user, "fulfillment_event", obj.id, data.kind, after=serialize(obj), reason=data.reason)
+        recalculate_fulfillment(db, execution.request_id)
         return allocation_view(db, allocation)
 
     return idem(
