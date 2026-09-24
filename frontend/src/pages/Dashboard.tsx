@@ -47,8 +47,20 @@ export type DashboardData = {
 export function Dashboard() {
   const auth = useAuth();
   const navigate = useNavigate();
-  const dashboard = useApi<DashboardData>('/analytics/dashboard');
+  const canReadAnalytics = auth.can('analytics.read');
+  const dashboard = useApi<DashboardData>(canReadAnalytics ? '/analytics/dashboard' : null);
   const data = dashboard.data;
+  const availableLinks = [
+    { label: 'Мои заявки', to: '/requests', allowed: auth.can('requests.read') },
+    { label: 'Клиенты', to: '/clients', allowed: auth.can('clients.read') },
+    { label: 'Задачи', to: '/tasks', allowed: auth.can('tasks.read') },
+    { label: 'Каталог товаров', to: '/catalog', allowed: auth.can('catalog.read') },
+    {
+      label: 'Настройки и мой аккаунт',
+      to: '/settings',
+      allowed: true,
+    },
+  ].filter((item) => item.allowed);
   const greeting = new Intl.DateTimeFormat('ru-RU', {
     day: 'numeric',
     month: 'long',
@@ -77,10 +89,12 @@ export function Dashboard() {
           <span className="eyebrow">От потребности до результата</span>
           <h2>Каждая заявка — связная история.</h2>
           <p>Запрос, квоты, расчёт и поставка. Следующий шаг всегда рядом.</p>
-          <Link className="button lime" to="/requests?new=1">
-            <Plus size={17} />
-            Создать заявку
-          </Link>
+          {auth.can('requests.write') && (
+            <Link className="button lime" to="/requests?new=1">
+              <Plus size={17} />
+              Создать заявку
+            </Link>
+          )}
         </div>
         <div className="process-art" aria-hidden="true">
           <span>
@@ -99,7 +113,18 @@ export function Dashboard() {
           </span>
         </div>
       </div>
-      {dashboard.loading ? (
+      {!canReadAnalytics ? (
+        <Section title="Доступные разделы" description="Откройте нужную часть CRM для своей роли.">
+          <div className="quick-grid">
+            {availableLinks.map((item) => (
+              <Link to={item.to} key={item.to}>
+                {item.label}
+                <ArrowRight />
+              </Link>
+            ))}
+          </div>
+        </Section>
+      ) : dashboard.loading ? (
         <Loading />
       ) : dashboard.error ? (
         <>

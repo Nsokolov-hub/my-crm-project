@@ -70,6 +70,12 @@ def user_view(db: Session, user: User) -> dict[str, Any]:
         "version": user.version,
         "mfa_enabled": user.mfa_enabled,
         "roles": [{"id": r.id, "name": r.name} for r in roles],
+        "grants": [
+            {"code": grant.code, "scope": grant.scope, "allow": grant.allow}
+            for grant in db.scalars(
+                select(PermissionGrant).where(PermissionGrant.user_id == user.id)
+            )
+        ],
         "permissions": {code: scope for code in PERMISSIONS if (scope := scope_for(db, user, code))},
     }
 

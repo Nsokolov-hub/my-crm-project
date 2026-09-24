@@ -1,0 +1,119 @@
+.profile-editor {
+  .profile-section {
+    padding: 22px 0;
+    border-bottom: 1px solid #e9eaf0;
+
+    &:last-child {
+      padding-bottom: 0;
+      border-bottom: 0;
+    }
+
+    h3,
+    h4 {
+      margin-bottom: 15px;
+    }
+
+    > p,
+    .profile-advanced > p {
+      margin-bottom: 16px;
+      color: #6c7080;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+  }
+
+  .profile-switches {
+    display: grid;
+    gap: 10px;
+
+    label {
+      display: flex;
+      gap: 9px;
+      align-items: flex-start;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    input {
+      flex: none;
+      margin: 2px 0 0;
+    }
+  }
+
+  .profile-confirmation {
+    display: flex;
+    gap: 9px;
+    align-items: flex-start;
+    margin-top: 18px;
+    font-size: 12px;
+    line-height: 1.5;
+
+    input {
+      flex: none;
+      margin: 2px 0 0;
+    }
+  }
+
+  .profile-steps {
+    margin: 0 0 18px;
+    padding-left: 20px;
+    color: #6c7080;
+    font-size: 12px;
+    line-height: 1.8;
+  }
+
+  .profile-effective-note {
+    margin: 0;
+    color: #6c7080;
+    font-size: 12px;
+  }
+
+  .profile-advanced {
+    summary {
+      color: #6653ac;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    &[open] summary {
+      margin-bottom: 15px;
+    }
+  }
+
+  .profile-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 15px;
+    margin-bottom: 20px;
+    color: #6c7080;
+    font-size: 11px;
+  }
+
+  .profile-constant,
+  .profile-formula {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+    gap: 10px;
+    align-items: end;
+    margin-bottom: 12px;
+
+    input {
+      width: 100%;
+    }
+  }
+
+  .profile-formula-actions {
+    display: flex;
+    gap: 3px;
+  }
+}
+
+@media (width <= 680px) {
+  .profile-editor {
+    .profile-constant,
+    .profile-formula {
+      grid-template-columns: 1fr;
+      align-items: start;
+    }
+  }
+}
