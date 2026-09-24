@@ -53,6 +53,32 @@ from app.crm.schemas import (
 router = APIRouter(tags=['CRM'])
 
 
+@router.get('/dictionaries/{key}')
+def dictionary(key: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    dictionaries = {
+        'call_results': ('results', 'calls.write'),
+        'loss_reasons': ('reasons', 'requests.write'),
+    }
+    if key not in dictionaries:
+        raise DomainError('NOT_FOUND', 'Справочник не найден', 404)
+    value_key, permission = dictionaries[key]
+    require_permission(db, user, permission)
+    setting = db.scalar(select(AppSetting).where(AppSetting.key == key, AppSetting.status == 'published'))
+    if not setting:
+        raise DomainError('SETUP_REQUIRED', 'Справочник не настроен. Обратитесь к администратору.', 409)
+    labels = {
+        'no_answer': 'Не дозвонились', 'callback': 'Перезвонить', 'interested': 'Есть интерес',
+        'request_received': 'Получен запрос', 'rejected': 'Отказ', 'invalid_contact': 'Неверный контакт',
+        'not_interested': 'Нет интереса', 'wrong_number': 'Неверный номер',
+        'meeting_scheduled': 'Назначена встреча', 'price_too_high': 'Высокая цена',
+        'went_to_competitor': 'Выбран конкурент', 'no_budget': 'Нет бюджета',
+        'timing': 'Не подходят сроки', 'other': 'Другая причина',
+    }
+    values = setting.value.get(value_key, [])
+    items = [{'id': value, 'name': labels.get(value, value)} for value in values if isinstance(value, str)]
+    return {'items': items, 'total': len(items)}
+
+
 def active_user(db: Session, entity_id: str) -> User:
     row = db.get(User, entity_id)
     if not row or not row.active:

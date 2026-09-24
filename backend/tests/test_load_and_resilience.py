@@ -138,6 +138,7 @@ def test_large_import_parsing_performance():
     assert elapsed < 1.5, f"Import parsing took too long: {elapsed:.4f}s"
 
 
+@pytest.mark.integration
 def test_worker_resilience_and_rto():
     """Verify worker transactional recovery after interruption and measure RTO <= 10.0s (R15, S18)."""
     if not settings.database_url.startswith("postgresql"):

@@ -92,6 +92,7 @@ def sample_payload():
     }
 
 
+@pytest.mark.integration
 def test_dry_run_makes_zero_changes(tmp_path, sample_payload):
     """Verify that --dry-run produces a full report but rolls back all DB modifications."""
     if not settings.database_url.startswith("postgresql"):
@@ -136,6 +137,7 @@ def test_dry_run_makes_zero_changes(tmp_path, sample_payload):
         assert inv is None
 
 
+@pytest.mark.integration
 def test_commit_persists_data_and_repeat_is_idempotent(tmp_path, sample_payload):
     """Verify commit stores data and second run reuses existing records without duplicating."""
     if not settings.database_url.startswith("postgresql"):
@@ -196,6 +198,7 @@ def test_commit_persists_data_and_repeat_is_idempotent(tmp_path, sample_payload)
     assert report2["stats"].get("payments_reused", 0) == 2
 
 
+@pytest.mark.integration
 def test_discrepancy_reporting_for_missing_dates_and_references(tmp_path):
     """Verify missing dates and nonexistent references are explicitly reported in discrepancies."""
     if not settings.database_url.startswith("postgresql"):

@@ -22,6 +22,7 @@ def get_hash(filepath):
     return h.hexdigest()
 
 
+@pytest.mark.integration
 def test_init_roles_idempotency_and_no_ddl():
     """Verify role initialization creates roles idempotently and restricts DDL."""
     if not settings.database_url.startswith("postgresql"):
@@ -61,6 +62,7 @@ def test_init_roles_idempotency_and_no_ddl():
     bconn.close()
 
 
+@pytest.mark.integration
 def test_backup_fails_if_storage_dir_missing(tmp_path):
     """Verify that backup raises an error if storage directory is missing (no silent empty archive)."""
     script = Path(__file__).resolve().parents[2] / "scripts" / "recovery.py"
@@ -103,6 +105,7 @@ def test_restore_requires_force_flag(tmp_path):
     assert "--force" in res.stderr
 
 
+@pytest.mark.integration
 def test_restore_detects_tampered_dump_and_aborts(tmp_path):
     """Verify that checksum mismatch in db.dump or files.tar.gz immediately aborts restore."""
     script = Path(__file__).resolve().parents[2] / "scripts" / "recovery.py"
@@ -169,6 +172,7 @@ def test_restore_detects_tampered_dump_and_aborts(tmp_path):
     assert "hash mismatch" in res_tamper.stderr
 
 
+@pytest.mark.integration
 def test_full_backup_and_restore_cycle_with_files(tmp_path):
     """Complete E2E cycle: backup -> disaster simulation -> restore -> verify data & file integrity."""
     script = Path(__file__).resolve().parents[2] / "scripts" / "recovery.py"

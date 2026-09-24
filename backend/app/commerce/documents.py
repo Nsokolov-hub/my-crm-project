@@ -14,9 +14,17 @@ from app.crm.models import Request as CRMRequest
 
 from .calculator import ROUNDING, convert, dec
 from .files import document_files, read_file
-from .models import Calculation, CommercialDocument, Execution, Product, Quote
+from .models import (
+    Calculation,
+    CommercialDocument,
+    Execution,
+    PaymentAllocation,
+    Product,
+    Quote,
+    WaveAllocation,
+)
 from .procurement import DB, Actor, check_quote, validate_quantity
-from .schemas import AcceptanceIn, InvoiceIn, ProposalIn, SentIn
+from .schemas import AcceptanceIn, ExecutionCancelIn, InvoiceIn, ProposalIn, SentIn
 
 router = APIRouter(tags=["Коммерческие документы"])
 
@@ -413,7 +421,14 @@ def list_invoices(request_id: str, db: DB, user: Actor):
     check_request(db, user, request_id)
     return {
         "items": [
-            {**document_view(row), **invoice_balance(db, row)}
+            {
+                **document_view(row),
+                **(
+                    {"paid": "0", "remaining": "0", "payment_status": "cancelled"}
+                    if row.status == "cancelled"
+                    else invoice_balance(db, row)
+                ),
+            }
             for row in db.scalars(
                 select(CommercialDocument)
                 .where(CommercialDocument.request_id == request_id, CommercialDocument.kind == "invoice")
@@ -421,6 +436,72 @@ def list_invoices(request_id: str, db: DB, user: Actor):
             ).all()
         ]
     }
+
+
+@router.post("/invoices/{invoice_id}/cancel")
+def cancel_invoice(invoice_id: str, data: ExecutionCancelIn, db: DB, user: Actor):
+    """Void an unpaid, unallocated invoice while retaining its immutable snapshot."""
+    from .payments import allocation_balance
+    from .recalculate import recalculate_funding
+
+    invoice = db.get(CommercialDocument, invoice_id)
+    if not invoice or invoice.kind != "invoice":
+        error("NOT_FOUND", "Счёт не найден", 404)
+    check_request(db, user, invoice.request_id, "documents.write")
+
+    def operation():
+        advisory(db, f"request-commerce:{invoice.request_id}")
+        document = lock(db, CommercialDocument, invoice_id)
+        check_version(document, data.version)
+        if document.status == "cancelled":
+            error("ALREADY_CANCELLED", "Счёт уже аннулирован", 409)
+        allocations = db.scalars(
+            select(PaymentAllocation).where(PaymentAllocation.invoice_id == invoice_id)
+        ).all()
+        if any(allocation_balance(db, allocation) > 0 for allocation in allocations):
+            error(
+                "INVOICE_HAS_PAYMENT",
+                "Сначала снимите распределение подтверждённой оплаты с этого счёта",
+                409,
+            )
+        execution_ids = {line["execution_id"] for line in document.snapshot.get("lines", [])}
+        if execution_ids and db.scalar(
+            select(WaveAllocation.id).where(
+                WaveAllocation.execution_id.in_(execution_ids), WaveAllocation.active.is_(True)
+            ).limit(1)
+        ):
+            error(
+                "INVOICE_HAS_WAVE",
+                "Сначала завершите исправление распределённого исполнения в волне",
+                409,
+            )
+        document.status = "cancelled"
+        document.version += 1
+        db.flush()
+        audit(
+            db,
+            user,
+            "document",
+            document.id,
+            "cancel",
+            after={"number": document.number, "kind": document.kind, "status": document.status},
+            reason=data.reason,
+        )
+        recalculate_funding(db, document.request_id)
+        return document_view(document)
+
+    def reconstruct(result):
+        return document_view(db.get(CommercialDocument, result["id"]))
+
+    return idem(
+        db,
+        user,
+        data.idempotency_key,
+        f"cancel-invoice:{invoice_id}",
+        data.model_dump(mode="json"),
+        operation,
+        reconstruct,
+    )
 
 
 @router.get("/documents/{document_id}/file")

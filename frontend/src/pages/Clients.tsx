@@ -262,7 +262,7 @@ export function Tasks() {
           endpoint={`/tasks/${selected.id}`}
           method="PATCH"
           fields={editFields}
-          initial={{ ...selected, due_at: String(selected.due_at || '').slice(0, 16) }}
+          initial={selected}
           extra={{ version: selected.version }}
           onClose={() => setSelected(undefined)}
           onSuccess={() => {

@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import date
 
 from fastapi import APIRouter
@@ -16,27 +17,41 @@ from .schemas import CalculationIn, ProfileIn
 router = APIRouter(tags=["Расчёты и настраиваемые профили"])
 
 
-def profile_view(db, user, profile: CalculationProfile) -> dict:
-    data = serialize(profile)
-    definition = data.get("definition", {})
-    if not can(db, user, "finance.reward.read"):
+def filter_profile_definition(definition: dict, *, purchase: bool, reward: bool, profit: bool) -> dict:
+    definition = deepcopy(definition)
+    if not reward:
         definition.pop("reward_enabled", None)
         definition.pop("reward_label", None)
         definition.pop("reward_basis", None)
-    if not can(db, user, "finance.profit.read"):
+    # Profile variables and formulas are user-defined: their names do not identify
+    # the financial information they contain or can be used to reconstruct.
+    if not (purchase and reward and profit):
         definition.pop("constants", None)
         definition.pop("formulas", None)
+    return definition
+
+
+def profile_view(db, user, profile: CalculationProfile) -> dict:
+    data = serialize(profile)
+    data["definition"] = filter_profile_definition(
+        data.get("definition", {}),
+        purchase=can(db, user, "finance.purchase.read"),
+        reward=can(db, user, "finance.reward.read"),
+        profit=can(db, user, "finance.profit.read"),
+    )
     return data
 
 
 def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> dict:
     if not snapshot:
         return snapshot
+    snapshot = deepcopy(snapshot)
 
     can_purchase = has_request_permission(db, user, request_id, "finance.purchase.read")
     can_calculations = has_request_permission(db, user, request_id, "finance.calculations.read")
     can_reward = has_request_permission(db, user, request_id, "finance.reward.read")
     can_profit = has_request_permission(db, user, request_id, "finance.profit.read")
+    all_finances = can_purchase and can_reward and can_profit
 
     lines = snapshot.get("lines", [])
     for line in lines:
@@ -44,18 +59,30 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
             line.pop("quote", None)
 
         if "detail" in line:
-            if not can_reward:
-                line["detail"].pop("reward", None)
-                line["detail"].pop("manager_bonus", None)
-            if not can_profit:
-                line["detail"].pop("cost", None)
-                line["detail"].pop("profit", None)
-                line["detail"].pop("margin", None)
             if not can_calculations:
                 line.pop("detail", None)
+            elif not all_finances:
+                # Expose only known outputs; arbitrary constants/intermediate
+                # expressions may alias a denied price, reward or margin.
+                allowed = {"quantity", "sale_net", "sale_tax"}
+                if can_purchase:
+                    allowed.add("purchase")
+                if can_reward:
+                    allowed.update(("reward", "manager_bonus"))
+                if can_profit:
+                    allowed.update(("cost", "profit", "margin"))
+                line["detail"] = {key: value for key, value in line["detail"].items() if key in allowed}
 
     if not can_calculations:
         snapshot.pop("profile", None)
+    elif "profile" in snapshot:
+        snapshot["profile"] = filter_profile_definition(
+            snapshot["profile"], purchase=can_purchase, reward=can_reward, profit=can_profit
+        )
+
+    if not can_calculations or not all_finances:
+        # Inputs include per-line coefficient overrides and expense allocations
+        # can disclose the purchase basis, even after detail has been filtered.
         snapshot.pop("input", None)
         snapshot.pop("expense_allocations", None)
         snapshot.pop("rates", None)

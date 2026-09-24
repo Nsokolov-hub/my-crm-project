@@ -1,5 +1,6 @@
 import { Download, Plus } from 'lucide-react';
 import { useState } from 'react';
+import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
 import { RecordForm } from '../components/Form';
 import { LineCommand } from '../components/LineCommand';
@@ -9,8 +10,9 @@ import { date, decimal, nowLocal } from '../lib/format';
 import { useApi } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
 export function RequestDocuments({ requestId }: { requestId: string }) {
+  const auth = useAuth();
   const [selected, setSelected] = useState<Entity>();
-  const [action, setAction] = useState<'proposal' | 'invoice' | 'accept' | 'sent'>();
+  const [action, setAction] = useState<'proposal' | 'invoice' | 'accept' | 'sent' | 'cancel-invoice'>();
   const [error, setError] = useState<unknown>();
   const [revision, setRevision] = useState(0);
   const executions = useApi<Page>(`/requests/${requestId}/executions`);
@@ -132,6 +134,15 @@ export function RequestDocuments({ requestId }: { requestId: string }) {
                 </Button>
               </div>
             )}
+            {selected.kind === 'invoice' &&
+              selected.status !== 'cancelled' &&
+              auth.can('documents.write') && (
+                <div className="inline-actions">
+                  <Button variant="secondary" onClick={() => setAction('cancel-invoice')}>
+                    Аннулировать счёт
+                  </Button>
+                </div>
+              )}
           </div>
         </Modal>
       )}
@@ -185,6 +196,26 @@ export function RequestDocuments({ requestId }: { requestId: string }) {
               value: nowLocal(),
             },
           ]}
+          onClose={() => setAction(undefined)}
+          onSuccess={done}
+        />
+      )}
+      {selected && action === 'cancel-invoice' && (
+        <RecordForm
+          title="Аннулировать неоплаченный счёт"
+          endpoint={`/invoices/${selected.id}/cancel`}
+          command
+          extra={{ version: selected.version }}
+          fields={[
+            {
+              name: 'reason',
+              label: 'Причина аннулирования',
+              type: 'textarea',
+              required: true,
+              minLength: 3,
+            },
+          ]}
+          note="Выставленный счёт останется в истории. Распределённую оплату сначала нужно снять с него."
           onClose={() => setAction(undefined)}
           onSuccess={done}
         />

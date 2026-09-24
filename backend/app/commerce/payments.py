@@ -8,9 +8,10 @@ from app.core.db import utcnow
 from app.core.errors import error
 from app.core.security import check_request, has_request_permission
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
+from app.crm.models import Request as CRMRequest
 
 from .calculator import dec
-from .models import Approval, CommercialDocument, Execution, Payment, PaymentAllocation, PaymentReversal
+from .models import CommercialDocument, Execution, Payment, PaymentAllocation, PaymentReversal
 from .procurement import DB, Actor
 from .schemas import PaymentAllocateIn, PaymentIn, PaymentReverseIn, VersionCommand
 
@@ -309,6 +310,7 @@ def allocate_payment(payment_id: str, data: PaymentAllocateIn, db: DB, user: Act
         f"allocate-payment:{payment_id}",
         data.model_dump(mode="json"),
         operation,
+        lambda result: payment_view(db, user, db.get(Payment, result["id"])),
     )
 
 
@@ -352,39 +354,11 @@ def reverse_payment(payment_id: str, data: PaymentReverseIn, db: DB, user: Actor
         db.flush()
         current.version += 1
         for request_id in sorted(affected_requests):
-            executions = db.scalars(select(Execution).where(Execution.request_id == request_id)).all()
-            for execution in executions:
-                approvals = db.scalars(
-                    select(Approval).where(Approval.request_id == request_id, Approval.status == "approved")
-                ).all()
-                applicable = [
-                    approval
-                    for approval in approvals
-                    if any(row["execution_id"] == execution.id for row in approval.snapshot["lines"])
-                ]
-                if applicable:
-                    threshold = max(
-                        dec(row["funding_ratio"])
-                        for approval in applicable
-                        for row in approval.snapshot["lines"]
-                        if row["execution_id"] == execution.id
-                    )
-                    execution.financing_deficit = (
-                        dec(funding_for_execution(db, execution)["ratio"]) < threshold
-                    )
-                    if execution.financing_deficit:
-                        for reviewer_id in {approval.reviewer_id for approval in applicable} | {user.id}:
-                            notify(
-                                db,
-                                reviewer_id,
-                                f"funding-deficit:{obj.id}:{execution.id}",
-                                "Обнаружен дефицит финансирования согласованной позиции",
-                                "request",
-                                request_id,
-                            )
+            recalculate_funding(db, request_id)
+            affected_request = db.get(CRMRequest, request_id)
             notify(
                 db,
-                req.owner_id,
+                affected_request.owner_id,
                 f"payment-reversed:{obj.id}:{request_id}",
                 "Выполнена обратная операция оплаты",
                 "request",
@@ -400,4 +374,5 @@ def reverse_payment(payment_id: str, data: PaymentReverseIn, db: DB, user: Actor
         f"reverse-payment:{payment_id}",
         data.model_dump(mode="json"),
         operation,
+        lambda result: payment_view(db, user, db.get(Payment, result["id"])),
     )

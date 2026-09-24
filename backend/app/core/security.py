@@ -29,6 +29,9 @@ PERMISSIONS = {
     'exports.download': 'Экспорт и скачивание', 'imports.write': 'Импорт клиентской базы', 'analytics.read': 'Аналитика',
     'chats.use': 'Внутреннее общение', 'files.upload': 'Загрузка вложений',
     'admin.users': 'Управление пользователями и ролями', 'admin.settings': 'Настройки системы', 'audit.read': 'Просмотр аудита',
+    'settings.dictionaries.write': 'Настройка рабочих справочников',
+    'settings.system.write': 'Настройка системных правил',
+    'settings.commerce.write': 'Настройка коммерческих правил',
 }
 
 
