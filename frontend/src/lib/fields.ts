@@ -63,6 +63,13 @@ export const requestEditFields: Field[] = [
   },
   { name: 'owner_id', label: 'Ответственный', type: 'select', source: '/users' },
   { name: 'due_at', label: 'Срок', type: 'datetime-local' },
+  {
+    name: 'loss_reason',
+    label: 'Причина закрытия без продажи',
+    type: 'select',
+    source: '/dictionaries/loss_reasons',
+    help: 'Выберите причину, если закрываете заявку без продажи.',
+  },
   { name: 'reason', label: 'Причина изменения', type: 'textarea', required: true },
 ];
 export const itemFields: Field[] = [
@@ -114,14 +121,7 @@ export const callFields: Field[] = [
     label: 'Результат звонка',
     type: 'select',
     required: true,
-    options: [
-      'no_answer',
-      'callback',
-      'interested',
-      'request_received',
-      'rejected',
-      'invalid_contact',
-    ].map((value) => ({ value, label: stageLabels[value] })),
+    source: '/dictionaries/call_results',
   },
   { name: 'comment', label: 'Комментарий', type: 'textarea' },
   {

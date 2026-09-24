@@ -172,12 +172,20 @@ export function RecordForm({
 }) {
   const [values, setValues] = useState<Record<string, unknown>>(() =>
     Object.fromEntries(
-      fields.map((field) => [
-        field.name,
-        initial[field.name] ??
+      fields.map((field) => {
+        let val =
+          initial[field.name] ??
           field.value ??
-          (field.type === 'checkbox' ? false : field.type === 'multiselect' ? [] : ''),
-      ]),
+          (field.type === 'checkbox' ? false : field.type === 'multiselect' ? [] : '');
+        // Convert ISO UTC strings to local datetime-local format for editing
+        if (field.type === 'datetime-local' && typeof val === 'string' && val) {
+          const d = new Date(val);
+          if (!Number.isNaN(d.getTime())) {
+            val = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+          }
+        }
+        return [field.name, val];
+      }),
     ),
   );
   const [dirty, setDirty] = useState(false);
@@ -207,7 +215,14 @@ export function RecordForm({
           : field.type === 'number'
             ? Number(value)
             : field.type === 'datetime-local' && value
-              ? new Date(String(value)).toISOString()
+              ? (() => {
+                  // datetime-local inputs produce 'YYYY-MM-DDTHH:MM' (no timezone).
+                  // We must interpret this as user's local time, not UTC.
+                  const local = new Date(String(value));
+                  // Guard: if the Date is invalid, send the raw string
+                  if (Number.isNaN(local.getTime())) return value;
+                  return local.toISOString();
+                })()
               : value;
     }
     try {

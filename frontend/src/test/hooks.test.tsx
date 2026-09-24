@@ -38,9 +38,10 @@ describe('hooks/useCommand', () => {
     let callCount = 0;
     let providedKey = '';
 
-    vi.mocked(apiModule.api).mockImplementation(async (path, init: any) => {
+    vi.mocked(apiModule.api).mockImplementation(async (_path, init: Parameters<typeof apiModule.api>[1]) => {
       callCount++;
-      providedKey = init.key;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      providedKey = (init as any)?.key || '';
       if (callCount === 1) throw new Error('Network error');
       return { success: true };
     });
@@ -51,7 +52,7 @@ describe('hooks/useCommand', () => {
     await act(async () => {
       try {
         await result.current.run('/test', { foo: 'bar' });
-      } catch (e) {
+      } catch {
         // expected
       }
     });

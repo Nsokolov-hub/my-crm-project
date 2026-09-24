@@ -1,5 +1,7 @@
+from decimal import Decimal
 from typing import Any
 
+import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
@@ -10,13 +12,13 @@ from app.core.models import AppSetting, AuditEvent, User
 from app.core.security import (
     can,
     check_client,
-    task_predicate,
     check_request,
     client_predicate,
     current_user,
     request_predicate,
     require_permission,
     scope_for,
+    task_predicate,
 )
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
 from app.core.service import page as paginate
@@ -49,6 +51,32 @@ from app.crm.schemas import (
 )
 
 router = APIRouter(tags=['CRM'])
+
+
+@router.get('/dictionaries/{key}')
+def dictionary(key: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    dictionaries = {
+        'call_results': ('results', 'calls.write'),
+        'loss_reasons': ('reasons', 'requests.write'),
+    }
+    if key not in dictionaries:
+        raise DomainError('NOT_FOUND', 'Справочник не найден', 404)
+    value_key, permission = dictionaries[key]
+    require_permission(db, user, permission)
+    setting = db.scalar(select(AppSetting).where(AppSetting.key == key, AppSetting.status == 'published'))
+    if not setting:
+        raise DomainError('SETUP_REQUIRED', 'Справочник не настроен. Обратитесь к администратору.', 409)
+    labels = {
+        'no_answer': 'Не дозвонились', 'callback': 'Перезвонить', 'interested': 'Есть интерес',
+        'request_received': 'Получен запрос', 'rejected': 'Отказ', 'invalid_contact': 'Неверный контакт',
+        'not_interested': 'Нет интереса', 'wrong_number': 'Неверный номер',
+        'meeting_scheduled': 'Назначена встреча', 'price_too_high': 'Высокая цена',
+        'went_to_competitor': 'Выбран конкурент', 'no_budget': 'Нет бюджета',
+        'timing': 'Не подходят сроки', 'other': 'Другая причина',
+    }
+    values = setting.value.get(value_key, [])
+    items = [{'id': value, 'name': labels.get(value, value)} for value in values if isinstance(value, str)]
+    return {'items': items, 'total': len(items)}
 
 
 def active_user(db: Session, entity_id: str) -> User:
@@ -135,7 +163,7 @@ def edit_client(entity_id: str, body: ClientPatch, user: User = Depends(current_
     
     if archive_cascade:
         # Cascade archive requests and items
-        requests = db.scalars(select(Request).where(Request.client_id == row.id, Request.archived == False)).all()
+        requests = db.scalars(select(Request).where(Request.client_id == row.id, Request.archived.is_(False))).all()
         for req in requests:
             req_before = serialize(req)
             req.archived = True

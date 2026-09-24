@@ -1,6 +1,7 @@
 """s06_rfq_author"""
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = '07985afd7ae7'
 down_revision = '4b7dc5a480e4'

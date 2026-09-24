@@ -24,7 +24,14 @@ from app.core.config import settings
 from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
 from app.core.models import AppSetting, Notification, OutboxEvent, User
-from app.core.security import can, current_user, request_predicate, require_permission, scope_for, task_predicate
+from app.core.security import (
+    can,
+    current_user,
+    request_predicate,
+    require_permission,
+    scope_for,
+    task_predicate,
+)
 from app.core.service import advisory, audit, check_version, idem, serialize
 from app.core.service import page as paginate
 
@@ -440,7 +447,14 @@ def get_file(entity_id: str, user: User = Depends(current_user), db: Session = D
 @router.get('/files/{entity_id}/download')
 def download_file(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> StreamingResponse:
     row = check_file(db, user, entity_id)
-    require_permission(db, user, 'exports.download', row.request_id)
+    request_id = row.request_id
+    if not request_id:
+        entity_type, source_id = next(
+            (kind, getattr(row, column)) for kind, column in ENTITY_COLUMNS.items() if getattr(row, column)
+        )
+        source = check_entity(db, user, entity_type, source_id)
+        request_id = getattr(source, 'request_id', None)
+    require_permission(db, user, 'exports.download', request_id)
     if row.status != 'clean':
         raise DomainError('FILE_NOT_READY', 'Скачивание доступно только после успешной проверки файла', 409)
     content = verified_content(row.storage_key, row.sha256, row.size)

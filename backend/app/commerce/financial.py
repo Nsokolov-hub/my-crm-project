@@ -1,11 +1,11 @@
-import copy
+from copy import deepcopy
 from datetime import date
 
 from fastapi import APIRouter
 from sqlalchemy import select
 
-from app.core.errors import DomainError, error
-from app.core.security import check_request, has_request_permission, require_permission, can
+from app.core.errors import error
+from app.core.security import can, check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.crm.models import Request as CRMRequest
 
@@ -17,61 +17,89 @@ from .schemas import CalculationIn, ProfileIn
 router = APIRouter(tags=["Расчёты и настраиваемые профили"])
 
 
-def profile_view(db, user, profile: CalculationProfile) -> dict:
-    data = serialize(profile)
-    definition = data.get("definition", {})
-    if not can(db, user, "finance.reward.read"):
+def filter_profile_definition(definition: dict, *, purchase: bool, reward: bool, profit: bool) -> dict:
+    definition = deepcopy(definition)
+    if not reward:
         definition.pop("reward_enabled", None)
         definition.pop("reward_label", None)
         definition.pop("reward_basis", None)
-    if not can(db, user, "finance.profit.read"):
+    # Profile variables and formulas are user-defined: their names do not identify
+    # the financial information they contain or can be used to reconstruct.
+    if not (purchase and reward and profit):
         definition.pop("constants", None)
         definition.pop("formulas", None)
+    return definition
+
+
+def profile_view(db, user, profile: CalculationProfile) -> dict:
+    data = serialize(profile)
+    data["definition"] = filter_profile_definition(
+        data.get("definition", {}),
+        purchase=can(db, user, "finance.purchase.read"),
+        reward=can(db, user, "finance.reward.read"),
+        profit=can(db, user, "finance.profit.read"),
+    )
     return data
+
 
 def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> dict:
     if not snapshot:
         return snapshot
-        
+    snapshot = deepcopy(snapshot)
+
     can_purchase = has_request_permission(db, user, request_id, "finance.purchase.read")
     can_calculations = has_request_permission(db, user, request_id, "finance.calculations.read")
     can_reward = has_request_permission(db, user, request_id, "finance.reward.read")
     can_profit = has_request_permission(db, user, request_id, "finance.profit.read")
-    
+    all_finances = can_purchase and can_reward and can_profit
+
     lines = snapshot.get("lines", [])
     for line in lines:
         if not can_purchase:
             line.pop("quote", None)
-            
+
         if "detail" in line:
-            if not can_reward:
-                line["detail"].pop("reward", None)
-                line["detail"].pop("manager_bonus", None)
-            if not can_profit:
-                line["detail"].pop("cost", None)
-                line["detail"].pop("profit", None)
-                line["detail"].pop("margin", None)
             if not can_calculations:
                 line.pop("detail", None)
-                
+            elif not all_finances:
+                # Expose only known outputs; arbitrary constants/intermediate
+                # expressions may alias a denied price, reward or margin.
+                allowed = {"quantity", "sale_net", "sale_tax"}
+                if can_purchase:
+                    allowed.add("purchase")
+                if can_reward:
+                    allowed.update(("reward", "manager_bonus"))
+                if can_profit:
+                    allowed.update(("cost", "profit", "margin"))
+                line["detail"] = {key: value for key, value in line["detail"].items() if key in allowed}
+
     if not can_calculations:
         snapshot.pop("profile", None)
+    elif "profile" in snapshot:
+        snapshot["profile"] = filter_profile_definition(
+            snapshot["profile"], purchase=can_purchase, reward=can_reward, profit=can_profit
+        )
+
+    if not can_calculations or not all_finances:
+        # Inputs include per-line coefficient overrides and expense allocations
+        # can disclose the purchase basis, even after detail has been filtered.
         snapshot.pop("input", None)
         snapshot.pop("expense_allocations", None)
         snapshot.pop("rates", None)
-        
+
     return snapshot
+
 
 def calculation_view(db, user, calculation: Calculation) -> dict:
     result = serialize(calculation)
-    
+
     snapshot = result.get("snapshot", {})
     if snapshot:
         result["snapshot"] = filter_calculation_snapshot(db, user, calculation.request_id, snapshot)
-        
+
     if not has_request_permission(db, user, calculation.request_id, "finance.calculations.read"):
         result.pop("reason", None)
-        
+
     return result
 
 
@@ -86,7 +114,9 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         or profile.effective_from > date.today()
         or (profile.effective_until and profile.effective_until < date.today())
     ):
-        error("PROFILE_NOT_EFFECTIVE", "Выберите активный опубликованный профиль, действующий на дату расчёта")
+        error(
+            "PROFILE_NOT_EFFECTIVE", "Выберите активный опубликованный профиль, действующий на дату расчёта"
+        )
     selections = []
     for selection in data.selections:
         quote = lock(db, Quote, selection.quote_id)
@@ -128,17 +158,6 @@ def sample_profile(db: DB, user: Actor):
         "definition": example_profile(),
     }
 
-
-    result = serialize(profile)
-    definition = result.get("definition", {})
-    if not can(db, user, "finance.reward.read"):
-        definition.pop("reward_enabled", None)
-        definition.pop("reward_label", None)
-        definition.pop("reward_basis", None)
-    if not can(db, user, "finance.profit.read"):
-        definition.pop("constants", None)
-        definition.pop("formulas", None)
-    return result
 
 @router.get("/profiles")
 def list_profiles(db: DB, user: Actor):
@@ -191,7 +210,9 @@ def create_profile(data: ProfileIn, db: DB, user: Actor):
         profile = db.get(CalculationProfile, result["id"])
         return profile_view(db, user, profile)
 
-    return idem(db, user, data.idempotency_key, "create-profile", data.model_dump(mode="json"), operation, reconstruct)
+    return idem(
+        db, user, data.idempotency_key, "create-profile", data.model_dump(mode="json"), operation, reconstruct
+    )
 
 
 @router.post("/profiles/{profile_id}/publish")
@@ -203,14 +224,14 @@ def publish_profile(profile_id: str, db: DB, user: Actor):
         error("PROFILE_NOT_FOUND", "Профиль не найден", 404)
     if profile.status == "published":
         error("PROFILE_ALREADY_PUBLISHED", "Профиль уже опубликован", 400)
-    
+
     # Архивируем предыдущий опубликованный профиль, если это новая версия
     if profile.previous_id:
         prev = db.get(CalculationProfile, profile.previous_id)
         if prev and prev.status == "published":
             prev.status = "archived"
             prev.effective_until = date.today()
-    
+
     profile.status = "published"
     profile.effective_from = date.today()
     db.flush()

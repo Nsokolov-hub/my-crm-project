@@ -306,3 +306,27 @@ def test_mfa_enrollment_gate_and_login_replay(crm, monkeypatch):
         "/api/v1/auth/login", json={"email": "owner@example.com", "password": PASSWORD, "otp": code}
     )
     assert replay.status_code == 401
+
+def test_contact_search_with_q(crm):
+    login(crm)
+    client = post(crm, "/counterparties", {"name": "ООО Ромашка"})
+    post(crm, "/counterparties/" + client["id"] + "/contacts", {"name": "Иван Иванов", "email": "ivan@example.com"})
+    post(crm, "/counterparties/" + client["id"] + "/contacts", {"name": "Петр Петров", "email": "petr@example.com"})
+    
+    # Search by name
+    res = crm["client"].get(f"/api/v1/counterparties/{client['id']}/contacts?q=Иван")
+    assert res.status_code == 200
+    assert len(res.json()["items"]) == 1
+    assert res.json()["items"][0]["name"] == "Иван Иванов"
+    
+    # Search by email
+    res = crm["client"].get(f"/api/v1/counterparties/{client['id']}/contacts?q=petr@")
+    assert res.status_code == 200
+    assert len(res.json()["items"]) == 1
+    assert res.json()["items"][0]["name"] == "Петр Петров"
+    
+    # Empty search
+    res = crm["client"].get(f"/api/v1/counterparties/{client['id']}/contacts?q=Смирнов")
+    assert res.status_code == 200
+    assert len(res.json()["items"]) == 0
+

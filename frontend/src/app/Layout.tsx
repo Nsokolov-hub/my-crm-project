@@ -45,7 +45,7 @@ export function Layout() {
   const navigate = useNavigate();
   const [mobile, setMobile] = useState(false);
   const [search, setSearch] = useState('');
-  const notifications = useApi<Page>('/notifications?unread=true&page_size=1');
+  const notifications = useApi<Page>('/notifications?read=false&page_size=1');
   const name = auth.session?.user.name || 'Сотрудник';
   return (
     <div className="app-shell">
@@ -152,7 +152,7 @@ export function Layout() {
               aria-label="Уведомления"
             >
               <Bell size={20} />
-              {Boolean(notifications.data?.total) && <i />}
+              {Boolean(notifications.data?.unread) && <i />}
             </NavLink>
             <span className="topbar-divider" />
             <div className="user-info">

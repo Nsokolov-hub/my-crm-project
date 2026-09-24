@@ -2,16 +2,14 @@ import os
 from uuid import uuid4
 
 import pytest
-from alembic import command as migrations
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.schema import CreateSchema
 
+from alembic import command as migrations
 from app.core.config import settings
-from app.core.db import SessionLocal
-
 
 pytestmark = pytest.mark.postgres
 
@@ -46,8 +44,9 @@ def postgres_history(monkeypatch):
             # Step 1: Migrate up to initial_schema
             migrations.upgrade(config, '2abdec759d06')
             
-            from app.core.models import User, AuditEvent
             from sqlalchemy.orm import Session
+
+            from app.core.models import AuditEvent, User
             
             with Session(conn) as session:
                 user = User(id='user1', email='u@test.local', name='U', password_hash='hash')

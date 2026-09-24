@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
 import { RecordForm } from '../components/Form';
 import { Badge, Button, DataTable, DetailPairs, Modal, PageHeading } from '../components/ui';
@@ -6,10 +7,16 @@ import { date, decimal, nowLocal } from '../lib/format';
 import { useApi } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
 export function RequestFulfillment({ requestId }: { requestId: string }) {
+  const auth = useAuth();
   const [approval, setApproval] = useState<Entity>();
   const [execution, setExecution] = useState<Entity>();
   const [revision, setRevision] = useState(0);
-  const [allocating, setAllocating] = useState(false);
+  const [executionAction, setExecutionAction] = useState<'allocate' | 'revise' | 'cancel'>();
+  function executionDone() {
+    setExecution(undefined);
+    setExecutionAction(undefined);
+    setRevision((v) => v + 1);
+  }
   return (
     <>
       <Collection
@@ -82,7 +89,7 @@ export function RequestFulfillment({ requestId }: { requestId: string }) {
           }}
         />
       )}
-      {execution && !allocating && (
+      {execution && !executionAction && (
         <Modal title="Позиция исполнения" onClose={() => setExecution(undefined)}>
           <div className="form-body">
             <DetailPairs
@@ -95,20 +102,63 @@ export function RequestFulfillment({ requestId }: { requestId: string }) {
                 'Дефицит финансирования': execution.financing_deficit,
               }}
             />
-            <Button onClick={() => setAllocating(true)}>Распределить в волну</Button>
+            <div className="inline-actions">
+              <Button onClick={() => setExecutionAction('allocate')}>Распределить в волну</Button>
+              {auth.can('documents.write') && (
+                <>
+                  <Button variant="secondary" onClick={() => setExecutionAction('revise')}>
+                    Изменить количество
+                  </Button>
+                  <Button variant="secondary" onClick={() => setExecutionAction('cancel')}>
+                    Отменить принятую позицию
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
         </Modal>
       )}
-      {execution && allocating && (
+      {execution && executionAction === 'allocate' && (
         <WaveAssignment
           requestId={requestId}
           execution={execution}
-          onClose={() => setAllocating(false)}
-          onSuccess={() => {
-            setExecution(undefined);
-            setAllocating(false);
-            setRevision((v) => v + 1);
-          }}
+          onClose={() => setExecutionAction(undefined)}
+          onSuccess={executionDone}
+        />
+      )}
+      {execution && executionAction === 'revise' && (
+        <RecordForm
+          title="Исправить принятое количество"
+          endpoint={`/executions/${execution.id}/revise`}
+          command
+          extra={{ version: execution.version }}
+          fields={[
+            {
+              name: 'quantity',
+              label: `Новое количество (${execution.unit})`,
+              type: 'decimal',
+              required: true,
+              value: execution.quantity,
+            },
+            { name: 'reason', label: 'Причина', type: 'textarea', required: true, minLength: 3 },
+          ]}
+          note="Ранее принятая версия сохранится. Для оплаченного счёта сначала снимите распределение оплаты, затем аннулируйте счёт."
+          onClose={() => setExecutionAction(undefined)}
+          onSuccess={executionDone}
+        />
+      )}
+      {execution && executionAction === 'cancel' && (
+        <RecordForm
+          title="Отменить принятую позицию"
+          endpoint={`/executions/${execution.id}/cancel`}
+          command
+          extra={{ version: execution.version }}
+          fields={[
+            { name: 'reason', label: 'Причина', type: 'textarea', required: true, minLength: 3 },
+          ]}
+          note="Операция оставит запись в истории. Активные счета и распределения по волнам нужно исправить до отмены позиции."
+          onClose={() => setExecutionAction(undefined)}
+          onSuccess={executionDone}
         />
       )}
     </>

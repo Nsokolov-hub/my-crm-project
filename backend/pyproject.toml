@@ -2,7 +2,11 @@
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"
-markers = ["postgres: PostgreSQL concurrent integration", "recovery: restore environment validation"]
+markers = [
+    "postgres: PostgreSQL concurrent integration",
+    "integration: requires a configured external database or backup/restore services",
+    "recovery: restore environment validation",
+]
 [tool.ruff]
 line-length = 110
 target-version = "py313"

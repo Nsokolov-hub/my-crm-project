@@ -4,6 +4,7 @@ from decimal import Decimal
 from fastapi import APIRouter
 from sqlalchemy import select
 
+from app.commerce.recalculate import recalculate_fulfillment
 from app.core.db import utcnow
 from app.core.errors import error
 from app.core.models import User
@@ -12,20 +13,32 @@ from app.core.service import advisory, audit, check_version, idem, lock, notify,
 from app.crm.models import Request as CRMRequest
 from app.crm.models import Task
 
-from .calculator import dec, digest
+from .calculator import convert, dec, digest
 from .models import (
     Approval,
     Calculation,
     CommercialDocument,
     Execution,
     FulfillmentEvent,
+    Product,
     Quote,
     Wave,
     WaveAllocation,
 )
 from .payments import funding_for_execution
 from .procurement import DB, Actor, check_quote
-from .schemas import AllocateWaveIn, ApprovalIn, DecisionIn, FulfillmentIn, TransferIn, WaveIn, WaveUpdate
+from .recalculate import recalculate_funding
+from .schemas import (
+    AllocateWaveIn,
+    ApprovalIn,
+    DecisionIn,
+    ExecutionCancelIn,
+    ExecutionReviseIn,
+    FulfillmentIn,
+    TransferIn,
+    WaveIn,
+    WaveUpdate,
+)
 
 router = APIRouter(tags=["Согласования и поставки"])
 OPEN_WAVES = {"planned", "assembling"}
@@ -95,13 +108,28 @@ def execution_view(db, execution: Execution) -> dict:
     shipped = sum((row["shipped"] for row in totals), Decimal("0"))
     delivered = sum((row["delivered"] for row in totals), Decimal("0"))
     claims = sum((row["claim_opened"] - row["claim_resolved"] for row in totals), Decimal("0"))
+    approval_state = "not_submitted"
+    if not allocations:
+        for approval in db.scalars(
+            select(Approval)
+            .where(Approval.request_id == execution.request_id)
+            .order_by(Approval.created_at.desc())
+        ).all():
+            if any(
+                line["execution_id"] == execution.id and line["revision"] == execution.revision
+                for line in approval.snapshot["lines"]
+            ):
+                approval_state = approval.status
+                break
     value.update(
         allocated=str(allocated),
         unallocated=str(execution.quantity - execution.cancelled_quantity - allocated),
         shipped=str(shipped),
         delivered=str(delivered),
         open_claims=str(claims),
-        state="fulfilled"
+        state="cancelled"
+        if execution.cancelled_quantity == execution.quantity
+        else "fulfilled"
         if delivered + execution.cancelled_quantity == execution.quantity and claims == 0
         else "partial"
         if delivered > 0
@@ -109,7 +137,7 @@ def execution_view(db, execution: Execution) -> dict:
         if shipped > 0
         else "allocated"
         if allocated > 0
-        else "not_submitted",
+        else approval_state,
         funding=funding_for_execution(db, execution),
         allocations=[allocation_view(db, row) for row in allocations],
     )
@@ -157,6 +185,196 @@ def approval_snapshot(db, executions: list[Execution], reviewer_id: str) -> dict
             }
         )
     return {"lines": lines, "reviewer_id": reviewer_id}
+
+
+@router.post("/executions/{execution_id}/cancel")
+def cancel_execution(execution_id: str, data: ExecutionCancelIn, db: DB, user: Actor):
+    execution = db.get(Execution, execution_id)
+    if not execution:
+        error("NOT_FOUND", "Исполнение не найдено", 404)
+    check_request(db, user, execution.request_id, "documents.write")
+
+    def operation():
+        commerce_locks(db, [execution])
+        advisory(db, f"request-commerce:{execution.request_id}")
+        current = lock(db, Execution, execution_id)
+        check_version(current, data.version)
+        if current.cancelled_quantity == current.quantity:
+            error("ALREADY_CANCELLED", "Исполнение уже отменено", 409)
+
+        invoices = db.scalars(
+            select(CommercialDocument).where(
+                CommercialDocument.request_id == current.request_id,
+                CommercialDocument.kind == "invoice",
+                CommercialDocument.status != "cancelled",
+            )
+        ).all()
+        for inv in invoices:
+            if any(line.get("execution_id") == current.id for line in inv.snapshot.get("lines", [])):
+                error(
+                    "HAS_INVOICE",
+                    "Нельзя отменить или пересмотреть исполнение, по которому выставлен счёт. Сначала отмените счёт.",
+                )
+
+        allocs = db.scalars(
+            select(WaveAllocation).where(
+                WaveAllocation.execution_id == current.id, WaveAllocation.active.is_(True)
+            )
+        ).all()
+        if allocs:
+            error(
+                "HAS_ALLOCATION",
+                "Нельзя отменить или пересмотреть исполнение, которое распределено в волны. Сначала отмените распределения.",
+            )
+
+        current.cancelled_quantity = current.quantity
+        current.cancel_reason = data.reason
+        current.version += 1
+        db.flush()
+
+        audit(db, user, "execution", current.id, "cancel", reason=data.reason)
+        recalculate_funding(db, current.request_id)
+        recalculate_fulfillment(db, current.request_id)
+
+        return execution_view(db, current)
+
+    return idem(
+        db,
+        user,
+        data.idempotency_key,
+        f"cancel-execution:{execution_id}",
+        data.model_dump(mode="json"),
+        operation,
+    )
+
+
+@router.post("/executions/{execution_id}/revise")
+def revise_execution(execution_id: str, data: ExecutionReviseIn, db: DB, user: Actor):
+    execution = db.get(Execution, execution_id)
+    if not execution:
+        error("NOT_FOUND", "Исполнение не найдено", 404)
+    check_request(db, user, execution.request_id, "documents.write")
+
+    def operation():
+        commerce_locks(db, [execution])
+        advisory(db, f"request-commerce:{execution.request_id}")
+        current = lock(db, Execution, execution_id)
+        check_version(current, data.version)
+
+        if current.cancelled_quantity == current.quantity:
+            error("ALREADY_CANCELLED", "Нельзя редактировать отменённое исполнение")
+
+        invoices = db.scalars(
+            select(CommercialDocument).where(
+                CommercialDocument.request_id == current.request_id,
+                CommercialDocument.kind == "invoice",
+                CommercialDocument.status != "cancelled",
+            )
+        ).all()
+        for inv in invoices:
+            if any(line.get("execution_id") == current.id for line in inv.snapshot.get("lines", [])):
+                error(
+                    "HAS_INVOICE",
+                    "Нельзя отменить или пересмотреть исполнение, по которому выставлен счёт. Сначала отмените счёт.",
+                )
+
+        allocs = db.scalars(
+            select(WaveAllocation).where(
+                WaveAllocation.execution_id == current.id, WaveAllocation.active.is_(True)
+            )
+        ).all()
+        if allocs:
+            error(
+                "HAS_ALLOCATION",
+                "Нельзя отменить или пересмотреть исполнение, которое распределено в волны. Сначала отмените распределения.",
+            )
+
+        quote = db.get(Quote, current.quote_id)
+        item = check_quote(db, quote)
+        product = db.get(Product, quote.product_id)
+        from .documents import partial_amount, validate_quantity
+
+        quantity = dec(data.quantity)
+        validate_quantity(quote, product, quantity, current.unit)
+        if not item.quantity or not item.unit:
+            error("DEMAND_INCOMPLETE", "Укажите согласованный объём потребности")
+        calc = db.get(Calculation, db.get(CommercialDocument, current.proposal_id).calculation_id)
+        source = next((line for line in calc.snapshot["lines"] if line["line_id"] == current.line_id), None)
+        if source is None:
+            error("EXECUTION_SOURCE", "Исходная строка принятого состава не найдена")
+
+        existing = db.scalars(select(Execution).where(Execution.item_id == current.item_id)).all()
+        accepted = sum(
+            (
+                convert(ex.quantity - ex.cancelled_quantity, ex.unit, item.unit)
+                for ex in existing
+                if ex.id != current.id
+            ),
+            Decimal("0"),
+        )
+        requested = convert(quantity, current.unit, item.unit)
+        if accepted + requested > item.quantity:
+            error("ACCEPTANCE_EXCEEDED", "Сумма принятых количеств превышает потребность")
+        profile = calc.snapshot["profile"]
+        if not profile["allow_partial_acceptance"] and requested != item.quantity - accepted:
+            error("PARTIAL_ACCEPTANCE", "Профиль требует принятия полного остатка потребности")
+        # Count only the latest member of each revision chain. Historical
+        # snapshots remain intact without consuming the same quantity twice.
+        superseded = {ex.previous_id for ex in existing if ex.previous_id}
+        same_line = [
+            ex.snapshot
+            for ex in existing
+            if ex.proposal_id == current.proposal_id
+            and ex.line_id == current.line_id
+            and ex.id != current.id
+            and ex.id not in superseded
+        ]
+        part = partial_amount(source, quantity, same_line, profile)
+
+        current.cancelled_quantity = current.quantity
+        current.cancel_reason = data.reason
+        current.version += 1
+        new_execution = Execution(
+            request_id=current.request_id,
+            item_id=current.item_id,
+            proposal_id=current.proposal_id,
+            quote_id=current.quote_id,
+            line_id=current.line_id,
+            quantity=quantity,
+            unit=current.unit,
+            snapshot=part,
+            acceptance_reason=data.reason,
+            accepted_by=user.id,
+            revision=current.revision + 1,
+            previous_id=current.id,
+        )
+        db.add(new_execution)
+        db.flush()
+
+        audit(db, user, "execution", current.id, "cancel", reason=f"Пересмотр: {data.reason}")
+        audit(
+            db,
+            user,
+            "execution",
+            new_execution.id,
+            "revise",
+            after=serialize(new_execution),
+            reason=data.reason,
+        )
+
+        recalculate_funding(db, current.request_id)
+        recalculate_fulfillment(db, current.request_id)
+
+        return execution_view(db, new_execution)
+
+    return idem(
+        db,
+        user,
+        data.idempotency_key,
+        f"revise-execution:{execution_id}",
+        data.model_dump(mode="json"),
+        operation,
+    )
 
 
 @router.get("/requests/{request_id}/executions")
@@ -294,8 +512,8 @@ def decide_approval(approval_id: str, data: DecisionIn, db: DB, user: Actor):
                     "sale_confirmed",
                     after={"sale_confirmed_at": req.sale_confirmed_at},
                 )
-            req.commercial_stage = "sale_confirmed"
             req.version += 1
+            recalculate_fulfillment(db, req.id)
         approval.status, approval.reason = data.decision, data.reason
         approval.decided_by, approval.decided_at = user.id, utcnow()
         approval.version += 1
@@ -513,7 +731,7 @@ def transfer_allocation(allocation_id: str, data: TransferIn, db: DB, user: Acto
             error("TRANSFER_SHIPPED", "Перенос отправленного или неактивного распределения запрещён")
         if data.quantity > current.quantity:
             error("TRANSFER_QUANTITY", "Переносимый объём превышает распределение")
-        if db.scalar(select(FulfillmentEvent.id).where(FulfillmentEvent.allocation_id == current.id)):
+        if any(amount != 0 for amount in event_totals(db, current.id).values()):
             error("TRANSFER_HAS_EVENTS", "До переноса скорректируйте зафиксированные события распределения")
         current.active = False
         current.reason = data.reason
@@ -613,6 +831,7 @@ def record_event(allocation_id: str, data: FulfillmentIn, db: DB, user: Actor):
         db.add(obj)
         db.flush()
         audit(db, user, "fulfillment_event", obj.id, data.kind, after=serialize(obj), reason=data.reason)
+        recalculate_fulfillment(db, execution.request_id, wave_id=allocation.wave_id)
         return allocation_view(db, allocation)
 
     return idem(

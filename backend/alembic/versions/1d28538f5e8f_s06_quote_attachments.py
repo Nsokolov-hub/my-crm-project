@@ -1,6 +1,7 @@
 """s06_quote_attachments"""
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = '1d28538f5e8f'
 down_revision = '07985afd7ae7'

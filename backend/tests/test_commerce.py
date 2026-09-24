@@ -330,10 +330,16 @@ def test_a08_rounding_distribution_and_no_binary_float():
     with pytest.raises(DomainError):
         distribute(Decimal("1"), {"a": Decimal("0")}, Decimal("0.01"), "half_up")
 
+
 def test_a11_partial_amount_rounding():
     bases = {"p1": Decimal("1"), "p2": Decimal("1"), "p3": Decimal("1"), "p4": Decimal("1")}
     result = distribute(Decimal("0.02"), bases, Decimal("0.01"), "half_up")
-    assert result == {"p1": Decimal("0.01"), "p2": Decimal("0.00"), "p3": Decimal("0.01"), "p4": Decimal("0.00")}
+    assert result == {
+        "p1": Decimal("0.01"),
+        "p2": Decimal("0.00"),
+        "p3": Decimal("0.01"),
+        "p4": Decimal("0.00"),
+    }
 
 
 def test_a03_rfq_saved_file_not_sent_and_omits_finances(commerce):
@@ -672,3 +678,90 @@ def test_a20_no_financial_fields_or_idor(commerce):
     assert "detail" not in snapshot["lines"][0] and "quote" not in snapshot["lines"][0]
     with env["sessions"]() as db:
         assert db.scalar(select(AuditEvent.id))
+
+
+def test_financial_permissions_revocation_and_owner_change(commerce):
+    env = commerce
+    from uuid import uuid4
+
+    from tests.test_commerce import prepare
+
+    prepare(env, with_invoice=False)
+
+    str(uuid4())
+
+    calc = env["client"].get(f"/api/v1/requests/{env['request_id']}/calculations").json()["items"][0]
+    assert "cost" in calc["snapshot"]["lines"][0]["detail"]
+
+    with env["sessions"].begin() as db:
+        from app.core.models import PermissionGrant
+
+        db.query(PermissionGrant).filter_by(user_id=env["owner_id"], code="finance.profit.read").delete()
+        db.flush()
+
+    replayed = env["client"].get(f"/api/v1/requests/{env['request_id']}/calculations").json()["items"][0]
+    assert "cost" not in replayed["snapshot"]["lines"][0]["detail"]
+    assert "profit" not in replayed["snapshot"]["lines"][0]["detail"]
+
+    profile_view = env["client"].get("/api/v1/profiles").json()["items"][-1]
+    assert "formulas" not in profile_view["definition"]
+
+    with env["sessions"].begin() as db:
+        from app.core.models import PermissionGrant
+        from app.crm.models import Request as CRMRequest
+
+        db.query(PermissionGrant).filter_by(user_id=env["owner_id"], code="requests.read").delete()
+        db.add(PermissionGrant(user_id=env["owner_id"], code="requests.read", scope="own"))
+        req = db.get(CRMRequest, env["request_id"])
+        req.owner_id = env["other_id"]
+        db.flush()
+
+    response = env["client"].get(f"/api/v1/requests/{env['request_id']}/calculations")
+    assert response.status_code == 404
+
+
+def test_r05_partial_amount_small_rounding():
+    from decimal import Decimal
+
+    from app.commerce.documents import partial_amount
+
+    # 0.02 / 4 problem:
+    original = {"quantity": "4", "net": "0.02", "tax": "0.01", "total": "0.03"}
+
+    profile = {"currency_precision": {"RUB": 2}, "sale_currency": "RUB", "rounding": "half_up"}
+
+    # Issue piece 1 (qty 1)
+    # 0.02 * 1 / 4 = 0.005 -> 0.01 (half_up)
+    p1 = partial_amount(original, Decimal("1"), [], profile)
+    assert p1["net"] == "0.01"
+    assert p1["tax"] == "0.00"
+    assert p1["total"] == "0.01"
+
+    # Issue piece 2 (qty 1)
+    # 0.02 * 1 / 4 = 0.005 -> 0.01
+    p2 = partial_amount(original, Decimal("1"), [p1], profile)
+    assert p2["net"] == "0.01"
+    assert p2["tax"] == "0.00"
+    assert p2["total"] == "0.01"
+
+    # Now remaining net is 0.00
+
+    # Issue piece 3 (qty 1)
+    p3 = partial_amount(original, Decimal("1"), [p1, p2], profile)
+    assert p3["net"] == "0.00"  # Capped because 0.02 - 0.02 = 0
+    assert p3["tax"] == "0.00"
+
+    # Issue piece 4 (qty 1) - Final
+    p4 = partial_amount(original, Decimal("1"), [p1, p2, p3], profile)
+    assert p4["net"] == "0.00"  # Should not be negative!
+    assert p4["tax"] == "0.01"  # Because original tax was 0.01, sum(previous) was 0.00
+
+    assert Decimal(p1["net"]) + Decimal(p2["net"]) + Decimal(p3["net"]) + Decimal(p4["net"]) == Decimal(
+        "0.02"
+    )
+    assert Decimal(p1["tax"]) + Decimal(p2["tax"]) + Decimal(p3["tax"]) + Decimal(p4["tax"]) == Decimal(
+        "0.01"
+    )
+    assert Decimal(p1["total"]) + Decimal(p2["total"]) + Decimal(p3["total"]) + Decimal(
+        p4["total"]
+    ) == Decimal("0.03")

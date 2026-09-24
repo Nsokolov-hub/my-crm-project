@@ -3,13 +3,15 @@ from decimal import Decimal
 from fastapi import APIRouter
 from sqlalchemy import select
 
+from app.commerce.recalculate import recalculate_funding
 from app.core.db import utcnow
 from app.core.errors import error
 from app.core.security import check_request, has_request_permission
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
+from app.crm.models import Request as CRMRequest
 
 from .calculator import dec
-from .models import Approval, CommercialDocument, Execution, Payment, PaymentAllocation, PaymentReversal
+from .models import CommercialDocument, Execution, Payment, PaymentAllocation, PaymentReversal
 from .procurement import DB, Actor
 from .schemas import PaymentAllocateIn, PaymentIn, PaymentReverseIn, VersionCommand
 
@@ -29,7 +31,7 @@ def allocation_balance(db, allocation: PaymentAllocation) -> Decimal:
     return allocation.amount - reversed_amount
 
 
-def payment_balance(db, payment: Payment) -> dict:
+def payment_balance(db, payment: Payment, user: Actor = None) -> dict:
     allocations = db.scalars(
         select(PaymentAllocation).where(PaymentAllocation.payment_id == payment.id)
     ).all()
@@ -39,34 +41,50 @@ def payment_balance(db, payment: Payment) -> dict:
         )
     ).all()
     refunded = sum((row.amount for row in returns), Decimal("0"))
-    allocated = sum((allocation_balance(db, row) for row in allocations), Decimal("0"))
+
+    total_allocated = sum((allocation_balance(db, row) for row in allocations), Decimal("0"))
+    unallocated = (
+        payment.amount - refunded - total_allocated if payment.status == "confirmed" else Decimal("0")
+    )
+
+    if user:
+        visible_allocated = Decimal("0")
+        for row in allocations:
+            invoice = db.get(CommercialDocument, row.invoice_id)
+            if has_request_permission(db, user, invoice.request_id, "requests.read"):
+                visible_allocated += allocation_balance(db, row)
+        allocated = visible_allocated
+    else:
+        allocated = total_allocated
+
     return {
         "confirmed_amount": str(payment.amount - refunded if payment.status == "confirmed" else Decimal("0")),
         "allocated": str(allocated),
         "refunded": str(refunded),
-        "unallocated": str(
-            payment.amount - refunded - allocated if payment.status == "confirmed" else Decimal("0")
-        ),
+        "unallocated": str(unallocated),
     }
 
 
 def payment_view(db, user, payment: Payment) -> dict:
     allocations = []
+    visible_allocations = set()
     for row in db.scalars(select(PaymentAllocation).where(PaymentAllocation.payment_id == payment.id)).all():
         invoice = db.get(CommercialDocument, row.invoice_id)
         if has_request_permission(db, user, invoice.request_id, "requests.read"):
             allocations.append({**serialize(row), "remaining": str(allocation_balance(db, row))})
-            
+            visible_allocations.add(row.id)
+
+    reversals = []
+    for row in db.scalars(select(PaymentReversal).where(PaymentReversal.payment_id == payment.id)).all():
+        if row.allocation_id and row.allocation_id not in visible_allocations:
+            continue
+        reversals.append(serialize(row))
+
     return {
         **serialize(payment),
-        **payment_balance(db, payment),
+        **payment_balance(db, payment, user),
         "allocations": allocations,
-        "reversals": [
-            serialize(row)
-            for row in db.scalars(
-                select(PaymentReversal).where(PaymentReversal.payment_id == payment.id)
-            ).all()
-        ],
+        "reversals": reversals,
     }
 
 
@@ -205,6 +223,7 @@ def confirm_payment(payment_id: str, data: VersionCommand, db: DB, user: Actor):
         current.status = "confirmed"
         current.confirmed_by, current.confirmed_at = user.id, utcnow()
         current.version += 1
+        recalculate_funding(db, req.id)
         audit(
             db,
             user,
@@ -275,6 +294,13 @@ def allocate_payment(payment_id: str, data: PaymentAllocateIn, db: DB, user: Act
             db.flush()
             audit(db, user, "payment_allocation", obj.id, "allocate", after=serialize(obj))
         current.version += 1
+        affected_requests = {payment.request_id}
+        for row in data.allocations:
+            invoice = db.get(CommercialDocument, row.invoice_id)
+            if invoice:
+                affected_requests.add(invoice.request_id)
+        for rid in affected_requests:
+            recalculate_funding(db, rid)
         return payment_view(db, user, current)
 
     return idem(
@@ -284,6 +310,7 @@ def allocate_payment(payment_id: str, data: PaymentAllocateIn, db: DB, user: Act
         f"allocate-payment:{payment_id}",
         data.model_dump(mode="json"),
         operation,
+        lambda result: payment_view(db, user, db.get(Payment, result["id"])),
     )
 
 
@@ -327,39 +354,11 @@ def reverse_payment(payment_id: str, data: PaymentReverseIn, db: DB, user: Actor
         db.flush()
         current.version += 1
         for request_id in sorted(affected_requests):
-            executions = db.scalars(select(Execution).where(Execution.request_id == request_id)).all()
-            for execution in executions:
-                approvals = db.scalars(
-                    select(Approval).where(Approval.request_id == request_id, Approval.status == "approved")
-                ).all()
-                applicable = [
-                    approval
-                    for approval in approvals
-                    if any(row["execution_id"] == execution.id for row in approval.snapshot["lines"])
-                ]
-                if applicable:
-                    threshold = max(
-                        dec(row["funding_ratio"])
-                        for approval in applicable
-                        for row in approval.snapshot["lines"]
-                        if row["execution_id"] == execution.id
-                    )
-                    execution.financing_deficit = (
-                        dec(funding_for_execution(db, execution)["ratio"]) < threshold
-                    )
-                    if execution.financing_deficit:
-                        for reviewer_id in {approval.reviewer_id for approval in applicable} | {user.id}:
-                            notify(
-                                db,
-                                reviewer_id,
-                                f"funding-deficit:{obj.id}:{execution.id}",
-                                "Обнаружен дефицит финансирования согласованной позиции",
-                                "request",
-                                request_id,
-                            )
+            recalculate_funding(db, request_id)
+            affected_request = db.get(CRMRequest, request_id)
             notify(
                 db,
-                req.owner_id,
+                affected_request.owner_id,
                 f"payment-reversed:{obj.id}:{request_id}",
                 "Выполнена обратная операция оплаты",
                 "request",
@@ -375,4 +374,5 @@ def reverse_payment(payment_id: str, data: PaymentReverseIn, db: DB, user: Actor
         f"reverse-payment:{payment_id}",
         data.model_dump(mode="json"),
         operation,
+        lambda result: payment_view(db, user, db.get(Payment, result["id"])),
     )

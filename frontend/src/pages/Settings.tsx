@@ -215,7 +215,11 @@ export function Settings() {
                 render: (r) => date(r.effective_from),
               },
               { key: 'reason', label: 'Основание' },
-              { key: 'created_at', label: 'Утверждён', render: (r) => date(r.created_at, true) },
+              { key: 'status', label: 'Статус', render: (r) => r.status === 'published' ? '✅ Действует' : (
+                  <Button variant="secondary" onClick={(e) => { e.stopPropagation(); void command.run(`/profiles/${r.id}/publish`, {}, 'POST', true).then(() => setRevision(v => v + 1)); }}>
+                    Опубликовать
+                  </Button>
+                ) },
             ]}
           />
         </>
@@ -394,7 +398,7 @@ export function Settings() {
           initial={selected ? { name: selected.name, definition: profile } : undefined}
           extra={selected ? { previous_id: selected.id } : undefined}
           fields={profileFields}
-          note="Публикация фиксирует ваше утверждение введённых правил. Условный пример необходимо адаптировать к вашей компании."
+          note="Сохранение создаёт новую версию (черновик). Для применения правил к новым заявкам необходимо опубликовать её."
           onClose={() => {
             setEditing(false);
             setSelected(undefined);

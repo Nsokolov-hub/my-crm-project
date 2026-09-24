@@ -21,7 +21,9 @@ jobs:
       - name: Check code style
         run: ruff check backend
       - name: Run backend SQLite tests
-        run: PYTHONPATH=backend pytest backend/tests -m 'not postgres' -q -p no:cacheprovider --junitxml=backend-sqlite-report.xml
+        env:
+          DATABASE_URL: sqlite://
+        run: PYTHONPATH=backend pytest backend/tests -m 'not postgres and not integration' -q -p no:cacheprovider --junitxml=backend-sqlite-report.xml
       - name: Upload Test Report
         uses: actions/upload-artifact@v4
         if: always()
@@ -98,7 +100,9 @@ jobs:
         run: pnpm exec stylelint "src/**/*.scss"
       - name: Run frontend tests
         working-directory: frontend
-        run: pnpm run test -- --reporter=junit --outputFile=frontend-report.xml
+        env:
+          TZ: Europe/Moscow
+        run: pnpm exec vitest run --reporter=junit --outputFile=frontend-report.xml
       - name: Build frontend
         working-directory: frontend
         run: pnpm run build

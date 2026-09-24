@@ -29,6 +29,9 @@ PERMISSIONS = {
     'exports.download': 'Экспорт и скачивание', 'imports.write': 'Импорт клиентской базы', 'analytics.read': 'Аналитика',
     'chats.use': 'Внутреннее общение', 'files.upload': 'Загрузка вложений',
     'admin.users': 'Управление пользователями и ролями', 'admin.settings': 'Настройки системы', 'audit.read': 'Просмотр аудита',
+    'settings.dictionaries.write': 'Настройка рабочих справочников',
+    'settings.system.write': 'Настройка системных правил',
+    'settings.commerce.write': 'Настройка коммерческих правил',
 }
 
 
@@ -113,8 +116,9 @@ def wave_predicate(db: Session, user: User, permission: str = 'requests.read') -
     return False
 
 def task_predicate(db: Session, user: User) -> Any:
-    from app.crm.models import Task, Request as CRMRequest, Counterparty
     from app.commerce.models import Wave
+    from app.crm.models import Counterparty, Task
+    from app.crm.models import Request as CRMRequest
     
     scope = scope_for(db, user, 'tasks.read')
     if not scope:

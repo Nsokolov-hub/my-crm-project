@@ -227,7 +227,7 @@ export function RequestQuotes({ requestId }: { requestId: string }) {
             render: (r) => (
               <span
                 className={
-                  r.valid_until && new Date(String(r.valid_until)) < new Date() ? 'overdue' : ''
+                  r.valid_until && new Date(String(r.valid_until) + 'T23:59:59') < new Date() ? 'overdue' : ''
                 }
               >
                 {date(r.valid_until)}

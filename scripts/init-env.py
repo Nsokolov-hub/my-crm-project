@@ -15,9 +15,14 @@ def main() -> None:
     if not args.database.isidentifier() or not args.database.isascii():
         parser.error("Имя базы: ASCII-буквы, цифры и подчёркивание; не начинается с цифры")
     password = secrets.token_hex(24)
+    api_password = secrets.token_hex(24)
+    backup_password = secrets.token_hex(24)
     content = (
         "ENVIRONMENT=development\n"
+        "COMPOSE_PROJECT_NAME=crm-project\n"
         f"POSTGRES_DB={args.database}\nPOSTGRES_USER=crm\nPOSTGRES_PASSWORD={password}\n"
+        f"CRM_API_PASSWORD={api_password}\n"
+        f"CRM_BACKUP_PASSWORD={backup_password}\n"
         f"DATABASE_URL=postgresql+psycopg://crm:{password}@127.0.0.1:54329/{args.database}\n"
         f"SECRET_KEY={secrets.token_hex(48)}\nSTORAGE_DIR=.runtime/files\n"
         "ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080\n"
