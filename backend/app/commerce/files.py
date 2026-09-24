@@ -56,6 +56,17 @@ def safe_cell(value):
     return value
 
 
+def format_details(value: object) -> str:
+    if isinstance(value, dict):
+        parts = [
+            f"{key}: {item}"
+            for key, item in value.items()
+            if item is not None and str(item).strip()
+        ]
+        return " · ".join(parts) or "—"
+    return str(value) if value else "—"
+
+
 def workbook(headers: list[str], rows: list[list], title: str) -> bytes:
     book = Workbook()
     sheet = book.active
@@ -110,8 +121,8 @@ def document_files(snapshot: dict) -> dict:
     ]
     xlsx_rows = [
         [snapshot["title"], snapshot["number"], snapshot["date"]],
-        ["Продавец", snapshot["seller"]["name"], str(snapshot["seller"].get("details", {}))],
-        ["Клиент", snapshot["client"]["name"], str(snapshot["client"].get("details", {}))],
+        ["Продавец", snapshot["seller"]["name"], format_details(snapshot["seller"].get("details"))],
+        ["Клиент", snapshot["client"]["name"], format_details(snapshot["client"].get("details"))],
         ["Валюта", snapshot["currency"]],
         [],
         headers,
@@ -164,9 +175,9 @@ def document_files(snapshot: dict) -> dict:
         Paragraph(escape(f"{snapshot['title']} № {snapshot['number']}"), title_style),
         p(f"Дата: {snapshot['date']} · Валюта: {snapshot['currency']}"),
         p(f"Продавец: {snapshot['seller']['name']}"),
-        p(str(snapshot["seller"].get("details", {}))),
+        p(format_details(snapshot["seller"].get("details"))),
         p(f"Клиент: {snapshot['client']['name']}"),
-        p(str(snapshot["client"].get("details", {}))),
+        p(format_details(snapshot["client"].get("details"))),
         Spacer(1, 8),
     ]
     pdf_headers = ["№", "Наименование", "Кол-во / ед.", "Без налога", "Налог", "Итого"]

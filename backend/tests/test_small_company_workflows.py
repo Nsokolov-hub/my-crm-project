@@ -65,5 +65,9 @@ def test_manager_call_form_uses_configured_results_and_cannot_read_other_setting
         "grants": [{"code": "calls.write", "scope": "own", "allow": False}],
     })
     assert permissions.status_code == 200, permissions.text
+    assert permissions.json()["grants"] == [
+        {"code": "calls.write", "scope": "own", "allow": False}
+    ]
+    assert "calls.write" not in permissions.json()["permissions"]
     login(crm, "manager@example.com")
     assert crm["client"].get("/api/v1/dictionaries/call_results").status_code == 403

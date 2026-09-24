@@ -3,24 +3,61 @@ import { Link } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
 import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
-import { RecordForm } from '../components/Form';
+import { FinancialProfileEditor } from '../components/FinancialProfileEditor';
+import { RolePermissionsEditor, UserAccessEditor } from '../components/RolePermissionsEditor';
+import { WorkingRulesEditor } from '../components/WorkingRulesEditor';
 import { Badge, Button, DetailPairs, ErrorBox, PageHeading, Section } from '../components/ui';
 import { api } from '../lib/api';
 import { useCommand } from '../lib/hooks';
-import { date, today } from '../lib/format';
+import { date } from '../lib/format';
 import type { Entity, Field } from '../lib/types';
 
 const sellerFields: Field[] = [
   { name: 'name', label: 'Название организации', required: true },
-  { name: 'currency', label: 'Управленческая валюта (ISO)', required: true },
   {
-    name: 'details',
-    label: 'Юридические и банковские реквизиты',
-    type: 'json',
-    value: {},
-    help: 'Реквизиты копируются в документ при его выпуске.',
+    name: 'currency',
+    label: 'Валюта учёта',
+    required: true,
+    value: 'RUB',
+    help: 'Трёхбуквенный код валюты, например RUB.',
   },
+  { name: 'tax_id', label: 'ИНН' },
+  { name: 'registration_code', label: 'КПП' },
+  { name: 'legal_address', label: 'Юридический адрес', wide: true },
+  { name: 'bank', label: 'Банк' },
+  { name: 'bank_account', label: 'Расчётный счёт' },
+  { name: 'bank_code', label: 'БИК' },
 ];
+const sellerDetailFields = {
+  tax_id: 'ИНН',
+  registration_code: 'КПП',
+  legal_address: 'Юридический адрес',
+  bank: 'Банк',
+  bank_account: 'Расчётный счёт',
+  bank_code: 'БИК',
+};
+function sellerBody(values: Record<string, unknown>): Record<string, unknown> {
+  const details = Object.fromEntries(
+    Object.entries(sellerDetailFields)
+      .map(([key, label]) => [label, String(values[key] || '').trim()])
+      .filter(([, value]) => value),
+  );
+  return {
+    name: String(values.name || '').trim(),
+    currency: String(values.currency || '')
+      .trim()
+      .toUpperCase(),
+    details,
+  };
+}
+function sellerDetails(row: Entity): string {
+  const details = row.details;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return 'Не заполнены';
+  const values = Object.entries(details as Record<string, unknown>)
+    .filter(([, value]) => value !== null && value !== undefined && value !== '')
+    .map(([key, value]) => `${key}: ${String(value)}`);
+  return values.length ? values.join(' · ') : 'Не заполнены';
+}
 const userFields: Field[] = [
   { name: 'name', label: 'Имя сотрудника', required: true },
   { name: 'email', label: 'Рабочая почта', type: 'email', required: true },
@@ -34,44 +71,24 @@ export function Settings() {
   const [editing, setEditing] = useState(false);
   const [revision, setRevision] = useState(0);
   const [error, setError] = useState<unknown>();
-  const [profile, setProfile] = useState<Record<string, unknown>>();
   const [mfa, setMfa] = useState<{ secret: string; uri: string }>();
   const [otp, setOtp] = useState('');
   const command = useCommand();
   const tabs = [
-    ['organization', 'Организация'],
-    ['users', 'Сотрудники'],
-    ['roles', 'Роли и права'],
-    ['profiles', 'Финансовые профили'],
-    ['settings', 'Правила работы'],
-    ['audit', 'Аудит'],
-    ['jobs', 'Фоновые операции'],
+    ...(auth.can('admin.settings') ? [['organization', 'Организация']] : []),
+    ...(auth.can('admin.users')
+      ? [
+          ['users', 'Сотрудники'],
+          ['roles', 'Роли и права'],
+        ]
+      : []),
+    ...(auth.can('finance.calculations.read') ? [['profiles', 'Финансовые профили']] : []),
+    ...(auth.can('admin.settings') ? [['settings', 'Правила работы']] : []),
+    ...(auth.can('audit.read') ? [['audit', 'Аудит']] : []),
+    ...(auth.can('admin.settings') ? [['jobs', 'Фоновые операции']] : []),
     ['account', 'Мой аккаунт'],
   ];
-  async function example() {
-    try {
-      const result = await api<{ definition: Record<string, unknown> }>('/profiles/example');
-      setProfile(result.definition);
-      setEditing(true);
-    } catch (e) {
-      setError(e);
-    }
-  }
-  const profileFields: Field[] = [
-    { name: 'name', label: 'Название профиля', required: true },
-    { name: 'effective_from', label: 'Действует с', required: true, type: 'date', value: today() },
-    { name: 'effective_until', label: 'Действует по', type: 'date' },
-    {
-      name: 'definition',
-      label: 'Формулы, ставки, округление и шаблон',
-      required: true,
-      type: 'json',
-      value: profile || {},
-      wide: true,
-      help: 'Именованные формулы вычисляются по порядку. Допускается только арифметика; налоги и ставки задаёте вы. Изменения создают отдельную версию.',
-    },
-    { name: 'reason', label: 'Основание утверждения', required: true, type: 'textarea' },
-  ];
+  const currentTab = tabs.some(([key]) => key === tab) ? tab : tabs[0][0];
   return (
     <>
       <PageHeading
@@ -82,7 +99,7 @@ export function Settings() {
         {tabs.map(([key, label]) => (
           <button
             key={key}
-            className={tab === key ? 'active' : ''}
+            className={currentTab === key ? 'active' : ''}
             onClick={() => {
               setTab(key);
               setSelected(undefined);
@@ -94,21 +111,22 @@ export function Settings() {
         ))}
       </nav>
       <ErrorBox error={error || command.error} />
-      {tab === 'organization' && (
+      {currentTab === 'organization' && (
         <Collection
           title="Организации продавца"
           endpoint="/sellers"
           fields={sellerFields}
+          transform={sellerBody}
           createLabel="Добавить организацию"
           canCreate={auth.can('admin.settings')}
           columns={[
             { key: 'name', label: 'Название' },
             { key: 'currency', label: 'Валюта' },
-            { key: 'details', label: 'Реквизиты' },
+            { key: 'details', label: 'Реквизиты', render: sellerDetails },
           ]}
         />
       )}
-      {tab === 'users' && (
+      {currentTab === 'users' && (
         <Collection
           title="Приглашённые сотрудники"
           endpoint="/admin/users"
@@ -131,69 +149,27 @@ export function Settings() {
           ]}
         />
       )}
-      {tab === 'roles' && (
-        <>
-          <div className="info-note">
-            Итоговые права складываются из ролей. Персональный запрет сотрудника имеет приоритет.
-            Область действия: свои, совместные или все записи.
-          </div>
-          <Collection
-            title="Роли"
-            endpoint="/admin/roles"
-            fields={[
-              { name: 'name', label: 'Название роли', required: true },
-              {
-                name: 'grants',
-                label: 'Разрешения',
-                type: 'json',
-                value: [],
-                required: true,
-                help: 'Массив {code,scope,allow}; коды доступны в справочнике ниже.',
-              },
-            ]}
-            refreshKey={revision}
-            onSelect={(r) => {
-              setSelected(r);
-              setEditing(true);
-            }}
-            columns={[
-              { key: 'name', label: 'Роль' },
-              { key: 'grants', label: 'Разрешения' },
-            ]}
-          />
-          <Collection
-            title="Справочник разрешений"
-            endpoint="/admin/permissions"
-            columns={[
-              { key: 'code', label: 'Код' },
-              { key: 'name', label: 'Действие' },
-            ]}
-          />
-        </>
-      )}
-      {tab === 'profiles' && (
+      {currentTab === 'roles' && <RolePermissionsEditor />}
+      {currentTab === 'profiles' && (
         <>
           <Section
             title="Настраиваемая финансовая модель"
-            description="Профиль фиксирует формулы, точность, расходы, финансирование и шаблон документов."
+            description="Профиль задаёт ставки, валюты, порядок расчёта, условия оплаты и вид документов."
           >
             <div className="form-body">
               <p>
-                Реальных налоговых ставок по умолчанию нет. Сначала заполните собственные правила и
-                проверьте итог на контрольных примерах. Утверждённый профиль сохраняется отдельной
-                версией.
+                Укажите ставки вашей компании и проверьте результат на контрольном примере.
+                Сохранение создаст черновик; после проверки опубликуйте его.
               </p>
               <div className="inline-actions">
                 <Button
                   onClick={() => {
-                    setProfile({});
+                    setSelected(undefined);
                     setEditing(true);
                   }}
+                  disabled={!auth.can('profiles.write') || !auth.can('templates.write')}
                 >
                   Создать профиль
-                </Button>
-                <Button variant="secondary" onClick={() => void example()}>
-                  Открыть условный пример ТЗ
                 </Button>
               </div>
             </div>
@@ -202,49 +178,53 @@ export function Settings() {
             title="Версии профилей"
             endpoint="/profiles"
             refreshKey={revision}
-            onSelect={(r) => {
-              setSelected(r);
-              setProfile(r.definition as Record<string, unknown>);
-              setEditing(true);
-            }}
+            onSelect={
+              auth.can('profiles.write') && auth.can('templates.write')
+                ? (r) => {
+                    setSelected(r);
+                    setEditing(true);
+                  }
+                : undefined
+            }
             columns={[
               { key: 'name', label: 'Профиль' },
               {
                 key: 'effective_from',
                 label: 'Действует с',
-                render: (r) => date(r.effective_from),
+                render: (r) => (r.status === 'draft' ? 'После публикации' : date(r.effective_from)),
               },
               { key: 'reason', label: 'Основание' },
-              { key: 'status', label: 'Статус', render: (r) => r.status === 'published' ? '✅ Действует' : (
-                  <Button variant="secondary" onClick={(e) => { e.stopPropagation(); void command.run(`/profiles/${r.id}/publish`, {}, 'POST', true).then(() => setRevision(v => v + 1)); }}>
-                    Опубликовать
-                  </Button>
-                ) },
+              {
+                key: 'status',
+                label: 'Статус',
+                render: (r) =>
+                  r.status === 'published' ? (
+                    '✅ Действует'
+                  ) : r.status === 'archived' ? (
+                    'Архив'
+                  ) : auth.can('profiles.write') && auth.can('templates.write') ? (
+                    <Button
+                      variant="secondary"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void command
+                          .run(`/profiles/${r.id}/publish`, {}, 'POST', true)
+                          .then(() => setRevision((v) => v + 1))
+                          .catch(setError);
+                      }}
+                    >
+                      Опубликовать
+                    </Button>
+                  ) : (
+                    'Черновик'
+                  ),
+              },
             ]}
           />
         </>
       )}
-      {tab === 'settings' && (
-        <Collection
-          title="Правила работы"
-          endpoint="/settings"
-          fields={[
-            { name: 'key', label: 'Ключ настройки', required: true },
-            { name: 'value', label: 'Значения', type: 'json', required: true, value: {} },
-          ]}
-          refreshKey={revision}
-          onSelect={(r) => {
-            setSelected(r);
-            setEditing(true);
-          }}
-          columns={[
-            { key: 'key', label: 'Настройка' },
-            { key: 'value', label: 'Значения' },
-            { key: 'version', label: 'Версия' },
-          ]}
-        />
-      )}
-      {tab === 'audit' && (
+      {currentTab === 'settings' && <WorkingRulesEditor />}
+      {currentTab === 'audit' && (
         <Collection
           title="Журнал аудита"
           endpoint="/admin/audit"
@@ -257,7 +237,7 @@ export function Settings() {
           ]}
         />
       )}
-      {tab === 'jobs' && (
+      {currentTab === 'jobs' && (
         <Collection
           title="Фоновые операции"
           endpoint="/admin/jobs"
@@ -270,7 +250,7 @@ export function Settings() {
           ]}
         />
       )}
-      {tab === 'account' && (
+      {currentTab === 'account' && (
         <Section title="Защита аккаунта">
           <div className="form-body">
             <DetailPairs
@@ -328,26 +308,9 @@ export function Settings() {
           </div>
         </Section>
       )}
-      {editing && tab === 'users' && selected && (
-        <RecordForm
-          title="Доступ сотрудника"
-          endpoint={`/admin/users/${selected.id}`}
-          method="PATCH"
-          initial={{ ...selected, role_ids: ((selected.roles || []) as Entity[]).map((r) => r.id) }}
-          extra={{ version: selected.version }}
-          fields={[
-            { name: 'name', label: 'Имя', required: true },
-            { name: 'active', label: 'Доступ активен', type: 'checkbox' },
-            { name: 'role_ids', label: 'Роли', type: 'multiselect', source: '/admin/roles' },
-            { name: 'grants', label: 'Персональные разрешения и запреты', type: 'json', value: [] },
-            {
-              name: 'reassign_to',
-              label: 'Передать работу сотруднику',
-              type: 'select',
-              source: '/users',
-            },
-            { name: 'reason', label: 'Причина изменения', required: true, type: 'textarea' },
-          ]}
+      {editing && currentTab === 'users' && selected && (
+        <UserAccessEditor
+          user={selected}
           onClose={() => setEditing(false)}
           onSuccess={() => {
             setEditing(false);
@@ -355,50 +318,9 @@ export function Settings() {
           }}
         />
       )}
-      {editing && tab === 'roles' && selected && (
-        <RecordForm
-          title="Изменить роль"
-          endpoint={`/admin/roles/${selected.id}`}
-          method="PUT"
+      {editing && currentTab === 'profiles' && (
+        <FinancialProfileEditor
           initial={selected}
-          extra={{ version: selected.version }}
-          fields={[
-            { name: 'name', label: 'Название', required: true },
-            { name: 'grants', label: 'Разрешения', type: 'json', required: true },
-          ]}
-          onClose={() => setEditing(false)}
-          onSuccess={() => {
-            setEditing(false);
-            setRevision((v) => v + 1);
-          }}
-        />
-      )}
-      {editing && tab === 'settings' && selected && (
-        <RecordForm
-          title="Изменить настройку"
-          endpoint="/settings"
-          initial={selected}
-          extra={{ version: selected.version }}
-          fields={[
-            { name: 'key', label: 'Ключ', required: true },
-            { name: 'value', label: 'Значения', type: 'json', required: true },
-          ]}
-          onClose={() => setEditing(false)}
-          onSuccess={() => {
-            setEditing(false);
-            setRevision((v) => v + 1);
-          }}
-        />
-      )}
-      {editing && tab === 'profiles' && (
-        <RecordForm
-          title={selected ? 'Новая версия профиля' : 'Утвердить профиль расчёта'}
-          endpoint="/profiles"
-          command
-          initial={selected ? { name: selected.name, definition: profile } : undefined}
-          extra={selected ? { previous_id: selected.id } : undefined}
-          fields={profileFields}
-          note="Сохранение создаёт новую версию (черновик). Для применения правил к новым заявкам необходимо опубликовать её."
           onClose={() => {
             setEditing(false);
             setSelected(undefined);
