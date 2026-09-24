@@ -21,3 +21,5 @@ deliverables/
 *.tsbuildinfo
 backups/
 reports/
+output/
+tmp/
