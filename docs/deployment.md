@@ -18,7 +18,8 @@ python3 scripts/init-env.py --database crm
 
 2. Запустите стек сервисов:
 ```bash
-docker compose up -d --build
+docker compose build api web
+docker compose up -d --no-build
 ```
 > **Внимание:** Сервис `migrate` перед миграциями Alembic автоматически инициализирует и актуализирует ограниченные роли `crm_api` (только DML) и `crm_backup` (только SELECT).
 > ClamAV инициализируется около 180 секунд для загрузки антивирусных баз. Сервисы `api` и `worker` запустятся под ограниченной ролью `crm_api` после завершения миграций.
@@ -36,15 +37,15 @@ docker compose exec api python -m app.bootstrap --email owner@example.com --name
   * Резервное копирование выполняется под ролью `crm_backup` (доступ только на чтение, запись заблокирована).
   * Миграции схемы выполняются выделенным сервисом `migrate` под учетной записью владельца БД.
 * **Защита неизменяемой истории:** Все финансовые и аудиторные таблицы защищены триггерами `crm_protect_history()`, блокирующими `UPDATE` и `DELETE`.
-* **Сетевая изоляция:** Сервисы `db`, `clamav`, `api` не публикуют порты наружу. Публичный доступ осуществляется через реверс-прокси к контейнеру `web` (`8080`).
+* **Сетевая изоляция:** Порты `db`, `clamav`, `api` и `web` в стандартном Compose привязаны только к `127.0.0.1` компьютера запуска. Для доступа извне отдельно настройте HTTPS-прокси и разрешённый источник браузера в `ALLOWED_ORIGINS`.
 
 ## 4. Обновление (Update)
 
 Для обновления продукта до новой версии выполните:
 ```bash
 git pull origin main
-docker compose build
-docker compose up -d
+docker compose build api web
+docker compose up -d --no-build
 ```
 Миграции базы данных и обновление прав ограниченных ролей запустятся автоматически сервисом `migrate` до старта API.
 
@@ -83,5 +84,6 @@ git checkout <target_tag>
 ```
 3. Пересоберите и перезапустите контейнеры:
 ```bash
-docker compose up -d --build
+docker compose build api web
+docker compose up -d --no-build
 ```
