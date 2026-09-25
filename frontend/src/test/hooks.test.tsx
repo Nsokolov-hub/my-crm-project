@@ -1,5 +1,5 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useApi, useCommand, useDirtyProtection } from '../lib/hooks';
 import * as apiModule from '../lib/api';
 
@@ -34,17 +34,47 @@ describe('hooks/useCommand', () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('submits when crypto.randomUUID is unavailable on an HTTP origin', async () => {
+    const browserCrypto = globalThis.crypto;
+    vi.stubGlobal('crypto', {
+      getRandomValues: browserCrypto.getRandomValues.bind(browserCrypto),
+    });
+    vi.mocked(apiModule.api).mockResolvedValue({ id: 'new-seller' });
+
+    const { result } = renderHook(() => useCommand());
+    await act(async () => {
+      await result.current.run('/sellers', { name: 'ООО Тест', currency: 'RUB' });
+    });
+
+    expect(apiModule.api).toHaveBeenCalledWith(
+      '/sellers',
+      expect.objectContaining({
+        method: 'POST',
+        key: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        ),
+      }),
+    );
+    expect(result.current.error).toBeUndefined();
+  });
+
   it('uses same idempotency key for repeated commands if arguments are the same', async () => {
     let callCount = 0;
     let providedKey = '';
 
-    vi.mocked(apiModule.api).mockImplementation(async (_path, init: Parameters<typeof apiModule.api>[1]) => {
-      callCount++;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      providedKey = (init as any)?.key || '';
-      if (callCount === 1) throw new Error('Network error');
-      return { success: true };
-    });
+    vi.mocked(apiModule.api).mockImplementation(
+      async (_path, init: Parameters<typeof apiModule.api>[1]) => {
+        callCount++;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        providedKey = (init as any)?.key || '';
+        if (callCount === 1) throw new Error('Network error');
+        return { success: true };
+      },
+    );
 
     const { result } = renderHook(() => useCommand());
 
@@ -77,7 +107,7 @@ describe('hooks/useDirtyProtection', () => {
     const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener');
 
     const { rerender, unmount } = renderHook(({ dirty }) => useDirtyProtection(dirty), {
-      initialProps: { dirty: false }
+      initialProps: { dirty: false },
     });
 
     expect(addEventListenerSpy).not.toHaveBeenCalledWith('beforeunload', expect.any(Function));

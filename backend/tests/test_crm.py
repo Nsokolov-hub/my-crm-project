@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
 from app.core.db import Base, get_db
-from app.core.models import AuthSession, PermissionGrant, User
+from app.core.models import AuthSession, PermissionGrant, Role, User
 from app.core.security import PERMISSIONS, password_hasher
 from app.crm.imports import COLUMNS, parse_rows, process_import, xlsx
 from app.crm.models import Call, Contact, Counterparty, ImportBatch, Request, Task
@@ -97,6 +97,38 @@ def post(env, path, data, status=201, key=None):
     )
     assert response.status_code == status, response.text
     return response.json()
+
+
+def test_admin_can_save_seller_and_user_from_allowed_browser_origin(crm, monkeypatch):
+    """Both Settings forms must reach the API and persist with browser Origin/CSRF headers."""
+    origin = "http://crm.example.test:8080"
+    monkeypatch.setattr(settings, "allowed_origins", f"{settings.allowed_origins},{origin}")
+    login(crm)
+    with crm["sessions"].begin() as db:
+        role = Role(name="Тестовая роль")
+        db.add(role)
+        db.flush()
+        role_id = role.id
+
+    client = crm["client"]
+    seller = client.post(
+        "/api/v1/sellers",
+        json={"name": "ООО Тест", "currency": "RUB", "details": {"ИНН": "1234567890"}},
+        headers={"Origin": origin},
+    )
+    assert seller.status_code == 201, seller.text
+    account = client.post(
+        "/api/v1/admin/users",
+        json={"name": "Новый сотрудник", "email": "new@example.com", "password": PASSWORD,
+              "role_ids": [role_id]},
+        headers={"Origin": origin},
+    )
+    assert account.status_code == 201, account.text
+
+    sellers = client.get("/api/v1/sellers").json()["items"]
+    users = client.get("/api/v1/admin/users").json()["items"]
+    assert any(row["id"] == seller.json()["id"] and row["name"] == "ООО Тест" for row in sellers)
+    assert any(row["id"] == account.json()["id"] and row["email"] == "new@example.com" for row in users)
 
 
 def test_a01_import_90_new_5_updates_5_errors_repeat_and_history(crm):
@@ -329,4 +361,3 @@ def test_contact_search_with_q(crm):
     res = crm["client"].get(f"/api/v1/counterparties/{client['id']}/contacts?q=Смирнов")
     assert res.status_code == 200
     assert len(res.json()["items"]) == 0
-
