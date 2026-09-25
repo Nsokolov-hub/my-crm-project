@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import { createRequestKey } from './requestKey';
 export function useApi<T>(path: string | null) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState<unknown>();
@@ -39,14 +40,14 @@ export function useCommand() {
     bodyKey = false,
   ): Promise<T | undefined> {
     if (pending.current) return undefined;
-    const signature = JSON.stringify({ path, body, method });
-    if (operation.current?.signature !== signature)
-      operation.current = { signature, key: crypto.randomUUID() };
-    const key = operation.current.key;
     pending.current = true;
     setBusy(true);
     setError(undefined);
     try {
+      const signature = JSON.stringify({ path, body, method });
+      if (operation.current?.signature !== signature)
+        operation.current = { signature, key: createRequestKey() };
+      const key = operation.current.key;
       const result = await api<T>(path, {
         method,
         body: bodyKey ? { ...body, idempotency_key: key } : body,

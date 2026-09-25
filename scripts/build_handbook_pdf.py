@@ -271,7 +271,7 @@ def cover(canvas, doc) -> None:
     canvas.setFont("Handbook-Bold", 11)
     canvas.drawString(49, 155, "ВЕРСИЯ ДЛЯ РУЧНОЙ ПРИЁМКИ")
     canvas.setFont("Handbook", 10)
-    canvas.drawString(49, 132, "24 сентября 2026 г.  |  Текущий интерфейс и стартовые роли")
+    canvas.drawString(49, 132, "25 сентября 2026 г.  |  Текущий интерфейс и стартовые роли")
 
 
 def page(canvas, doc) -> None:
@@ -289,7 +289,7 @@ def page(canvas, doc) -> None:
     canvas.line(47, 41, width - 47, 41)
     canvas.setFont("Handbook", 8)
     canvas.setFillColor(MUTED)
-    canvas.drawString(47, 27, "Текущая версия продукта • 24.09.2026")
+    canvas.drawString(47, 27, "Текущая версия продукта • 25.09.2026")
     canvas.drawRightString(width - 47, 27, str(doc.page - 1))
 
 

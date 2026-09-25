@@ -27,6 +27,7 @@ import {
 import { api, download } from '../lib/api';
 import { date } from '../lib/format';
 import { useApi, useCommand } from '../lib/hooks';
+import { createRequestKey } from '../lib/requestKey';
 import type { Entity, Field, Page } from '../lib/types';
 export function FilesPanel({
   entityType,
@@ -50,8 +51,8 @@ export function FilesPanel({
   }, [files.data, files.refresh]);
   async function upload(file: File) {
     setBusy(true);
-    key.current ||= crypto.randomUUID();
     try {
+      key.current ||= createRequestKey();
       const form = new FormData();
       form.set('file', file);
       form.set('entity_type', entityType);
