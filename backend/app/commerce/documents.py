@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from app.core.errors import error
 from app.core.security import check_request, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
-from app.crm.models import Counterparty, Seller
+from app.crm.models import Counterparty, QuoteItem, RequestItem, Seller
 from app.crm.models import Request as CRMRequest
 
 from .calculator import ROUNDING, convert, dec
@@ -150,6 +150,9 @@ def base_snapshot(
         "title": title,
         "number": number,
         "date": date.today().isoformat(),
+        "request_number": request.number,
+        "calculation_number": calculation.snapshot.get("calculation_number"),
+        "calculation_version": calculation.snapshot.get("version_number"),
         "seller": {"id": seller.id, "name": seller.name, "details": seller.details},
         "client": {"id": client.id, "name": client.name, "details": client.details, "tax_id": client.tax_id},
         "currency": profile["sale_currency"],
@@ -187,9 +190,10 @@ def issue_proposal(request_id: str, data: ProposalIn, db: DB, user: Actor):
                 )
             prior.status = "replaced"
             prior.version += 1
-        for line in calc.snapshot["lines"]:
-            quote = db.get(Quote, line["quote_id"])
-            check_quote(db, quote)
+        if calc.snapshot.get("algorithm_version") != "itemized-v2":
+            for line in calc.snapshot["lines"]:
+                quote = db.get(Quote, line["quote_id"])
+                check_quote(db, quote)
         number = next_number(db, req.seller_id, "proposal")
         snapshot = base_snapshot(
             db,
@@ -257,17 +261,33 @@ def accept_proposal(proposal_id: str, data: AcceptanceIn, db: DB, user: Actor):
             )
             if source is None:
                 error("PROPOSAL_LINE", "Строка не найдена в выбранном КП")
-            quote = db.get(Quote, source["quote_id"])
-            item = check_quote(db, quote)
+            itemized = bool(source.get("quote_item_id"))
+            if itemized:
+                quote_item = db.get(QuoteItem, source["quote_item_id"])
+                item = db.get(RequestItem, source["item_id"])
+                if not quote_item or not item or item.request_id != doc.request_id or item.archived:
+                    error("PROPOSAL_LINE", "Исходная позиция заявки недоступна")
+                supplier_id = quote_item.supplier_id
+                if source["unit"] != "pcs" or selected.quantity > quote_item.quantity:
+                    error("QUOTE_AVAILABILITY", "Количество превышает объём выбранной квоты")
+                quote_id = None
+                quote_item_id = quote_item.id
+            else:
+                quote = db.get(Quote, source["quote_id"])
+                item = check_quote(db, quote)
+                supplier_id = quote.supplier_id
+                quote_id = quote.id
+                quote_item_id = None
             if not item.quantity or not item.unit:
                 error("DEMAND_INCOMPLETE", "Укажите согласованный объём потребности")
-            if quote.is_analogue and (not item.allow_analogue or len(selected.analogue_reason.strip()) < 3):
+            if not itemized and quote.is_analogue and (not item.allow_analogue or len(selected.analogue_reason.strip()) < 3):
                 error(
                     "ANALOGUE_APPROVAL",
                     "Для аналога нужны разрешение в потребности и основание согласия клиента",
                 )
-            product = db.get(Product, quote.product_id)
-            validate_quantity(quote, product, selected.quantity, source["unit"])
+            if not itemized:
+                product = db.get(Product, quote.product_id)
+                validate_quantity(quote, product, selected.quantity, source["unit"])
 
             existing = db.scalars(select(Execution).where(Execution.item_id == item.id)).all()
             accepted = sum(
@@ -277,13 +297,16 @@ def accept_proposal(proposal_id: str, data: AcceptanceIn, db: DB, user: Actor):
             requested = convert(selected.quantity, source["unit"], item.unit)
             if accepted + requested > item.quantity:
                 error("ACCEPTANCE_EXCEEDED", "Сумма принятых количеств превышает потребность")
-            if not profile["allow_multiple_suppliers"] and any(
-                db.get(Quote, ex.quote_id).supplier_id != quote.supplier_id
+            if not profile.get("allow_multiple_suppliers", True) and any(
+                (
+                    db.get(QuoteItem, ex.quote_item_id).supplier_id
+                    if ex.quote_item_id else db.get(Quote, ex.quote_id).supplier_id
+                ) != supplier_id
                 for ex in existing
                 if ex.cancelled_quantity < ex.quantity
             ):
                 error("MULTIPLE_SUPPLIERS", "Профиль запрещает несколько поставщиков по одной потребности")
-            if not profile["allow_partial_acceptance"] and requested != item.quantity - accepted:
+            if not profile.get("allow_partial_acceptance", True) and requested != item.quantity - accepted:
                 error("PARTIAL_ACCEPTANCE", "Профиль требует принятия полного остатка потребности")
             same_line = [
                 ex.snapshot for ex in existing if ex.proposal_id == doc.id and ex.line_id == selected.line_id
@@ -294,7 +317,8 @@ def accept_proposal(proposal_id: str, data: AcceptanceIn, db: DB, user: Actor):
                 request_id=doc.request_id,
                 item_id=item.id,
                 proposal_id=doc.id,
-                quote_id=quote.id,
+                quote_id=quote_id,
+                quote_item_id=quote_item_id,
                 line_id=selected.line_id,
                 quantity=selected.quantity,
                 unit=source["unit"],

@@ -1,18 +1,32 @@
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter
-from sqlalchemy import select
+from pydantic import ValidationError
+from sqlalchemy import func, select
 
 from app.core.errors import error
 from app.core.security import can, check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
-from app.crm.models import Request as CRMRequest
+from app.core.service import page as paginate
+from app.crm.models import (
+    Country,
+    Currency,
+    Nomenclature,
+    Packing,
+    ProductGroup,
+    QuoteItem,
+    QuoteSheet,
+)
+from app.crm.models import (
+    Request as CRMRequest,
+)
 
 from .calculator import calculate, digest, example_profile, validate_profile
-from .models import Calculation, CalculationProfile, Product, Quote
+from .itemized import calculate_itemized, itemized_profile
+from .models import Calculation, CalculationProfile, ExpenseType, Product, Quote
 from .procurement import DB, Actor, check_quote, product_view, validate_quantity
-from .schemas import CalculationIn, ProfileIn
+from .schemas import CalculationIn, Expense, ExpenseTypeIn, ExpenseTypePatch, ProfileIn
 
 router = APIRouter(tags=["Расчёты и настраиваемые профили"])
 
@@ -23,11 +37,15 @@ def filter_profile_definition(definition: dict, *, purchase: bool, reward: bool,
         definition.pop("reward_enabled", None)
         definition.pop("reward_label", None)
         definition.pop("reward_basis", None)
+    if not purchase:
+        definition.pop("default_expenses", None)
     # Profile variables and formulas are user-defined: their names do not identify
     # the financial information they contain or can be used to reconstruct.
     if not (purchase and reward and profit):
         definition.pop("constants", None)
         definition.pop("formulas", None)
+        for field in ("customs_rules", "customs_fee_brackets", "financing_annual_rate", "default_markup_coefficient"):
+            definition.pop(field, None)
     return definition
 
 
@@ -57,6 +75,12 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
     for line in lines:
         if not can_purchase:
             line.pop("quote", None)
+            line.pop("quote_item", None)
+            line.pop("supplier_id", None)
+            line.pop("purchase_currency", None)
+        if not all_finances:
+            line.pop("expense_details", None)
+            line.pop("customs_rule", None)
 
         if "detail" in line:
             if not can_calculations:
@@ -67,11 +91,22 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
                 allowed = {"quantity", "sale_net", "sale_tax"}
                 if can_purchase:
                     allowed.add("purchase")
+                    allowed.update(("purchase_foreign", "exchange_rate", "purchase_rub"))
                 if can_reward:
-                    allowed.update(("reward", "manager_bonus"))
+                    allowed.update(("reward", "manager_bonus", "internal_bonus", "service_fee"))
                 if can_profit:
-                    allowed.update(("cost", "profit", "margin"))
+                    allowed.update(("cost", "profit", "margin", "markup_amount", "profitability_percent"))
                 line["detail"] = {key: value for key, value in line["detail"].items() if key in allowed}
+
+    if "totals" in snapshot and not all_finances:
+        allowed = {"net", "tax", "total", "sale_net", "sale_tax", "sale_total"}
+        if can_purchase:
+            allowed.update(("purchase_foreign", "purchase_rub"))
+        if can_reward:
+            allowed.update(("internal_bonus", "service_fee"))
+        if can_profit:
+            allowed.update(("cost", "profit", "markup_amount", "profitability_percent"))
+        snapshot["totals"] = {key: value for key, value in snapshot["totals"].items() if key in allowed}
 
     if not can_calculations:
         snapshot.pop("profile", None)
@@ -86,6 +121,9 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
         snapshot.pop("input", None)
         snapshot.pop("expense_allocations", None)
         snapshot.pop("rates", None)
+        snapshot.pop("payment_terms", None)
+    if not can_reward:
+        snapshot.pop("internal_adjustment", None)
 
     return snapshot
 
@@ -95,12 +133,140 @@ def calculation_view(db, user, calculation: Calculation) -> dict:
 
     snapshot = result.get("snapshot", {})
     if snapshot:
+        for name in ("version_number", "base_version_id", "source_type", "source_id", "source_label", "request_number"):
+            result[name] = snapshot.get(name)
         result["snapshot"] = filter_calculation_snapshot(db, user, calculation.request_id, snapshot)
 
     if not has_request_permission(db, user, calculation.request_id, "finance.calculations.read"):
         result.pop("reason", None)
 
     return result
+
+
+def latest_calculation(db, request_id: str) -> Calculation | None:
+    return db.scalar(
+        select(Calculation)
+        .where(Calculation.request_id == request_id)
+        .order_by(Calculation.created_at.desc(), Calculation.id.desc())
+        .limit(1)
+    )
+
+
+def expense_type_view(db, row: ExpenseType) -> dict:
+    value = serialize(row)
+    currency = db.get(Currency, row.currency_id)
+    value["currency_code"] = currency.code if currency else None
+    return value
+
+
+@router.get("/expense-types")
+def list_expense_types(db: DB, user: Actor, q: str = "", active: bool = True, page: int = 1, page_size: int = 100):
+    if not can(db, user, "profiles.write"):
+        require_permission(db, user, "finance.calculations.read")
+        require_permission(db, user, "finance.purchase.read")
+    stmt = select(ExpenseType).where(ExpenseType.active == active)
+    if q:
+        stmt = stmt.where(ExpenseType.name.ilike(f"%{q}%"))
+    result = paginate(db, stmt.order_by(ExpenseType.name, ExpenseType.id), page, page_size)
+    result["items"] = [expense_type_view(db, db.get(ExpenseType, row["id"])) for row in result["items"]]
+    return result
+
+
+@router.post("/expense-types", status_code=201)
+def create_expense_type(data: ExpenseTypeIn, db: DB, user: Actor):
+    require_permission(db, user, "profiles.write")
+
+    def operation():
+        if not data.name.strip():
+            error("EXPENSE_TYPE_NAME", "Укажите название вида расхода", field="name")
+        currency = db.get(Currency, data.currency_id)
+        if not currency or not currency.active:
+            error("CURRENCY_REQUIRED", "Выберите действующую валюту расхода", field="currency_id")
+        if data.calculation_type in ("PERCENTAGE", "BRACKET") and not data.percent_base:
+            error("PERCENT_BASE_REQUIRED", "Выберите базу начисления расхода", field="percent_base")
+        if data.calculation_type == "BRACKET" and not data.brackets:
+            error("EXPENSE_BRACKET_REQUIRED", "Укажите диапазоны расхода", field="brackets")
+        advisory(db, "expense_type.name")
+        if db.scalar(select(ExpenseType.id).where(func.lower(ExpenseType.name) == data.name.strip().lower())):
+            error("EXPENSE_TYPE_EXISTS", "Вид расхода с таким названием уже есть", 409, "name")
+        fields = data.model_dump(exclude={"idempotency_key"})
+        fields["name"] = data.name.strip()
+        fields["brackets"] = [bracket.model_dump(mode="json") for bracket in data.brackets]
+        row = ExpenseType(**fields)
+        db.add(row)
+        db.flush()
+        audit(db, user, "expense_type", row.id, "created", after=serialize(row))
+        return {"id": row.id}
+
+    def reconstruct(result):
+        return expense_type_view(db, db.get(ExpenseType, result["id"]))
+
+    return idem(db, user, data.idempotency_key, "expense-types.create", data.model_dump(mode="json"), operation, reconstruct)
+
+
+@router.patch("/expense-types/{expense_type_id}")
+def change_expense_type(expense_type_id: str, data: ExpenseTypePatch, db: DB, user: Actor):
+    require_permission(db, user, "profiles.write")
+    row = lock(db, ExpenseType, expense_type_id)
+    check_version(row, data.version)
+    before = serialize(row)
+    row.active = data.active
+    row.version += 1
+    db.flush()
+    audit(db, user, "expense_type", row.id, "updated", before, serialize(row))
+    return expense_type_view(db, row)
+
+
+def stamp_version(db, request_id: str, snapshot: dict, previous: Calculation | None) -> tuple[dict, str]:
+    if previous:
+        version_number = int(previous.snapshot.get("version_number") or db.scalar(
+            select(func.count(Calculation.id)).where(Calculation.request_id == request_id)
+        )) + 1
+        snapshot["origin_source_type"] = snapshot["source_type"]
+        snapshot["origin_source_id"] = snapshot["source_id"]
+        snapshot["source_type"] = "PREVIOUS_VERSION"
+        snapshot["source_id"] = previous.id
+        snapshot["source_label"] = f"Версия №{version_number - 1} от {previous.created_at.date().isoformat()}"
+    else:
+        version_number = 1
+    snapshot["version_number"] = version_number
+    snapshot["base_version_id"] = previous.id if previous else None
+    snapshot["calculation_number"] = f"{snapshot['request_number']}-V{version_number}"
+    reason = (
+        f"На основе версии №{version_number - 1}"
+        if previous else f"Создано из {'квоты' if snapshot['source_type'] == 'QUOTE' else 'заявки'} {snapshot['request_number']}"
+    )
+    return snapshot, reason
+
+
+def itemized_selection(db, request_id: str, selection, index: int) -> dict:
+    quote = db.get(QuoteItem, selection.quote_item_id)
+    if not quote:
+        error("QUOTE_ITEM_NOT_FOUND", "Позиция квоты не найдена", 404, f"selections.{index}.quote_item_id")
+    sheet = db.get(QuoteSheet, quote.quote_id)
+    if not sheet or sheet.request_id != request_id:
+        error("QUOTE_ITEM_NOT_FOUND", "Позиция квоты не относится к этой заявке", 404, f"selections.{index}.quote_item_id")
+    if quote.valid_until.replace(tzinfo=quote.valid_until.tzinfo or timezone.utc) <= datetime.now(timezone.utc):
+        error("QUOTE_EXPIRED", "Срок действия выбранной позиции квоты истёк", field=f"selections.{index}.quote_item_id")
+    nomenclature = db.get(Nomenclature, quote.nomenclature_id)
+    packing = db.get(Packing, quote.packing_id)
+    currency = db.get(Currency, quote.currency_id)
+    if not nomenclature or not packing or packing.nomenclature_id != nomenclature.id:
+        error("NOMENCLATURE_PACKING", "У позиции квоты не найдена номенклатура или фасовка", field=f"selections.{index}.quote_item_id")
+    if not currency or not currency.active:
+        error("CURRENCY_REQUIRED", f"Для позиции {nomenclature.name} {packing.display_name} отсутствует валюта закупки", field=f"selections.{index}.quote_item_id")
+    group = db.get(ProductGroup, nomenclature.product_group_id) if nomenclature.product_group_id else None
+    if not group:
+        error("PRODUCT_GROUP_REQUIRED", f"У позиции {nomenclature.name} {packing.display_name} не определена товарная группа", field=f"selections.{index}.quote_item_id")
+    return {
+        "quote_item": serialize(quote),
+        "nomenclature": serialize(nomenclature),
+        "packing": serialize(packing),
+        "product_group": serialize(group),
+        "currency_code": currency.code,
+        "markup_coefficient": str(selection.markup_coefficient) if selection.markup_coefficient is not None else None,
+        "weight": str(selection.weight) if selection.weight is not None else None,
+    }
 
 
 def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
@@ -117,6 +283,43 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         error(
             "PROFILE_NOT_EFFECTIVE", "Выберите активный опубликованный профиль, действующий на дату расчёта"
         )
+    itemized = profile.definition.get("methodology") == "itemized_v2"
+    if itemized:
+        if data.internal_adjustment:
+            require_permission(db, user, "finance.reward.read", request_id)
+        if not all(selection.quote_item_id for selection in data.selections):
+            error("QUOTE_ITEM_REQUIRED", "Для выбранной методики используйте позиции табличной квоты", field="selections")
+        country = db.get(Country, profile.definition.get("import_country_id"))
+        if not country or not country.active:
+            error("IMPORT_COUNTRY_REQUIRED", "Выберите действующую страну ввоза из справочника", field="profile_id")
+        for index, rate in enumerate(data.rates):
+            currency = db.scalar(select(Currency).where(Currency.code == rate.currency))
+            if not currency or not currency.active:
+                error("CURRENCY_REQUIRED", f"Валюта курса {rate.currency} не найдена в справочнике", field=f"rates.{index}.currency")
+        selections = [itemized_selection(db, request_id, selection, index) for index, selection in enumerate(data.selections)]
+        snapshot = calculate_itemized(
+            profile.definition,
+            selections,
+            [expense.model_dump(mode="json") for expense in data.expenses],
+            [{**rate.model_dump(mode="json"), "author_id": user.id} for rate in data.rates],
+            data.internal_adjustment,
+            data.payment_terms,
+        )
+        snapshot["request_number"] = req.number
+        snapshot["source_type"] = "QUOTE" if len({row["quote_item"]["quote_id"] for row in selections}) == 1 else "REQUEST"
+        snapshot["source_id"] = selections[0]["quote_item"]["quote_id"] if snapshot["source_type"] == "QUOTE" else request_id
+        if snapshot["source_type"] == "QUOTE":
+            sheet = db.get(QuoteSheet, snapshot["source_id"])
+            snapshot["source_label"] = f"Квота №{sheet.number}"
+        else:
+            snapshot["source_label"] = f"Заявка №{req.number}"
+        snapshot["input"] = data.model_dump(mode="json")
+        snapshot["request_version"] = req.version
+        snapshot["profile_id"] = profile.id
+        snapshot["profile_created_at"] = profile.created_at.isoformat()
+        return snapshot
+    if any(selection.quote_item_id for selection in data.selections):
+        error("PROFILE_METHOD", "Для табличной квоты выберите профиль новой методики", field="profile_id")
     selections = []
     for selection in data.selections:
         quote = lock(db, Quote, selection.quote_id)
@@ -146,6 +349,10 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
     snapshot["request_version"] = req.version
     snapshot["profile_id"] = profile.id
     snapshot["profile_created_at"] = profile.created_at.isoformat()
+    snapshot["request_number"] = req.number
+    snapshot["source_type"] = "QUOTE" if len({row["quote"]["id"] for row in selections}) == 1 else "REQUEST"
+    snapshot["source_id"] = selections[0]["quote"]["id"] if snapshot["source_type"] == "QUOTE" else request_id
+    snapshot["source_label"] = f"Квота по заявке №{req.number}" if snapshot["source_type"] == "QUOTE" else f"Заявка №{req.number}"
     return snapshot
 
 
@@ -156,6 +363,15 @@ def sample_profile(db: DB, user: Actor):
         "is_test": True,
         "notice": "Условный арифметический пример A08. Пользователь задаёт собственные действующие формулы и ставки.",
         "definition": example_profile(),
+    }
+
+
+@router.get("/profiles/example-v2")
+def sample_itemized_profile(db: DB, user: Actor):
+    require_permission(db, user, "profiles.write")
+    return {
+        "notice": "Выберите страну ввоза и дополните диапазоны таможенного сбора для сумм выше 500 000 ₽ перед публикацией.",
+        "definition": itemized_profile(),
     }
 
 
@@ -180,6 +396,24 @@ def create_profile(data: ProfileIn, db: DB, user: Actor):
     def operation():
         definition = data.definition.model_dump(mode="json")
         validate_profile(definition)
+        if definition.get("methodology") == "itemized_v2":
+            try:
+                definition["default_expenses"] = [
+                    Expense.model_validate(expense).model_dump(mode="json")
+                    for expense in definition.get("default_expenses", [])
+                ]
+            except ValidationError:
+                error("DEFAULT_EXPENSES_INVALID", "Проверьте начальные расходы профиля", field="definition.default_expenses")
+        if definition.get("methodology") == "itemized_v2":
+            country = db.get(Country, definition["import_country_id"])
+            if not country or not country.active:
+                error("IMPORT_COUNTRY_REQUIRED", "Выберите действующую страну ввоза из справочника", field="definition.import_country_id")
+            for rule in definition["customs_rules"]:
+                group = db.scalar(select(ProductGroup).where(
+                    ProductGroup.slug == rule["product_group_slug"], ProductGroup.active.is_(True),
+                ))
+                if not group:
+                    error("PRODUCT_GROUP_REQUIRED", "Таможенное правило ссылается на неизвестную товарную группу", field="definition.customs_rules")
         if data.effective_until and data.effective_until < data.effective_from:
             error("PROFILE_DATES", "Дата окончания должна быть не раньше даты начала")
         if data.previous_id and not db.get(CalculationProfile, data.previous_id):
@@ -245,6 +479,10 @@ def preview_calculation(request_id: str, data: CalculationIn, db: DB, user: Acto
     require_permission(db, user, "finance.purchase.read", request_id)
     require_permission(db, user, "finance.calculations.read", request_id)
     result = build_calculation(db, user, request_id, data)
+    previous = latest_calculation(db, request_id)
+    if "previous_id" in data.model_fields_set and data.previous_id != (previous.id if previous else None):
+        error("CALCULATION_VERSION_CONFLICT", "Основание версии изменилось. Обновите расчёт", 409)
+    result, _ = stamp_version(db, request_id, result, previous)
     result = filter_calculation_snapshot(db, user, request_id, result)
     return {"saved": False, "snapshot": result}
 
@@ -257,17 +495,17 @@ def save_calculation(request_id: str, data: CalculationIn, db: DB, user: Actor):
 
     def operation():
         snapshot = build_calculation(db, user, request_id, data)
-        if data.previous_id:
-            previous = db.get(Calculation, data.previous_id)
-            if not previous or previous.request_id != request_id:
-                error("CALCULATION_NOT_FOUND", "Предыдущая версия расчёта не найдена", 404)
+        previous = latest_calculation(db, request_id)
+        if "previous_id" in data.model_fields_set and data.previous_id != (previous.id if previous else None):
+            error("CALCULATION_VERSION_CONFLICT", "Основание версии изменилось. Обновите расчёт", 409)
+        snapshot, reason = stamp_version(db, request_id, snapshot, previous)
         obj = Calculation(
             request_id=request_id,
             profile_id=data.profile_id,
-            previous_id=data.previous_id,
+            previous_id=previous.id if previous else None,
             snapshot=snapshot,
             digest=digest(snapshot),
-            reason=data.reason,
+            reason=reason,
             author_id=user.id,
         )
         db.add(obj)
@@ -279,7 +517,7 @@ def save_calculation(request_id: str, data: CalculationIn, db: DB, user: Actor):
             obj.id,
             "save",
             after={"digest": obj.digest, "profile_id": obj.profile_id},
-            reason=data.reason,
+            reason=reason,
         )
         return {"id": obj.id}
 

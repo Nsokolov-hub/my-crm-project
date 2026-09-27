@@ -1,5 +1,11 @@
 export type Entity = { id: string; version?: number; created_at?: string; [key: string]: unknown };
-export type Page<T = Entity> = { items: T[]; total?: number; page?: number; page_size?: number; unread?: number };
+export type Page<T = Entity> = {
+  items: T[];
+  total?: number;
+  page?: number;
+  page_size?: number;
+  unread?: number;
+};
 export type User = Entity & { name: string; email: string; permissions?: Record<string, string> };
 export type Grant = { code: string; scope: string; allow: boolean };
 export type Session = { user: User; csrf_token: string; permissions?: Record<string, string> };
@@ -33,6 +39,7 @@ export type Field = {
   help?: string;
   options?: Option[];
   source?: string;
+  create?: { title: string; endpoint: string; fields: Field[] };
   labelKey?: string;
   value?: unknown;
   minLength?: number;
@@ -40,7 +47,7 @@ export type Field = {
 };
 export type Column<T = Entity> = {
   key: string;
-  label: string;
+  label: React.ReactNode;
   render?: (row: T) => React.ReactNode;
   sortable?: boolean;
 };

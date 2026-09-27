@@ -103,6 +103,21 @@ class CalculationProfile(Entity, Base):
     author_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
 
 
+class ExpenseType(Entity, Base):
+    __tablename__ = "expense_types"
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    calculation_type: Mapped[str] = mapped_column(String(20))
+    default_value: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=0)
+    currency_id: Mapped[str] = mapped_column(ForeignKey("currencies.id"))
+    distribution_method: Mapped[str] = mapped_column(String(30), default="BY_QUANTITY")
+    stage: Mapped[str] = mapped_column(String(30), default="GENERAL")
+    percent_base: Mapped[str | None] = mapped_column(String(30))
+    brackets: Mapped[list] = mapped_column(JSON, default=list)
+    include_in_cost: Mapped[bool] = mapped_column(Boolean, default=True)
+    include_in_cash: Mapped[bool] = mapped_column(Boolean, default=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class Calculation(Entity, Base):
     __tablename__ = "calculations"
     request_id: Mapped[str] = mapped_column(ForeignKey("requests.id"), index=True)
@@ -144,7 +159,8 @@ class Execution(Entity, Base):
     request_id: Mapped[str] = mapped_column(ForeignKey("requests.id"), index=True)
     item_id: Mapped[str] = mapped_column(ForeignKey("request_items.id"))
     proposal_id: Mapped[str] = mapped_column(ForeignKey("commercial_documents.id"))
-    quote_id: Mapped[str] = mapped_column(ForeignKey("quotes.id"))
+    quote_id: Mapped[str | None] = mapped_column(ForeignKey("quotes.id"))
+    quote_item_id: Mapped[str | None] = mapped_column(ForeignKey("quote_items.id"), index=True)
     line_id: Mapped[str] = mapped_column(String(80))
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 6))
     cancelled_quantity: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0)

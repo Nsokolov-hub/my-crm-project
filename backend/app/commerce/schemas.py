@@ -95,15 +95,26 @@ class Formula(Input):
 
 
 class ProfileDefinition(Input):
-    management_currency: Currency
-    sale_currency: Currency
-    currency_precision: dict[str, int]
+    methodology: Literal["legacy_formula", "itemized_v2"] = "legacy_formula"
+    management_currency: Currency = "RUB"
+    sale_currency: Currency = "RUB"
+    currency_precision: dict[str, int] = Field(default_factory=lambda: {"RUB": 2})
     rounding: Literal["half_up", "half_even", "down"] = "half_up"
-    country_of_import: str = Field(min_length=1)
-    tax_regime: str = Field(min_length=1)
+    country_of_import: str = ""
+    import_country_id: str | None = None
+    tax_regime: str = ""
     constants: dict[str, str] = Field(default_factory=dict)
-    formulas: list[Formula] = Field(min_length=1, max_length=40)
-    tax_category: str = Field(min_length=1)
+    formulas: list[Formula] = Field(default_factory=list, max_length=40)
+    tax_category: str = ""
+    customs_rules: list[dict] = Field(default_factory=list)
+    customs_fee_brackets: list[dict] = Field(default_factory=list)
+    vat_rate: Nonnegative = Decimal("22")
+    vat_deduction_mode: bool = True
+    financing_annual_rate: Nonnegative = Decimal("0")
+    day_basis: Annotated[int, Field(ge=1, le=366)] = 365
+    financing_start_event: Literal["delivery", "shipment", "invoice"] = "delivery"
+    default_markup_coefficient: Positive = Decimal("1.5")
+    default_expenses: list[dict] = Field(default_factory=list, max_length=30)
     funding_ratio: Annotated[Decimal, Field(ge=0, le=1, decimal_places=8)] = Decimal("1")
     require_same_sale_currency: bool = False
     allow_partial_acceptance: bool = True
@@ -136,28 +147,85 @@ class Rate(Input):
     quoted_units: Annotated[Decimal, Field(gt=0, decimal_places=8)] = Decimal("1")
     date: date
     source: str = Field(min_length=1)
-    reason: str = Field(min_length=1)
+    reason: str = "Ручной ввод"
 
 
 class Selection(Input):
-    quote_id: str
-    quote_revision: int = Field(ge=1)
-    quantity: Positive
-    unit: Literal["g", "kg", "mg", "l", "ml", "pcs"]
+    quote_id: str | None = None
+    quote_item_id: str | None = None
+    quote_revision: int | None = Field(default=None, ge=1)
+    quantity: Positive | None = None
+    unit: Literal["g", "kg", "mg", "l", "ml", "pcs"] | None = None
+    markup_coefficient: Positive | None = None
+    weight: Nonnegative | None = None
     mass: Nonnegative | None = None
     volume: Nonnegative | None = None
     variables: dict[str, str] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def check_source(self):
+        if bool(self.quote_id) == bool(self.quote_item_id):
+            raise ValueError("Выберите ровно одну позицию квоты")
+        if self.quote_id and (self.quote_revision is None or self.quantity is None or self.unit is None):
+            raise ValueError("Для прежней квоты укажите редакцию, количество и единицу")
+        if self.quote_item_id and (
+            self.quote_revision is not None or self.quantity is not None or self.unit is not None
+            or self.variables or self.mass is not None or self.volume is not None
+        ):
+            raise ValueError("Количество, цену и фасовку позиции табличной квоты сервер берёт из квоты")
+        return self
+
+
+class ExpenseBracket(Input):
+    from_amount: Nonnegative
+    to_amount: Nonnegative | None = None
+    fee: Nonnegative
+    valid_from: date | None = None
+    valid_to: date | None = None
+
+    @model_validator(mode="after")
+    def check_range(self):
+        if self.to_amount is not None and self.to_amount < self.from_amount:
+            raise ValueError("Конец диапазона должен быть не меньше начала")
+        if self.valid_from and self.valid_to and self.valid_to < self.valid_from:
+            raise ValueError("Дата окончания раньше даты начала")
+        return self
+
 
 class Expense(Input):
-    name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,59}$")
-    amount: Nonnegative
-    currency: Currency
-    method: Literal["purchase", "mass", "volume", "manual"]
-    basis: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=120)
+    amount: Nonnegative = Decimal("0")
+    currency: Currency = "RUB"
+    method: Literal[
+        "purchase", "mass", "volume", "manual", "BY_QUANTITY", "BY_PURCHASE_VALUE",
+        "EQUALLY_BY_POSITION", "BY_WEIGHT", "MANUAL",
+    ] = "BY_QUANTITY"
+    basis: str = "Расход сделки"
+    calculation_type: Literal["FIXED", "PERCENTAGE", "BRACKET", "MANUAL"] = "FIXED"
+    percent_base: Literal["PURCHASE", "CUSTOMS_BASE", "DUTY", "COST"] | None = None
+    brackets: list[ExpenseBracket] = Field(default_factory=list)
+    stage: Literal["INTERNATIONAL_LOGISTICS", "GENERAL"] = "GENERAL"
     manual: dict[str, str] = Field(default_factory=dict)
     include_in_cost: bool = True
     include_in_cash: bool = True
+
+
+class ExpenseTypeIn(Command):
+    name: str = Field(min_length=1, max_length=120)
+    calculation_type: Literal["FIXED", "PERCENTAGE", "BRACKET", "MANUAL"] = "FIXED"
+    default_value: Nonnegative = Decimal("0")
+    currency_id: str
+    distribution_method: Literal["BY_QUANTITY", "BY_PURCHASE_VALUE", "EQUALLY_BY_POSITION", "BY_WEIGHT", "MANUAL"] = "BY_QUANTITY"
+    stage: Literal["INTERNATIONAL_LOGISTICS", "GENERAL"] = "GENERAL"
+    percent_base: Literal["PURCHASE", "CUSTOMS_BASE", "DUTY", "COST"] | None = None
+    brackets: list[ExpenseBracket] = Field(default_factory=list)
+    include_in_cost: bool = True
+    include_in_cash: bool = True
+
+
+class ExpenseTypePatch(Input):
+    version: int = Field(ge=1)
+    active: bool
 
 
 class CalculationIn(Command):
@@ -166,8 +234,10 @@ class CalculationIn(Command):
     selections: list[Selection] = Field(min_length=1, max_length=100)
     rates: list[Rate] = Field(default_factory=list)
     expenses: list[Expense] = Field(default_factory=list, max_length=30)
+    internal_adjustment: dict = Field(default_factory=dict)
+    payment_terms: dict = Field(default_factory=dict)
     previous_id: str | None = None
-    reason: str = Field(min_length=3)
+    reason: str = ""
 
 
 class ProposalIn(Command):

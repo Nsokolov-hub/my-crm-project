@@ -41,6 +41,16 @@ export const requestFields: Field[] = [
     required: true,
     type: 'select',
     source: '/counterparties?kind=client',
+    create: {
+      title: 'Новый клиент',
+      endpoint: '/counterparties',
+      fields: [
+        { name: 'name', label: 'Название организации', required: true },
+        { name: 'kind', label: 'Тип', type: 'select', value: 'client', options: [{ value: 'client', label: 'Клиент' }] },
+        { name: 'country', label: 'Страна' },
+        { name: 'tax_id', label: 'ИНН' },
+      ],
+    },
   },
   { name: 'seller_id', label: 'Организация продавца', type: 'select', source: '/sellers' },
   { name: 'owner_id', label: 'Ответственный', type: 'select', source: '/users' },
@@ -115,6 +125,16 @@ export const callFields: Field[] = [
     type: 'select',
     source: '/counterparties?kind=client',
     required: true,
+    create: {
+      title: 'Новый клиент',
+      endpoint: '/counterparties',
+      fields: [
+        { name: 'name', label: 'Название организации', required: true },
+        { name: 'kind', label: 'Тип', type: 'select', value: 'client', options: [{ value: 'client', label: 'Клиент' }] },
+        { name: 'country', label: 'Страна' },
+        { name: 'tax_id', label: 'ИНН' },
+      ],
+    },
   },
   {
     name: 'result',

@@ -1,0 +1,51 @@
+.directory-select {
+  position: relative;
+  min-width: 0;
+}
+
+.directory-select > input {
+  width: 100%;
+}
+
+.directory-options {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid #dedfe8;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgb(31 26 53 / 16%);
+}
+
+.directory-options button {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.directory-options button:hover,
+.directory-options button[aria-selected='true'] {
+  background: #f4f0fc;
+}
+
+.directory-options p {
+  padding: 10px 12px;
+  color: #808394;
+}
+
+.directory-options .directory-create {
+  position: sticky;
+  bottom: 0;
+  border-top: 1px solid #eceaf3;
+  background: #fff;
+  color: #6245ad;
+  font-weight: 700;
+}

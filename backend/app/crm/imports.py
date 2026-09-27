@@ -28,7 +28,9 @@ router = APIRouter(tags=["Импорт клиентской базы"])
 COLUMNS = {
     "external_id": "Внешний ID",
     "name": "Организация",
+    "kind": "Тип контрагента",
     "country": "Страна",
+    "city": "Город",
     "tax_id": "ИНН",
     "contact": "Контактное лицо",
     "phone": "Телефон",
@@ -40,7 +42,9 @@ COLUMNS = {
 FIELD_LIMITS = {
     "external_id": 250,
     "name": 250,
+    "kind": 30,
     "country": 100,
+    "city": 150,
     "tax_id": 100,
     "contact": 250,
     "phone": 100,
@@ -48,6 +52,17 @@ FIELD_LIMITS = {
     "source": 250,
     "comment": 2000,
     "owner_id": 36,
+}
+KIND_ALIASES = {
+    "клиент": "client",
+    "заказчик": "client",
+    "client": "client",
+    "поставщик": "supplier",
+    "supplier": "supplier",
+    "клиент и поставщик": "both",
+    "клиент/поставщик": "both",
+    "оба": "both",
+    "both": "both",
 }
 
 
@@ -74,6 +89,10 @@ def string_value(cell: Any) -> str:
     if isinstance(cell.value, int) and re.fullmatch(r"0+", cell.number_format or ""):
         return str(cell.value).zfill(len(cell.number_format))
     return str(cell.value).strip()
+
+
+def literal_like(value: str) -> str:
+    return value.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
 
 
 def parse_rows(data: bytes, mapping: dict[str, str]) -> list[dict[str, Any]]:
@@ -120,10 +139,12 @@ def parse_rows(data: bytes, mapping: dict[str, str]) -> list[dict[str, Any]]:
                 errors.append({"field": "row", "message": "Формулы не допускаются: вставьте значения"})
             if not row.get("name") and not row.get("contact"):
                 errors.append({"field": "name", "message": "Укажите организацию или контакт"})
+            kind = row.get("kind", "").strip().casefold()
+            if kind and kind not in KIND_ALIASES:
+                errors.append({"field": "kind", "message": "Тип: клиент, поставщик или клиент и поставщик"})
+            row["kind"] = KIND_ALIASES.get(kind, "")
             row["email"] = row.get("email", "").strip().lower()
             row["phone"] = re.sub(r"[^\d+]", "", row.get("phone", ""))
-            if not row["email"] and not row["phone"]:
-                errors.append({"field": "phone", "message": "Нужен телефон или электронная почта"})
             if row["email"] and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", row["email"]):
                 errors.append({"field": "email", "message": "Некорректная электронная почта"})
             for field, value in row.items():
@@ -187,13 +208,14 @@ def preview(
     db.add(batch)
     db.flush()
     seen_external: set[str] = set()
+    seen_tax_id: set[str] = set()
+    seen_name_country: set[tuple[str, str]] = set()
     for raw in parsed:
         values = raw["data"]
         row = ImportRow(batch_id=batch.id, **raw)
         external = values.get("external_id")
-        match = (
-            db.scalar(select(Counterparty).where(Counterparty.external_id == external)) if external else None
-        )
+        tax_id = values.get("tax_id", "").strip()
+        name_country = (values.get("name", "").casefold(), values.get("country", "").casefold())
         if external and external in seen_external:
             row.errors = [
                 *row.errors,
@@ -201,32 +223,40 @@ def preview(
             ]
         if external:
             seen_external.add(external)
-        if match:
-            try:
-                check_client(db, user, match.id, "clients.write")
-                row.match_id = match.id
-                row.action = "update"
-            except DomainError:
-                row.errors = [
-                    *row.errors,
-                    {"field": "external_id", "message": "Идентификатор недоступен для обновления"},
-                ]
-        else:
-            conditions = []
-            for attr in ("email", "phone", "tax_id"):
-                if values.get(attr):
-                    conditions.append(getattr(Counterparty, attr) == values[attr])
-            if conditions:
-                candidates = list(
-                    db.scalars(
-                        select(Counterparty.id)
-                        .where(client_predicate(db, user, "clients.write"), or_(*conditions))
-                        .limit(20)
-                    )
+        if tax_id and tax_id in seen_tax_id:
+            row.errors = [
+                *row.errors,
+                {"field": "tax_id", "message": "ИНН повторяется внутри файла"},
+            ]
+        if tax_id:
+            seen_tax_id.add(tax_id)
+        if not tax_id and all(name_country) and name_country in seen_name_country:
+            row.errors = [
+                *row.errors,
+                {"field": "name", "message": "Организация и страна повторяются внутри файла"},
+            ]
+        if not tax_id and all(name_country):
+            seen_name_country.add(name_country)
+        conditions = []
+        if external:
+            conditions.append(Counterparty.external_id == external)
+        if tax_id:
+            conditions.append(Counterparty.tax_id == tax_id)
+        if all(name_country):
+            conditions.append(
+                Counterparty.name.ilike(literal_like(values["name"]), escape='\\') &
+                Counterparty.country.ilike(literal_like(values["country"]), escape='\\')
+            )
+        if conditions:
+            row.candidate_ids = list(
+                db.scalars(
+                    select(Counterparty.id)
+                    .where(client_predicate(db, user, "clients.write"), or_(*conditions))
+                    .limit(20)
                 )
-                row.candidate_ids = candidates
-                if candidates:
-                    row.action = "conflict"
+            )
+            if row.candidate_ids:
+                row.action = "conflict"
         owner_id = values.get("owner_id")
         if owner_id:
             target = db.get(User, owner_id)
@@ -256,6 +286,7 @@ def summary(db: Session, batch_id: str) -> dict[str, int]:
             for k in ("create", "update", "error", "conflict", "skip", "created", "updated")
         },
         "total": len(rows),
+        "valid": sum(not r.errors for r in rows),
     }
 
 
@@ -375,32 +406,59 @@ def process_import(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
             continue
         data = row.data
         external = data.get("external_id") or None
-        matched = (
-            db.scalar(select(Counterparty).where(Counterparty.external_id == external)) if external else None
-        )
-        target_id = row.match_id or (matched.id if matched else None)
-        client = check_client(db, user, target_id, "clients.write") if target_id else None
+        if row.action == "create":
+            duplicate = None
+            if external:
+                duplicate = db.scalar(select(Counterparty.id).where(Counterparty.external_id == external))
+            if not duplicate and data.get("tax_id"):
+                duplicate = db.scalar(select(Counterparty.id).where(Counterparty.tax_id == data["tax_id"]))
+            if not duplicate and not data.get("tax_id") and data.get("name") and data.get("country"):
+                duplicate = db.scalar(select(Counterparty.id).where(
+                    Counterparty.name.ilike(literal_like(data["name"]), escape='\\'),
+                    Counterparty.country.ilike(literal_like(data["country"]), escape='\\'),
+                ))
+            if duplicate:
+                row.action = "skip"
+                row.errors = [*row.errors, {"field": "tax_id" if data.get("tax_id") else "name", "message": "Карточка уже существует; строка не перезаписана"}]
+                continue
+        client = check_client(db, user, row.match_id, "clients.write") if row.action == "update" else None
+        if client and external and client.external_id not in (None, external):
+            row.action = "skip"
+            row.errors = [*row.errors, {"field": "external_id", "message": "Карточка связана с другим внешним ID"}]
+            continue
+        if client and data.get("tax_id"):
+            other = db.scalar(select(Counterparty.id).where(
+                Counterparty.tax_id == data["tax_id"], Counterparty.id != client.id,
+            ))
+            if other:
+                row.action = "skip"
+                row.errors = [*row.errors, {"field": "tax_id", "message": "ИНН уже принадлежит другой карточке"}]
+                continue
         before = serialize(client) if client else None
         if not client:
             client = Counterparty(
                 name=data.get("name") or data.get("contact"),
                 owner_id=data.get("owner_id") or user.id,
                 external_id=external,
+                kind=data.get("kind") or "client",
                 details={},
             )
             db.add(client)
-        elif external and client.external_id not in (None, external):
-            raise DomainError("EXTERNAL_ID_CONFLICT", "Карточка уже связана с другим внешним ID", 409)
         for field in ("name", "country", "tax_id", "email", "phone"):
             if data.get(field):
                 setattr(client, field, data[field])
+        if data.get("kind"):
+            client.kind = data["kind"]
         # The original acquisition source survives later imports, like the call history.
         if data.get("source") and not client.source:
             client.source = data["source"]
         if external:
             client.external_id = external
-        if data.get("comment"):
-            client.details = {**(client.details or {}), "comment": data["comment"]}
+        details = dict(client.details or {})
+        for field in ("city", "comment"):
+            if data.get(field):
+                details[field] = data[field]
+        client.details = details
         if before:
             client.version += 1
         db.flush()

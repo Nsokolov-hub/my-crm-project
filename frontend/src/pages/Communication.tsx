@@ -167,12 +167,14 @@ export function ChatRoom({ chat, onBack }: { chat: Entity; onBack?: () => void }
   const [attached, setAttached] = useState<Entity[]>([]);
   const [mentionIds, setMentionIds] = useState<string[]>([]);
   const cursor = useRef(0);
+  const markedRead = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
   const operation = useCommand();
   useEffect(() => {
     let stopped = false;
     let loading = false;
     cursor.current = 0;
+    markedRead.current = 0;
     setMessages([]);
     async function load() {
       if (loading || stopped) return;
@@ -192,12 +194,14 @@ export function ChatRoom({ chat, onBack }: { chat: Entity; onBack?: () => void }
           });
           more = page.has_more;
         }
-        if (!stopped) {
+        if (!stopped && cursor.current > markedRead.current) {
           setError(undefined);
           await api(`/chats/${chat.id}/read`, {
             method: 'POST',
             body: { through: cursor.current },
           });
+          markedRead.current = cursor.current;
+          window.dispatchEvent(new Event('crm:chats-read'));
         }
       } catch (e) {
         if (!stopped) setError(e);
@@ -243,6 +247,7 @@ export function ChatRoom({ chat, onBack }: { chat: Entity; onBack?: () => void }
       <header>
         <div>
           <strong>{String(chat.title)}</strong>
+          {Boolean(chat.description) && <small>{String(chat.description)}</small>}
           <small>{((chat.members || []) as Entity[]).map((m) => m.name).join(', ')}</small>
         </div>
         <div className="inline-actions compact">
@@ -414,6 +419,7 @@ export function Chats({
   const [creating, setCreating] = useState(false);
   const fields: Field[] = [
     { name: 'title', label: 'Название обсуждения', required: true },
+    { name: 'description', label: 'Описание', type: 'textarea', wide: true },
     {
       name: 'kind',
       label: 'Тип',
@@ -433,6 +439,10 @@ export function Chats({
     if (params.get('chat') && chats.data)
       setSelected(chats.data.items.find((c) => c.id === params.get('chat')));
   }, [params, chats.data]);
+  useEffect(() => {
+    window.addEventListener('crm:chats-read', chats.refresh);
+    return () => window.removeEventListener('crm:chats-read', chats.refresh);
+  }, [chats.refresh]);
   return (
     <>
       {!entityId && (
@@ -466,13 +476,16 @@ export function Chats({
                 <span className="chat-icon">
                   <MessageSquare size={20} />
                 </span>
-                <span>
+                <span className="chat-card-content">
                   <strong>{String(chat.title)}</strong>
-                  <small>
-                    {String(chat.kind === 'direct' ? 'Личный диалог' : 'Обсуждение команды')}
+                  <small className="chat-card-description">
+                    {String(chat.description || (chat.kind === 'direct' ? 'Личный диалог' : 'Обсуждение команды'))}
+                  </small>
+                  <small className="chat-card-members">
+                    {((chat.members || []) as Entity[]).map((member) => String(member.name)).join(', ')}
                   </small>
                 </span>
-                {Boolean(chat.unread) && <b>{String(chat.unread)}</b>}
+                {Boolean(chat.unread) && <b className="chat-unread">{String(chat.unread)}</b>}
               </button>
             ))
           ) : (

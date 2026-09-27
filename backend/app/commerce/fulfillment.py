@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter
@@ -10,7 +10,7 @@ from app.core.errors import error
 from app.core.models import User
 from app.core.security import check_request, request_predicate, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
-from app.crm.models import Request as CRMRequest
+from app.crm.models import QuoteItem, Request as CRMRequest, RequestItem
 from app.crm.models import Task
 
 from .calculator import convert, dec, digest
@@ -62,6 +62,20 @@ def commerce_locks(db, executions: list[Execution]) -> None:
         advisory(db, key)
     for request_id in sorted({row.request_id for row in executions}):
         advisory(db, f"request-commerce:{request_id}")
+
+
+def check_execution_quote(db, execution: Execution):
+    if execution.quote_item_id:
+        quote_item = db.get(QuoteItem, execution.quote_item_id)
+        if not quote_item:
+            error("QUOTE_ITEM_NOT_FOUND", "Исходная позиция квоты не найдена")
+        valid_until = quote_item.valid_until
+        if valid_until.replace(tzinfo=valid_until.tzinfo or timezone.utc) <= datetime.now(timezone.utc):
+            error("QUOTE_EXPIRED", "Срок действия позиции квоты истёк; получите подтверждение поставщика")
+        return quote_item
+    quote = db.get(Quote, execution.quote_id)
+    check_quote(db, quote)
+    return quote
 
 
 def event_totals(db, allocation_id: str) -> dict[str, Decimal]:
@@ -152,7 +166,8 @@ def check_approval(db, approval: Approval, execution: Execution) -> dict:
         not line
         or line["revision"] != execution.revision
         or dec(line["quantity"]) != execution.quantity - execution.cancelled_quantity
-        or line["quote_id"] != execution.quote_id
+        or line.get("quote_id") != execution.quote_id
+        or line.get("quote_item_id") != execution.quote_item_id
     ):
         error("APPROVAL_STALE", "Состав изменён после согласования. Требуется новое решение", 409)
     return line
@@ -163,11 +178,10 @@ def approval_snapshot(db, executions: list[Execution], reviewer_id: str) -> dict
     for execution in executions:
         if execution.cancelled_quantity == execution.quantity:
             error("EXECUTION_CANCELLED", "Позиция отменена")
-        quote = db.get(Quote, execution.quote_id)
-        check_quote(db, quote)
+        quote = check_execution_quote(db, execution)
         proposal = db.get(CommercialDocument, execution.proposal_id)
         calculation = db.get(Calculation, proposal.calculation_id)
-        threshold = dec(calculation.snapshot["profile"]["funding_ratio"])
+        threshold = dec(calculation.snapshot["profile"].get("funding_ratio", "1"))
         funding = funding_for_execution(db, execution)
         if dec(funding["ratio"]) < threshold:
             error("FUNDING_REQUIRED", "Подтверждённой оплаты недостаточно для порога настроенного профиля")
@@ -176,7 +190,8 @@ def approval_snapshot(db, executions: list[Execution], reviewer_id: str) -> dict
                 "execution_id": execution.id,
                 "revision": execution.revision,
                 "quote_id": execution.quote_id,
-                "quote_revision": quote.revision,
+                "quote_item_id": execution.quote_item_id,
+                "quote_revision": quote.revision if execution.quote_id else None,
                 "quantity": str(execution.quantity - execution.cancelled_quantity),
                 "unit": execution.unit,
                 "funding_ratio": str(threshold),
@@ -289,13 +304,17 @@ def revise_execution(execution_id: str, data: ExecutionReviseIn, db: DB, user: A
                 "Нельзя отменить или пересмотреть исполнение, которое распределено в волны. Сначала отмените распределения.",
             )
 
-        quote = db.get(Quote, current.quote_id)
-        item = check_quote(db, quote)
-        product = db.get(Product, quote.product_id)
+        quote = check_execution_quote(db, current)
+        item = db.get(RequestItem, current.item_id) if current.quote_item_id else check_quote(db, quote)
+        product = db.get(Product, quote.product_id) if current.quote_id else None
         from .documents import partial_amount, validate_quantity
 
         quantity = dec(data.quantity)
-        validate_quantity(quote, product, quantity, current.unit)
+        if current.quote_item_id:
+            if current.unit != "pcs" or quantity > quote.quantity:
+                error("QUOTE_AVAILABILITY", "Количество превышает объём выбранной квоты")
+        else:
+            validate_quantity(quote, product, quantity, current.unit)
         if not item.quantity or not item.unit:
             error("DEMAND_INCOMPLETE", "Укажите согласованный объём потребности")
         calc = db.get(Calculation, db.get(CommercialDocument, current.proposal_id).calculation_id)
@@ -316,7 +335,7 @@ def revise_execution(execution_id: str, data: ExecutionReviseIn, db: DB, user: A
         if accepted + requested > item.quantity:
             error("ACCEPTANCE_EXCEEDED", "Сумма принятых количеств превышает потребность")
         profile = calc.snapshot["profile"]
-        if not profile["allow_partial_acceptance"] and requested != item.quantity - accepted:
+        if not profile.get("allow_partial_acceptance", True) and requested != item.quantity - accepted:
             error("PARTIAL_ACCEPTANCE", "Профиль требует принятия полного остатка потребности")
         # Count only the latest member of each revision chain. Historical
         # snapshots remain intact without consuming the same quantity twice.
@@ -339,6 +358,7 @@ def revise_execution(execution_id: str, data: ExecutionReviseIn, db: DB, user: A
             item_id=current.item_id,
             proposal_id=current.proposal_id,
             quote_id=current.quote_id,
+            quote_item_id=current.quote_item_id,
             line_id=current.line_id,
             quantity=quantity,
             unit=current.unit,
@@ -685,7 +705,7 @@ def allocate_wave(wave_id: str, data: AllocateWaveIn, db: DB, user: Actor):
         if not approval:
             error("APPROVAL_REQUIRED", "Согласование не найдено")
         line = check_approval(db, approval, execution)
-        check_quote(db, db.get(Quote, execution.quote_id))
+        check_execution_quote(db, execution)
         if dec(funding_for_execution(db, execution)["ratio"]) < dec(line["funding_ratio"]):
             error("FUNDING_DEFICIT", "Недостаточно подтверждённого финансирования")
         allocations = db.scalars(
@@ -799,7 +819,7 @@ def record_event(allocation_id: str, data: FulfillmentIn, db: DB, user: Actor):
                     "Заказ или отправка требуют достаточного подтверждённого финансирования",
                 )
             if data.kind == "ordered" or totals["ordered"] == 0:
-                check_quote(db, db.get(Quote, execution.quote_id))
+                check_execution_quote(db, execution)
         if data.kind == "correction":
             original = db.get(FulfillmentEvent, data.correction_of) if data.correction_of else None
             if not original or original.allocation_id != allocation.id or original.kind == "correction":

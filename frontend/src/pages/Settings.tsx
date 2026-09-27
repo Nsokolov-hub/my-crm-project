@@ -4,6 +4,7 @@ import { ShieldCheck } from 'lucide-react';
 import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
 import { FinancialProfileEditor } from '../components/FinancialProfileEditor';
+import { ItemizedProfileEditor } from '../components/ItemizedProfileEditor';
 import { RolePermissionsEditor, UserAccessEditor } from '../components/RolePermissionsEditor';
 import { WorkingRulesEditor } from '../components/WorkingRulesEditor';
 import { Badge, Button, DetailPairs, ErrorBox, PageHeading, Section } from '../components/ui';
@@ -64,11 +65,44 @@ const userFields: Field[] = [
   { name: 'password', label: 'Начальный пароль', type: 'password', minLength: 12, required: true },
   { name: 'role_ids', label: 'Роли', type: 'multiselect', source: '/admin/roles' },
 ];
+const expenseTypeFields: Field[] = [
+  { name: 'name', label: 'Название расхода', required: true },
+  { name: 'calculation_type', label: 'Тип расчёта', type: 'select', required: true, value: 'FIXED', options: [
+    { value: 'FIXED', label: 'Фиксированная сумма' }, { value: 'PERCENTAGE', label: 'Процент' },
+    { value: 'BRACKET', label: 'По диапазону' }, { value: 'MANUAL', label: 'Ручной ввод' },
+  ] },
+  { name: 'default_value', label: 'Сумма или ставка по умолчанию', type: 'decimal', value: '0', required: true },
+  { name: 'currency_id', label: 'Валюта', type: 'select', source: '/currencies', labelKey: 'code', required: true,
+    create: { title: 'Новая валюта', endpoint: '/currencies', fields: [
+      { name: 'code', label: 'Код ISO 3', required: true, help: 'Три заглавные латинские буквы, например INR.' },
+      { name: 'name', label: 'Название', required: true },
+    ] },
+  },
+  { name: 'distribution_method', label: 'Распределение', type: 'select', value: 'BY_QUANTITY', required: true, options: [
+    { value: 'BY_QUANTITY', label: 'По количеству' }, { value: 'BY_PURCHASE_VALUE', label: 'По закупочной стоимости' },
+    { value: 'EQUALLY_BY_POSITION', label: 'Поровну по строкам' }, { value: 'BY_WEIGHT', label: 'По весу' },
+    { value: 'MANUAL', label: 'Вручную' },
+  ] },
+  { name: 'stage', label: 'Этап', type: 'select', value: 'GENERAL', required: true, options: [
+    { value: 'GENERAL', label: 'Общий расход' }, { value: 'INTERNATIONAL_LOGISTICS', label: 'Международная логистика' },
+  ] },
+  { name: 'percent_base', label: 'База процента или диапазона', type: 'select', options: [
+    { value: 'PURCHASE', label: 'Закупка' }, { value: 'CUSTOMS_BASE', label: 'Таможенная база' },
+    { value: 'DUTY', label: 'Пошлина' }, { value: 'COST', label: 'Себестоимость' },
+  ] },
+  { name: 'brackets', label: 'Диапазоны для типа «По диапазону»', type: 'json', value: [], wide: true,
+    help: 'Массив объектов: [{"from_amount":"0","to_amount":"500000","fee":"4997"}]' },
+  { name: 'include_in_cost', label: 'Включать в себестоимость', type: 'checkbox', value: true },
+  { name: 'include_in_cash', label: 'Включать в денежную потребность', type: 'checkbox', value: true },
+];
 export function Settings() {
   const auth = useAuth();
   const [tab, setTab] = useState('organization');
   const [selected, setSelected] = useState<Entity>();
   const [editing, setEditing] = useState(false);
+  const [profileMode, setProfileMode] = useState<'itemized_v2' | 'legacy_formula'>('itemized_v2');
+  const [expenseRevision, setExpenseRevision] = useState(0);
+  const [expenseType, setExpenseType] = useState<Entity>();
   const [revision, setRevision] = useState(0);
   const [error, setError] = useState<unknown>();
   const [mfa, setMfa] = useState<{ secret: string; uri: string }>();
@@ -103,6 +137,7 @@ export function Settings() {
             onClick={() => {
               setTab(key);
               setSelected(undefined);
+              setExpenseType(undefined);
               setEditing(false);
             }}
           >
@@ -152,6 +187,26 @@ export function Settings() {
       {currentTab === 'roles' && <RolePermissionsEditor />}
       {currentTab === 'profiles' && (
         <>
+          <Collection
+            title="Виды расходов"
+            description="Создавайте статьи для профилей и расчётов. Суммы и способы распределения можно изменить для конкретной сделки."
+            endpoint="/expense-types" fields={expenseTypeFields} command
+            createLabel="Добавить вид расхода" canCreate={auth.can('profiles.write')}
+            refreshKey={expenseRevision} onSelect={auth.can('profiles.write') ? setExpenseType : undefined}
+            columns={[
+              { key: 'name', label: 'Название' },
+              { key: 'calculation_type', label: 'Тип' },
+              { key: 'default_value', label: 'По умолчанию' },
+              { key: 'currency_code', label: 'Валюта' },
+              { key: 'distribution_method', label: 'Распределение' },
+            ]}
+          />
+          <Collection
+            title="Отключённые виды расходов"
+            endpoint="/expense-types?active=false" canCreate={false}
+            refreshKey={expenseRevision} onSelect={auth.can('profiles.write') ? setExpenseType : undefined}
+            columns={[{ key: 'name', label: 'Название' }, { key: 'calculation_type', label: 'Тип' }]}
+          />
           <Section
             title="Настраиваемая финансовая модель"
             description="Профиль задаёт ставки, валюты, порядок расчёта, условия оплаты и вид документов."
@@ -165,11 +220,23 @@ export function Settings() {
                 <Button
                   onClick={() => {
                     setSelected(undefined);
+                    setProfileMode('itemized_v2');
                     setEditing(true);
                   }}
                   disabled={!auth.can('profiles.write') || !auth.can('templates.write')}
                 >
-                  Создать профиль
+                  Создать профиль расчёта
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setSelected(undefined);
+                    setProfileMode('legacy_formula');
+                    setEditing(true);
+                  }}
+                  disabled={!auth.can('profiles.write') || !auth.can('templates.write')}
+                >
+                  Создать формульный профиль
                 </Button>
               </div>
             </div>
@@ -182,6 +249,11 @@ export function Settings() {
               auth.can('profiles.write') && auth.can('templates.write')
                 ? (r) => {
                     setSelected(r);
+                    setProfileMode(
+                      (r.definition as Record<string, unknown> | undefined)?.methodology === 'itemized_v2'
+                        ? 'itemized_v2'
+                        : 'legacy_formula',
+                    );
                     setEditing(true);
                   }
                 : undefined
@@ -223,6 +295,17 @@ export function Settings() {
           />
         </>
       )}
+      {currentTab === 'profiles' && expenseType && <Section title="Вид расхода">
+        <div className="form-body"><p>{String(expenseType.name)} · {expenseType.active ? 'действует' : 'отключён'}</p>
+          <div className="inline-actions"><Button variant="secondary" onClick={() => setExpenseType(undefined)}>Закрыть</Button>
+            <Button variant="secondary" onClick={() => {
+              void command.run(`/expense-types/${expenseType.id}`, { version: expenseType.version, active: !expenseType.active }, 'PATCH')
+                .then(() => { setExpenseType(undefined); setExpenseRevision((value) => value + 1); })
+                .catch(setError);
+            }}>{expenseType.active ? 'Отключить' : 'Включить'}</Button>
+          </div>
+        </div>
+      </Section>}
       {currentTab === 'settings' && <WorkingRulesEditor />}
       {currentTab === 'audit' && (
         <Collection
@@ -319,7 +402,18 @@ export function Settings() {
         />
       )}
       {editing && currentTab === 'profiles' && (
-        <FinancialProfileEditor
+        profileMode === 'itemized_v2' ? <ItemizedProfileEditor
+          initial={selected}
+          onClose={() => {
+            setEditing(false);
+            setSelected(undefined);
+          }}
+          onSuccess={() => {
+            setEditing(false);
+            setSelected(undefined);
+            setRevision((v) => v + 1);
+          }}
+        /> : <FinancialProfileEditor
           initial={selected}
           onClose={() => {
             setEditing(false);

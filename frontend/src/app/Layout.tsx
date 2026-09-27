@@ -22,10 +22,12 @@ import {
   CheckCheck,
 } from 'lucide-react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from './Auth';
+import { api } from '../lib/api';
 import { useApi } from '../lib/hooks';
 import type { Page } from '../lib/types';
+import '../styles/communication-v2.scss';
 const links = [
   { label: 'Рабочий стол', path: '/', icon: LayoutDashboard, permission: undefined },
   { label: 'Заявки', path: '/requests', icon: ClipboardList, permission: 'requests.read' },
@@ -51,6 +53,26 @@ export function Layout() {
   const availableOperations = operations.filter((link) => auth.can(link.permission));
   const canSeeAnalytics = auth.can('analytics.read');
   const canUseChats = auth.can('chats.use');
+  const [unreadChats, setUnreadChats] = useState(0);
+  useEffect(() => {
+    if (!canUseChats) return;
+    let active = true;
+    const refresh = () => {
+      void api<{ unread: number }>('/chats/unread-count')
+        .then((result) => {
+          if (active) setUnreadChats(result.unread);
+        })
+        .catch(() => undefined);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 10000);
+    window.addEventListener('crm:chats-read', refresh);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener('crm:chats-read', refresh);
+    };
+  }, [canUseChats]);
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">
@@ -106,9 +128,14 @@ export function Layout() {
             </NavLink>
           )}
           {canUseChats && (
-            <NavLink to="/chats" onClick={() => setMobile(false)}>
+            <NavLink
+              to="/chats"
+              onClick={() => setMobile(false)}
+              aria-label={`Обсуждения, непрочитанных сообщений: ${unreadChats}`}
+            >
               <MessageSquare size={19} />
               Обсуждения
+              {unreadChats > 0 && <span className="nav-unread-badge" aria-hidden="true">{unreadChats > 99 ? '99+' : unreadChats}</span>}
             </NavLink>
           )}
         </nav>

@@ -9,7 +9,9 @@ import { Badge, Button, DataTable, DetailPairs, ErrorBox, Loading, Modal, Pagina
 const importMapping = {
   external_id: 'Внешний ID',
   name: 'Организация',
+  kind: 'Тип контрагента',
   country: 'Страна',
+  city: 'Город',
   tax_id: 'ИНН',
   contact: 'Контактное лицо',
   phone: 'Телефон',
@@ -374,12 +376,13 @@ export function ImportDialog({
                 Файл: batch.source_name,
                 Статус: statusLabels[batch.status] || batch.status,
                 'Всего строк': total,
-              'К созданию': summary.create || 0,
-              'К обновлению': summary.update || 0,
+                'Валидных записей': batch.summary.valid || 0,
+                'К созданию': summary.create || 0,
+                'К обновлению': summary.update || 0,
                 'Требуют решения':
                   batch.status === 'preview' ? unresolved : batch.summary.conflict || 0,
                 Ошибки: batch.summary.error || 0,
-              Пропущено: summary.skip || 0,
+                Пропущено: summary.skip || 0,
                 Создано: batch.summary.created || 0,
                 Обновлено: batch.summary.updated || 0,
               }}
@@ -391,7 +394,10 @@ export function ImportDialog({
               </p>
             )}
             {batch.status === 'completed' && (
-              <p role="status">Импорт завершён. База контрагентов обновлена.</p>
+              <p role="status">
+                Импортировано {(batch.summary.created || 0) + (batch.summary.updated || 0)} записей.
+                Пропущено {(batch.summary.skip || 0) + (batch.summary.error || 0)} записей.
+              </p>
             )}
             {batch.status === 'failed' && (
               <p role="alert">
