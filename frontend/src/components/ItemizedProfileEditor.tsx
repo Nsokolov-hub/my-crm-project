@@ -37,6 +37,10 @@ type ItemizedDefinition = {
 type ProductGroup = Entity & { name: string; slug: string };
 const countryField: Field = {
   name: 'import_country_id', label: 'Страна ввоза', type: 'select', source: '/countries', required: true,
+  create: { title: 'Новая страна', endpoint: '/countries', fields: [
+    { name: 'name', label: 'Название страны', required: true },
+    { name: 'iso2', label: 'Код ISO 2', required: true, help: 'Две заглавные латинские буквы, например IN.' },
+  ] },
 };
 const groupNames: Record<string, string> = {
   reference_standards: 'Стандартные образцы', reagents: 'Реактивы', columns: 'Колонки',

@@ -72,7 +72,12 @@ const expenseTypeFields: Field[] = [
     { value: 'BRACKET', label: 'По диапазону' }, { value: 'MANUAL', label: 'Ручной ввод' },
   ] },
   { name: 'default_value', label: 'Сумма или ставка по умолчанию', type: 'decimal', value: '0', required: true },
-  { name: 'currency_id', label: 'Валюта', type: 'select', source: '/currencies', required: true },
+  { name: 'currency_id', label: 'Валюта', type: 'select', source: '/currencies', labelKey: 'code', required: true,
+    create: { title: 'Новая валюта', endpoint: '/currencies', fields: [
+      { name: 'code', label: 'Код ISO 3', required: true, help: 'Три заглавные латинские буквы, например INR.' },
+      { name: 'name', label: 'Название', required: true },
+    ] },
+  },
   { name: 'distribution_method', label: 'Распределение', type: 'select', value: 'BY_QUANTITY', required: true, options: [
     { value: 'BY_QUANTITY', label: 'По количеству' }, { value: 'BY_PURCHASE_VALUE', label: 'По закупочной стоимости' },
     { value: 'EQUALLY_BY_POSITION', label: 'Поровну по строкам' }, { value: 'BY_WEIGHT', label: 'По весу' },

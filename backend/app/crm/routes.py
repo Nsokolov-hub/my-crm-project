@@ -289,7 +289,8 @@ def currencies(active: bool = True, user: User = Depends(current_user), db: Sess
 
 @router.post('/currencies', status_code=201)
 def create_currency(body: CurrencyInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
-    require_permission(db, user, 'admin.settings')
+    if not can(db, user, 'admin.settings'):
+        require_permission(db, user, 'profiles.write')
     advisory(db, 'catalog.currencies')
     if db.scalar(select(Currency.id).where(Currency.code == body.code)):
         raise DomainError('CURRENCY_EXISTS', 'Валюта уже есть в справочнике', 409, 'code')
@@ -307,7 +308,8 @@ def countries(q: str = '', active: bool = True, user: User = Depends(current_use
 
 @router.post('/countries', status_code=201)
 def create_country(body: CountryInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
-    require_catalog_create(db, user)
+    if not can(db, user, 'profiles.write'):
+        require_catalog_create(db, user)
     advisory(db, 'catalog.countries')
     if db.scalar(select(Country.id).where(or_(Country.iso2 == body.iso2, Country.name == body.name))):
         raise DomainError('COUNTRY_EXISTS', 'Страна уже есть в справочнике', 409)
