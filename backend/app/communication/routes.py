@@ -44,6 +44,7 @@ class Input(BaseModel):
 
 class ChatInput(Input):
     title: str = Field(min_length=1, max_length=250)
+    description: str = Field(default='', max_length=2000)
     kind: Literal['direct', 'group', 'request', 'wave']
     member_ids: list[str] = Field(default_factory=list, max_length=100)
     entity_id: str | None = None
@@ -135,7 +136,8 @@ def create_chat(body: ChatInput, user: User = Depends(current_user), db: Session
             if previous:
                 existing, member = check_chat(db, user, previous.id)
                 return chat_view(db, existing, member)
-        row = Chat(title=body.title, kind=body.kind, owner_id=user.id, direct_key=direct_key,
+        row = Chat(title=body.title, description=body.description, kind=body.kind,
+                   owner_id=user.id, direct_key=direct_key,
                    request_id=body.entity_id if body.kind == 'request' else None,
                    wave_id=body.entity_id if body.kind == 'wave' else None)
         for member_id in member_ids:
@@ -170,6 +172,35 @@ def chats(page: int = 1, page_size: int = 25, q: str = '', entity_id: str | None
     result = paginate(db, statement.order_by(Chat.created_at.desc(), Chat.id), page, page_size)
     result['items'] = [chat_view(db, *check_chat(db, user, item['id'])) for item in result['items']]
     return result
+
+
+@router.get('/chats/unread-count')
+def unread_chat_count(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, int]:
+    from app.commerce.models import Wave
+    from app.crm.models import Request as CRMRequest
+
+    require_permission(db, user, 'chats.use')
+    statement = (
+        select(func.count(Message.id))
+        .select_from(Message)
+        .join(ChatMember, ChatMember.chat_id == Message.chat_id)
+        .join(Chat, Chat.id == Message.chat_id)
+        .where(
+            ChatMember.user_id == user.id,
+            ChatMember.active.is_(True),
+            Message.sequence > ChatMember.read_sequence,
+            Message.author_id != user.id,
+            or_(Chat.request_id.is_(None), Chat.request_id.in_(
+                select(CRMRequest.id).where(request_predicate(db, user))
+            )),
+        )
+    )
+    if scope_for(db, user, 'waves.write') != 'all' and scope_for(db, user, 'requests.read') != 'all':
+        statement = statement.where(or_(
+            Chat.wave_id.is_(None),
+            Chat.wave_id.in_(select(Wave.id).where(Wave.owner_id == user.id)),
+        ))
+    return {'unread': db.scalar(statement) or 0}
 
 
 @router.get('/chats/{entity_id}')

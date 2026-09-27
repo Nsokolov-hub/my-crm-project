@@ -19,6 +19,12 @@ export type CollectionProps = {
   canCreate?: boolean;
   onChanged?: () => void;
   transform?: (values: Record<string, unknown>) => Record<string, unknown>;
+  pageSize?: number;
+  selection?: {
+    selectedIds: Set<string>;
+    onToggle: (id: string) => void;
+    onSelectPage: (ids: string[], checked: boolean) => void;
+  };
 };
 export function Collection({
   title,
@@ -35,6 +41,8 @@ export function Collection({
   canCreate = true,
   transform,
   onChanged,
+  pageSize = 25,
+  selection,
 }: CollectionProps) {
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
@@ -43,8 +51,41 @@ export function Collection({
   const [creating, setCreating] = useState(false);
   const debounced = useDebounced(q);
   const data = useApi<Page>(
-    `${endpoint}${endpoint.includes('?') ? '&' : '?'}page=${page}&page_size=25&q=${encodeURIComponent(debounced)}&sort=${sort}&direction=${direction}&ui_revision=${refreshKey}${query}`,
+    `${endpoint}${endpoint.includes('?') ? '&' : '?'}page=${page}&page_size=${pageSize}&q=${encodeURIComponent(debounced)}&sort=${sort}&direction=${direction}&ui_revision=${refreshKey}${query}`,
   );
+  const rows = data.data?.items || [];
+  const visibleIds = rows.map((row) => row.id);
+  const selectedOnPage = visibleIds.filter((id) => selection?.selectedIds.has(id)).length;
+  const visibleColumns: Column[] = selection
+    ? [
+        {
+          key: '__selection',
+          label: (
+            <input
+              type="checkbox"
+              aria-label="Выбрать все строки на странице"
+              title="Выбрать все строки на странице"
+              checked={visibleIds.length > 0 && selectedOnPage === visibleIds.length}
+              ref={(element) => {
+                if (element)
+                  element.indeterminate = selectedOnPage > 0 && selectedOnPage < visibleIds.length;
+              }}
+              onChange={(event) => selection.onSelectPage(visibleIds, event.target.checked)}
+            />
+          ),
+          render: (row) => (
+            <input
+              type="checkbox"
+              aria-label={`Выбрать позицию ${String(row.nomenclature_name || row.description || row.id)}`}
+              checked={selection.selectedIds.has(row.id)}
+              onChange={() => selection.onToggle(row.id)}
+            />
+          ),
+          sortable: false,
+        },
+        ...columns,
+      ]
+    : columns;
   const [saved, setSaved] = useState<string[]>(() => {
     try {
       return JSON.parse(localStorage.getItem(`filters:${endpoint}`) || '[]');
@@ -116,9 +157,10 @@ export function Collection({
         <ErrorBox error={data.error} retry={data.refresh} />
       ) : (
         <DataTable
-          rows={data.data?.items || []}
-          columns={columns}
+          rows={rows}
+          columns={visibleColumns}
           onRow={onSelect}
+          rowClassName={(row) => (selection?.selectedIds.has(row.id) ? 'selected-table-row' : '')}
           sort={sort}
           onSort={(key) => {
             setSort(key);
@@ -129,6 +171,7 @@ export function Collection({
       <Pagination
         page={page}
         total={data.data?.total ?? data.data?.items.length ?? 0}
+        pageSize={pageSize}
         onChange={setPage}
       />
       {creating && fields && (

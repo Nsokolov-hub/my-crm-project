@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
@@ -15,7 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.db import Entity
+from app.core.db import Entity, utcnow
 
 
 class Seller(Entity):
@@ -110,6 +111,14 @@ class RequestItem(Entity):
     __table_args__ = (CheckConstraint('quantity IS NULL OR quantity > 0'),)
     request_id: Mapped[str] = mapped_column(ForeignKey('requests.id'), index=True)
     description: Mapped[str] = mapped_column(Text)
+    product_group_id: Mapped[str | None] = mapped_column(ForeignKey('product_groups.id'), index=True)
+    nomenclature_id: Mapped[str | None] = mapped_column(ForeignKey('nomenclatures.id'), index=True)
+    packing_id: Mapped[str | None] = mapped_column(ForeignKey('packings.id'), index=True)
+    article: Mapped[str | None] = mapped_column(String(150))
+    supplier_id: Mapped[str | None] = mapped_column(ForeignKey('counterparties.id'))
+    supplier_country_id: Mapped[str | None] = mapped_column(ForeignKey('countries.id'))
+    purchase_price: Mapped[Decimal | None] = mapped_column(Numeric(24, 8))
+    purchase_currency_id: Mapped[str | None] = mapped_column(ForeignKey('currencies.id'))
     cas: Mapped[str | None] = mapped_column(String(30))
     quantity: Mapped[Decimal | None] = mapped_column(Numeric(24, 6))
     unit: Mapped[str | None] = mapped_column(String(30))
@@ -131,6 +140,80 @@ class RequestItemRevision(Entity):
     snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
     author_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
     reason: Mapped[str | None] = mapped_column(Text)
+
+
+class ProductGroup(Entity):
+    __tablename__ = 'product_groups'
+    name: Mapped[str] = mapped_column(String(150), unique=True)
+    slug: Mapped[str] = mapped_column(String(80), unique=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class Nomenclature(Entity):
+    __tablename__ = 'nomenclatures'
+    name: Mapped[str] = mapped_column(String(250), index=True)
+    article: Mapped[str | None] = mapped_column(String(150), index=True)
+    product_group_id: Mapped[str | None] = mapped_column(ForeignKey('product_groups.id'), index=True)
+    cas: Mapped[str | None] = mapped_column(String(30), index=True)
+    linear_formula: Mapped[str | None] = mapped_column(String(500))
+    description: Mapped[str | None] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Packing(Entity):
+    __tablename__ = 'packings'
+    __table_args__ = (UniqueConstraint('nomenclature_id', 'value', 'unit'), CheckConstraint('value > 0'),)
+    nomenclature_id: Mapped[str] = mapped_column(ForeignKey('nomenclatures.id'), index=True)
+    value: Mapped[Decimal] = mapped_column(Numeric(24, 6))
+    unit: Mapped[str] = mapped_column(String(30))
+    display_name: Mapped[str] = mapped_column(String(100))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class Currency(Entity):
+    __tablename__ = 'currencies'
+    code: Mapped[str] = mapped_column(String(3), unique=True)
+    name: Mapped[str] = mapped_column(String(100))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class Country(Entity):
+    __tablename__ = 'countries'
+    name: Mapped[str] = mapped_column(String(150), unique=True)
+    iso2: Mapped[str] = mapped_column(String(2), unique=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class QuoteSheet(Entity):
+    __tablename__ = 'quote_sheets'
+    number: Mapped[str] = mapped_column(String(80), unique=True)
+    request_id: Mapped[str] = mapped_column(ForeignKey('requests.id'), index=True)
+    supplier_id: Mapped[str] = mapped_column(ForeignKey('counterparties.id'), index=True)
+    supplier_request_id: Mapped[str | None] = mapped_column(ForeignKey('supplier_requests.id'))
+    author_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+
+
+class QuoteItem(Entity):
+    __tablename__ = 'quote_items'
+    __table_args__ = (
+        CheckConstraint('quantity > 0 AND unit_price >= 0'),
+        CheckConstraint('delivery_days IS NULL OR delivery_days >= 0'),
+        Index('ix_quote_items_price_lookup', 'supplier_id', 'nomenclature_id', 'packing_id', 'currency_id', 'quoted_at'),
+    )
+    quote_id: Mapped[str] = mapped_column(ForeignKey('quote_sheets.id'), index=True)
+    supplier_id: Mapped[str] = mapped_column(ForeignKey('counterparties.id'), index=True)
+    nomenclature_id: Mapped[str] = mapped_column(ForeignKey('nomenclatures.id'), index=True)
+    packing_id: Mapped[str] = mapped_column(ForeignKey('packings.id'), index=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 6))
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(24, 8))
+    currency_id: Mapped[str] = mapped_column(ForeignKey('currencies.id'), index=True)
+    delivery_days: Mapped[int | None]
+    quoted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    source_request_item_id: Mapped[str] = mapped_column(ForeignKey('request_items.id'))
+    price_source_id: Mapped[str | None] = mapped_column(ForeignKey('quote_items.id'))
+    author_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
 
 
 class ImportBatch(Entity):

@@ -184,6 +184,7 @@ export function DataTable<T extends Entity>({
   empty,
   sort,
   onSort,
+  rowClassName,
 }: {
   rows: T[];
   columns: Column<NoInfer<T>>[];
@@ -191,8 +192,10 @@ export function DataTable<T extends Entity>({
   empty?: ReactNode;
   sort?: string;
   onSort?: (key: string) => void;
+  rowClassName?: (row: T) => string;
 }) {
   if (rows.length === 0) return empty || <Empty />;
+  const linkIndex = columns.findIndex((column) => column.key !== '__selection');
   return (
     <div className="table-scroll">
       <table>
@@ -214,10 +217,10 @@ export function DataTable<T extends Entity>({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.id}>
+            <tr key={row.id} className={rowClassName?.(row)}>
               {columns.map((col, index) => (
                 <td key={col.key}>
-                  {index === 0 && onRow ? (
+                  {index === linkIndex && onRow ? (
                     <button className="row-link" onClick={() => onRow(row)}>
                       {col.render ? col.render(row) : display(row[col.key])}
                       <ArrowUpRight size={14} />

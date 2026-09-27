@@ -50,7 +50,6 @@ a {
   text-decoration: none;
 }
 
-
 :focus-visible {
   outline: 2px solid $purple;
 }
@@ -1356,6 +1355,272 @@ tr:hover td {
 
 .overdue {
   color: #c07685;
+}
+
+.selected-table-row td,
+.selected-table-row:hover td {
+  background: #f4eefb;
+}
+
+.selection-count {
+  color: #776c88;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.quote-sheet-editor,
+.calculation-editor,
+.request-item-editor {
+  display: grid;
+  gap: 20px;
+}
+
+.quote-sheet-editor > p,
+.request-item-editor > p {
+  margin: 0;
+}
+
+.quote-sheet-header {
+  margin-bottom: 2px;
+}
+
+.quote-sheet-table-scroll {
+  overflow-x: auto;
+  max-height: min(58vh, 580px);
+  border: 1px solid #ebe7f0;
+  border-radius: 9px;
+}
+
+.quote-sheet-table {
+  min-width: 1040px;
+  table-layout: fixed;
+}
+
+.quote-sheet-table th,
+.quote-sheet-table td {
+  padding: 8px;
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+}
+
+.quote-sheet-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.quote-sheet-table th:first-child,
+.quote-sheet-table td:first-child {
+  width: 34px;
+  text-align: center;
+}
+
+.quote-sheet-table th:last-child,
+.quote-sheet-table td:last-child {
+  width: 42px;
+}
+
+.quote-sheet-table select,
+.quote-sheet-table input {
+  width: 100%;
+  min-width: 70px;
+  box-sizing: border-box;
+}
+
+.quote-sheet-table td:nth-child(2),
+.quote-sheet-table td:nth-child(3) {
+  width: 19%;
+}
+
+.quote-sheet-table td:nth-child(4) {
+  width: 14%;
+}
+
+.quote-row-error td {
+  background: #fff6f6;
+}
+
+.quote-row-message {
+  display: block;
+  margin-top: 5px;
+  color: #b75664;
+  font-size: 10px;
+  white-space: normal;
+}
+
+.quote-sheet-count {
+  color: #8c849a;
+  font-size: 10px;
+}
+
+.quick-create-actions,
+.quick-create-panel {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.quick-create-panel {
+  padding: 14px;
+  background: #faf8fd;
+  border: 1px solid #e9e2f4;
+  border-radius: 8px;
+}
+
+.quick-create-panel label {
+  display: grid;
+  gap: 5px;
+  min-width: 130px;
+  font-size: 11px;
+}
+
+.validation-summary {
+  border: 1px solid #e9afb7;
+  border-radius: 8px;
+  background: #fff7f8;
+  color: #973f4f;
+  padding: 14px 17px;
+  font-size: 11px;
+}
+
+.validation-summary ul {
+  margin: 7px 0 0;
+  padding-left: 18px;
+  line-height: 1.7;
+}
+
+.calculation-profile {
+  max-width: 440px;
+}
+
+.calculation-section {
+  display: grid;
+  gap: 16px;
+  border-top: 1px solid #eeeaf2;
+  padding-top: 20px;
+}
+
+.calculation-section .section-heading {
+  margin: 0;
+  min-height: 0;
+  align-items: center;
+}
+
+.calculation-section .section-heading h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.calculation-section .section-heading p {
+  margin-top: 5px;
+}
+
+.calculation-editor .info-note {
+  margin: 0;
+}
+
+.calculation-product {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.calculation-product .badge {
+  flex: none;
+  margin: 0;
+}
+
+.calculation-markup,
+.calculation-bulk-markup input {
+  width: 75px;
+}
+
+.calculation-bulk-markup {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.calculation-bulk-markup label,
+.calculation-rate-row label,
+.calculation-expense-row label {
+  display: grid;
+  gap: 5px;
+  font-size: 10px;
+}
+
+.calculation-rate-row,
+.calculation-expense-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(95px, 1fr)) 30px;
+  align-items: end;
+  gap: 10px;
+}
+
+.calculation-expense-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.calculation-expense-actions select {
+  min-width: 160px;
+}
+
+.calculation-rate-row strong {
+  align-self: center;
+  font-size: 11px;
+}
+
+.calculation-rate-row input,
+.calculation-expense-row input,
+.calculation-expense-row select {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.calculation-terms-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 12px;
+}
+
+.calculation-terms-grid label {
+  display: grid;
+  gap: 6px;
+  font-size: 10px;
+}
+
+.calculation-terms-grid input,
+.calculation-terms-grid select {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.calculation-internal-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+@media (width <= 760px) {
+  .calculation-rate-row,
+  .calculation-expense-row,
+  .calculation-terms-grid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
 }
 
 .upload-area {

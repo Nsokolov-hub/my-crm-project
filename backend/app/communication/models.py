@@ -25,6 +25,7 @@ class Chat(Entity):
                         "(kind IN ('direct','group') AND request_id IS NULL AND wave_id IS NULL)"),
     )
     title: Mapped[str] = mapped_column(String(250))
+    description: Mapped[str] = mapped_column(Text, default='')
     kind: Mapped[str] = mapped_column(String(20))
     owner_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
     request_id: Mapped[str | None] = mapped_column(ForeignKey('requests.id'), index=True)

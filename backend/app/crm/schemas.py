@@ -1,7 +1,7 @@
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import AwareDatetime, EmailStr, Field, field_validator
+from pydantic import AwareDatetime, EmailStr, Field, field_validator, model_validator
 
 from app.core.routes import Input
 
@@ -110,7 +110,15 @@ class RequestPatch(Input):
 
 
 class ItemInput(Input):
-    description: str = Field(min_length=1, max_length=10000)
+    description: str | None = Field(default=None, min_length=1, max_length=10000)
+    product_group_id: str | None = None
+    nomenclature_id: str | None = None
+    packing_id: str | None = None
+    article: str | None = Field(default=None, max_length=150)
+    supplier_id: str | None = None
+    supplier_country_id: str | None = None
+    purchase_price: Decimal | None = Field(default=None, ge=0, max_digits=24, decimal_places=8)
+    purchase_currency_id: str | None = None
     cas: str | None = Field(default=None, max_length=30)
     quantity: Decimal | None = Field(default=None, gt=0, max_digits=24, decimal_places=6)
     unit: str | None = Field(default=None, max_length=30)
@@ -120,7 +128,7 @@ class ItemInput(Input):
     desired_at: AwareDatetime | None = None
     comment: str | None = Field(default=None, max_length=10000)
 
-    @field_validator('quantity', mode='before')
+    @field_validator('quantity', 'purchase_price', mode='before')
     @classmethod
     def decimal_string(cls, value: Any) -> Any:
         if isinstance(value, float):
@@ -131,6 +139,14 @@ class ItemInput(Input):
 class ItemPatch(Input):
     version: int
     description: str = Field(default=None, min_length=1, max_length=10000)
+    product_group_id: str | None = None
+    nomenclature_id: str | None = None
+    packing_id: str | None = None
+    article: str | None = Field(default=None, max_length=150)
+    supplier_id: str | None = None
+    supplier_country_id: str | None = None
+    purchase_price: Decimal | None = Field(default=None, ge=0, max_digits=24, decimal_places=8)
+    purchase_currency_id: str | None = None
     cas: str | None = None
     quantity: Decimal | None = Field(default=None, gt=0, max_digits=24, decimal_places=6)
     unit: str | None = None
@@ -141,6 +157,13 @@ class ItemPatch(Input):
     comment: str | None = None
     archived: bool = Field(default=None)
     reason: str = Field(min_length=1, max_length=4000)
+
+    @field_validator('quantity', 'purchase_price', mode='before')
+    @classmethod
+    def decimal_string(cls, value: Any) -> Any:
+        if isinstance(value, float):
+            raise ValueError('Количество и цена передаются десятичными строками')
+        return value
 
 
 class SellerInput(Input):
@@ -153,3 +176,96 @@ class ShareInput(Input):
     version: int
     member_ids: list[str]
     reason: str = Field(min_length=1)
+
+
+class ProductGroupInput(Input):
+    name: str = Field(min_length=1, max_length=150)
+    slug: str = Field(pattern=r'^[a-z][a-z0-9_]{0,79}$')
+
+
+class CountryInput(Input):
+    name: str = Field(min_length=1, max_length=150)
+    iso2: str = Field(pattern=r'^[A-Z]{2}$')
+
+
+class CurrencyInput(Input):
+    code: str = Field(pattern=r'^[A-Z]{3}$')
+    name: str = Field(min_length=1, max_length=100)
+
+
+class PackingInput(Input):
+    value: Decimal = Field(gt=0, max_digits=24, decimal_places=6)
+    unit: str = Field(min_length=1, max_length=30)
+    display_name: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @field_validator('value', mode='before')
+    @classmethod
+    def decimal_string(cls, value: Any) -> Any:
+        if isinstance(value, float):
+            raise ValueError('Значение фасовки передаётся десятичной строкой')
+        return value
+
+
+class PackingPatch(Input):
+    version: int = Field(ge=1)
+    display_name: str = Field(default=None, min_length=1, max_length=100)
+    active: bool = Field(default=None)
+
+
+class NomenclatureInput(Input):
+    name: str = Field(min_length=1, max_length=250)
+    article: str | None = Field(default=None, max_length=150)
+    product_group_id: str | None = None
+    cas: str | None = Field(default=None, max_length=30)
+    linear_formula: str | None = Field(default=None, max_length=500)
+    description: str | None = Field(default=None, max_length=10000)
+    packings: list[PackingInput] = Field(min_length=1, max_length=100)
+
+
+class NomenclaturePatch(Input):
+    version: int = Field(ge=1)
+    name: str = Field(default=None, min_length=1, max_length=250)
+    article: str | None = Field(default=None, max_length=150)
+    product_group_id: str | None = None
+    cas: str | None = Field(default=None, max_length=30)
+    linear_formula: str | None = Field(default=None, max_length=500)
+    description: str | None = Field(default=None, max_length=10000)
+    active: bool | None = None
+
+
+class QuoteItemInput(Input):
+    source_request_item_id: str
+    nomenclature_id: str
+    packing_id: str
+    quantity: Decimal = Field(gt=0, max_digits=24, decimal_places=6)
+    unit_price: Decimal | None = Field(default=None, ge=0, max_digits=24, decimal_places=8)
+    currency_id: str | None = None
+    delivery_days: int | None = Field(default=None, ge=0)
+    quoted_at: AwareDatetime | None = None
+
+    @field_validator('quantity', 'unit_price', mode='before')
+    @classmethod
+    def decimal_string(cls, value: Any) -> Any:
+        if isinstance(value, float):
+            raise ValueError('Количество и цена передаются десятичными строками')
+        return value
+
+    @field_validator('quantity')
+    @classmethod
+    def whole_packings(cls, value: Decimal) -> Decimal:
+        if value != value.to_integral_value():
+            raise ValueError('Количество фасовок должно быть целым числом')
+        return value
+
+
+class QuoteSheetInput(Input):
+    supplier_id: str
+    supplier_request_id: str | None = None
+    items: list[QuoteItemInput] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode='after')
+    def no_duplicate_source_rows(self):
+        source_ids = [item.source_request_item_id for item in self.items if item.source_request_item_id]
+        if len(source_ids) != len(set(source_ids)):
+            raise ValueError('Одна позиция заявки не может повторяться в одной квоте')
+        return self

@@ -2,8 +2,8 @@ import { ArrowLeft, Pencil, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useApi } from '../lib/hooks';
-import type { Entity, Field, Page } from '../lib/types';
-import { itemFields, requestEditFields, taskFields } from '../lib/fields';
+import type { Entity, Page } from '../lib/types';
+import { requestEditFields, taskFields } from '../lib/fields';
 import { date } from '../lib/format';
 import {
   Badge,
@@ -18,6 +18,7 @@ import { Collection } from '../components/Collection';
 import { RecordForm } from '../components/Form';
 import { RequestRfqs, RequestQuotes } from './RequestProcurement';
 import { RequestCalculations } from './RequestCalculations';
+import { RequestItemEditor } from './RequestItemEditor';
 import { RequestDocuments } from './RequestDocuments';
 import { RequestPayments } from './RequestPayments';
 import { RequestFulfillment } from './Fulfillment';
@@ -41,8 +42,12 @@ export function RequestDetail() {
   const request = useApi<Entity>(`/requests/${id}`);
   const [edit, setEdit] = useState(false);
   const [item, setItem] = useState<Entity>();
+  const [addingItem, setAddingItem] = useState(false);
   const [task, setTask] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [rfqItemIds, setRfqItemIds] = useState<string[]>([]);
+  const [quoteItemIds, setQuoteItemIds] = useState<string[]>([]);
   const counts = useApi<Page>(`/requests/${id}/items?ui_revision=${revision}`);
   const refresh = () => {
     request.refresh();
@@ -141,29 +146,90 @@ export function RequestDetail() {
         </>
       )}
       {tab === 'items' && (
-        <Collection
-          title="Потребность клиента"
-          onChanged={refresh}
-          endpoint={`/requests/${id}/items`}
-          fields={itemFields}
-          createLabel="Добавить позицию"
-          refreshKey={revision}
-          onSelect={setItem}
-          columns={[
-            { key: 'description', label: 'Исходное наименование' },
-            { key: 'cas', label: 'CAS' },
-            { key: 'quantity', label: 'Количество' },
-            { key: 'unit', label: 'Единица' },
-            { key: 'purity', label: 'Чистота' },
-            { key: 'packaging', label: 'Фасовка' },
-            { key: 'revision', label: 'Редакция' },
-            { key: 'archived', label: 'В архиве' },
-          ]}
+        <>
+          <div className="tab-actions">
+            <span className="selection-count">Выбрано позиций: {selectedItemIds.size}</span>
+            <Button variant="secondary" onClick={() => setAddingItem(true)}>
+              <Plus size={16} /> Добавить позицию
+            </Button>
+            <Button
+              disabled={selectedItemIds.size === 0}
+              title={selectedItemIds.size ? undefined : 'Сначала выберите позиции заявки'}
+              onClick={() => {
+                setRfqItemIds([...selectedItemIds]);
+                setParams({ tab: 'rfqs' });
+              }}
+            >
+              Создать запрос поставщику
+            </Button>
+          </div>
+          <Collection
+            title="Потребность клиента"
+            onChanged={refresh}
+            endpoint={`/requests/${id}/items`}
+            refreshKey={revision}
+            pageSize={100}
+            selection={{
+              selectedIds: selectedItemIds,
+              onToggle: (itemId) =>
+                setSelectedItemIds((current) => {
+                  const next = new Set(current);
+                  if (next.has(itemId)) next.delete(itemId);
+                  else next.add(itemId);
+                  return next;
+                }),
+              onSelectPage: (ids, checked) =>
+                setSelectedItemIds((current) => {
+                  const next = new Set(current);
+                  ids.forEach((itemId) => (checked ? next.add(itemId) : next.delete(itemId)));
+                  return next;
+                }),
+            }}
+            onSelect={setItem}
+            columns={[
+              {
+                key: 'description',
+                label: 'Номенклатура',
+                render: (r) => String(r.nomenclature_name || r.description),
+              },
+              {
+                key: 'packing_name',
+                label: 'Фасовка',
+                render: (r) => String(r.packing_name || r.packaging || '—'),
+              },
+              { key: 'quantity', label: 'Количество' },
+              { key: 'unit', label: 'Единица' },
+              { key: 'cas', label: 'CAS' },
+              { key: 'revision', label: 'Редакция' },
+              { key: 'archived', label: 'В архиве' },
+            ]}
+          />
+        </>
+      )}
+      {tab === 'rfqs' && (
+        <RequestRfqs
+          requestId={id}
+          requestNumber={String(row.number || '')}
+          launchItemIds={rfqItemIds}
+          onLaunchConsumed={() => setRfqItemIds([])}
         />
       )}
-      {tab === 'rfqs' && <RequestRfqs requestId={id} />}
-      {tab === 'quotes' && <RequestQuotes requestId={id} />}
-      {tab === 'calculations' && <RequestCalculations request={row} />}
+      {tab === 'quotes' && (
+        <RequestQuotes
+          requestId={id}
+          onCalculate={(ids) => {
+            setQuoteItemIds(ids);
+            setParams({ tab: 'calculations' });
+          }}
+        />
+      )}
+      {tab === 'calculations' && (
+        <RequestCalculations
+          request={row}
+          launchQuoteItemIds={quoteItemIds}
+          onLaunchConsumed={() => setQuoteItemIds([])}
+        />
+      )}
       {tab === 'documents' && <RequestDocuments requestId={id} />}
       {tab === 'payments' && <RequestPayments requestId={id} />}
       {tab === 'fulfillment' && <RequestFulfillment requestId={id} />}
@@ -197,22 +263,22 @@ export function RequestDetail() {
           }}
         />
       )}
+      {addingItem && (
+        <RequestItemEditor
+          requestId={id}
+          onClose={() => setAddingItem(false)}
+          onSaved={() => {
+            setAddingItem(false);
+            refresh();
+          }}
+        />
+      )}
       {item && (
-        <RecordForm
-          title="Новая редакция позиции"
-          endpoint={`/request-items/${item.id}`}
-          method="PATCH"
+        <RequestItemEditor
+          requestId={id}
           initial={item}
-          extra={{ version: item.version }}
-          fields={
-            [
-              ...itemFields,
-              { name: 'archived', label: 'Архивировать позицию', type: 'checkbox' },
-              { name: 'reason', label: 'Причина изменения', required: true, type: 'textarea' },
-            ] as Field[]
-          }
           onClose={() => setItem(undefined)}
-          onSuccess={() => {
+          onSaved={() => {
             setItem(undefined);
             refresh();
           }}

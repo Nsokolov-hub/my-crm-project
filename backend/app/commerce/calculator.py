@@ -121,6 +121,11 @@ def expression(source: str, variables: dict[str, Decimal]) -> Decimal:
 
 
 def validate_profile(profile: dict) -> None:
+    if profile.get("methodology") == "itemized_v2":
+        from .itemized import validate_itemized_profile
+
+        validate_itemized_profile(profile)
+        return
     for currency in (profile["management_currency"], profile["sale_currency"]):
         precision = profile["currency_precision"].get(currency)
         if type(precision) is not int or not 0 <= precision <= 6:

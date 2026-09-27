@@ -121,6 +121,7 @@ def document_files(snapshot: dict) -> dict:
     ]
     xlsx_rows = [
         [snapshot["title"], snapshot["number"], snapshot["date"]],
+        ["Заявка", snapshot.get("request_number", "")],
         ["Продавец", snapshot["seller"]["name"], format_details(snapshot["seller"].get("details"))],
         ["Клиент", snapshot["client"]["name"], format_details(snapshot["client"].get("details"))],
         ["Валюта", snapshot["currency"]],
@@ -174,13 +175,14 @@ def document_files(snapshot: dict) -> dict:
     content = [
         Paragraph(escape(f"{snapshot['title']} № {snapshot['number']}"), title_style),
         p(f"Дата: {snapshot['date']} · Валюта: {snapshot['currency']}"),
+        p(f"Заявка: {snapshot.get('request_number', '')}"),
         p(f"Продавец: {snapshot['seller']['name']}"),
         p(format_details(snapshot["seller"].get("details"))),
         p(f"Клиент: {snapshot['client']['name']}"),
         p(format_details(snapshot["client"].get("details"))),
         Spacer(1, 8),
     ]
-    pdf_headers = ["№", "Наименование", "Кол-во / ед.", "Без налога", "Налог", "Итого"]
+    pdf_headers = ["№", "Наименование", "Кол-во / ед.", "Цена/ед.", "Без налога", "Налог", "Итого"]
     table_rows = [[p(value) for value in pdf_headers]]
     for index, row in enumerate(snapshot["lines"], 1):
         title = row["description"] + (f" · CAS {row['cas']}" if row.get("cas") else "")
@@ -189,12 +191,13 @@ def document_files(snapshot: dict) -> dict:
                 p(index),
                 p(title),
                 p(f"{row['quantity']} {row['unit']}"),
+                p(row["unit_price"]),
                 p(row["net"]),
                 p(row["tax"]),
                 p(row["total"]),
             ]
         )
-    table = Table(table_rows, colWidths=[22, 220, 67, 75, 60, 91], repeatRows=1)
+    table = Table(table_rows, colWidths=[20, 185, 55, 70, 70, 60, 75], repeatRows=1)
     table.setStyle(
         TableStyle(
             [

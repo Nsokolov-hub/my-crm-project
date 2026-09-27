@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { z } from 'zod';
-import { ApiError } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { label } from '../lib/format';
-import { useApi, useCommand, useDirtyProtection } from '../lib/hooks';
+import { useApi, useCommand, useDebounced, useDirtyProtection } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
 import { Button, ErrorBox, Modal } from './ui';
+import '../styles/forms-v2.scss';
 export function validateFields(fields: Field[], values: Record<string, unknown>) {
   const errors: Record<string, string> = {};
   for (const field of fields) {
@@ -35,6 +37,146 @@ export function validateFields(fields: Field[], values: Record<string, unknown>)
   }
   return errors;
 }
+export function DirectorySelect({
+  field,
+  value,
+  error,
+  onChange,
+}: {
+  field: Field;
+  value: unknown;
+  error?: string;
+  onChange: (value: unknown) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated] = useState<Entity[]>([]);
+  const [selected, setSelected] = useState<{ id: string; label: string }>();
+  const debounced = useDebounced(search, 250);
+  const sourcePath = field.source
+    ? `${field.source}${field.source.includes('?') ? '&' : '?'}page_size=100${debounced ? `&q=${encodeURIComponent(debounced)}` : ''}`
+    : null;
+  const source = useApi<Page>(sourcePath);
+  const selectedId = String(value ?? '');
+  const rows = [...created, ...(source.data?.items || [])];
+  const options = rows
+    .filter((row, index) => rows.findIndex((candidate) => candidate.id === row.id) === index)
+    .map((row) => ({
+      value: row.id,
+      label: field.labelKey ? String(row[field.labelKey] || label(row)) : label(row),
+    }))
+    .filter((option) => option.label.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+
+  useEffect(() => {
+    if (!selectedId || selected?.id === selectedId) return;
+    const found = rows.find((row) => row.id === selectedId);
+    if (found) {
+      setSelected({ id: found.id, label: field.labelKey ? String(found[field.labelKey] || label(found)) : label(found) });
+      return;
+    }
+    if (source.loading || !field.source) return;
+    const controller = new AbortController();
+    const base = field.source.split('?')[0];
+    void api<Entity>(`${base}/${encodeURIComponent(selectedId)}`, { signal: controller.signal })
+      .then((row) => {
+        setSelected({ id: row.id, label: field.labelKey ? String(row[field.labelKey] || label(row)) : label(row) });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setSelected({ id: selectedId, label: 'Выбрано' });
+      });
+    return () => controller.abort();
+  }, [selectedId, selected?.id, source.data, source.loading, field.source, field.labelKey, created]);
+
+  function choose(id: string, optionLabel: string) {
+    setSelected({ id, label: optionLabel });
+    setSearch('');
+    setOpen(false);
+    onChange(id);
+  }
+
+  return (
+    <div
+      className="directory-select"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <input
+        id={`field-${field.name}`}
+        name={`${field.name}-search`}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={open}
+        aria-controls={`options-${field.name}`}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? `error-${field.name}` : undefined}
+        placeholder="Найти в справочнике…"
+        value={open ? search : selected?.id === selectedId ? selected.label : ''}
+        onFocus={() => {
+          setSearch('');
+          setOpen(true);
+        }}
+        onChange={(event) => {
+          if (selectedId) onChange('');
+          setSearch(event.target.value);
+          setOpen(true);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') setOpen(false);
+          if (event.key === 'Enter' && open && options.length === 1) {
+            event.preventDefault();
+            choose(options[0].value, options[0].label);
+          }
+        }}
+      />
+      {open && (
+        <div className="directory-options" id={`options-${field.name}`} role="listbox">
+          {source.loading && <p>Загрузка…</p>}
+          {options.map((option) => (
+            <button
+              type="button"
+              key={option.value}
+              role="option"
+              aria-selected={option.value === selectedId}
+              onClick={() => choose(option.value, option.label)}
+            >
+              {option.label}
+            </button>
+          ))}
+          {!source.loading && !options.length && <p>Совпадений нет</p>}
+          {field.create && (
+            <button
+              type="button"
+              className="directory-create"
+              onClick={() => {
+                setOpen(false);
+                setCreating(true);
+              }}
+            >
+              + Создать {field.label.toLocaleLowerCase()}
+            </button>
+          )}
+        </div>
+      )}
+      {Boolean(source.error) && <p className="field-error">Не удалось загрузить справочник.</p>}
+      {creating && field.create && createPortal(
+        <RecordForm
+          title={field.create.title}
+          endpoint={field.create.endpoint}
+          fields={field.create.fields}
+          onClose={() => setCreating(false)}
+          onSuccess={(row) => {
+            setCreated((current) => [row, ...current]);
+            choose(row.id, field.labelKey ? String(row[field.labelKey] || label(row)) : label(row));
+            setCreating(false);
+          }}
+        />,
+        document.body,
+      )}
+    </div>
+  );
+}
 function FieldControl({
   field,
   value,
@@ -47,7 +189,9 @@ function FieldControl({
   onChange: (value: unknown) => void;
 }) {
   const source = useApi<Page>(
-    field.source ? `${field.source}${field.source.includes('?') ? '&' : '?'}page_size=100` : null,
+    field.source && field.type !== 'select'
+      ? `${field.source}${field.source.includes('?') ? '&' : '?'}page_size=100`
+      : null,
   );
   const options =
     field.options ||
@@ -78,6 +222,8 @@ function FieldControl({
           checked={Boolean(value)}
           onChange={(e) => onChange(e.target.checked)}
         />
+      ) : field.type === 'select' && field.source ? (
+        <DirectorySelect field={field} value={value} error={error} onChange={onChange} />
       ) : field.type === 'select' || field.type === 'multiselect' ? (
         <select
           {...common}
@@ -199,6 +345,7 @@ export function RecordForm({
   }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    event.stopPropagation();
     const validation = validateFields(fields, values);
     setErrors(validation);
     if (Object.keys(validation).length) {

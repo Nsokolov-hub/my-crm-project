@@ -1,8 +1,9 @@
+from datetime import timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -15,6 +16,7 @@ from app.core.security import (
     check_request,
     client_predicate,
     current_user,
+    has_request_permission,
     request_predicate,
     require_permission,
     scope_for,
@@ -26,6 +28,13 @@ from app.crm.models import (
     Call,
     Contact,
     Counterparty,
+    Country,
+    Currency,
+    Nomenclature,
+    Packing,
+    ProductGroup,
+    QuoteItem,
+    QuoteSheet,
     Request,
     RequestItem,
     RequestItemRevision,
@@ -40,8 +49,16 @@ from app.crm.schemas import (
     ClientPatch,
     ContactInput,
     ContactPatch,
+    CountryInput,
+    CurrencyInput,
     ItemInput,
     ItemPatch,
+    NomenclatureInput,
+    NomenclaturePatch,
+    PackingInput,
+    PackingPatch,
+    ProductGroupInput,
+    QuoteSheetInput,
     RequestInput,
     RequestPatch,
     SellerInput,
@@ -113,6 +130,292 @@ def check_link(db: Session, user: User, kind: str | None, entity_id: str | None)
         require_permission(db, user, 'waves.write')
         if not db.get(Wave, entity_id):
             raise DomainError('NOT_FOUND', 'Волна недоступна', 404)
+
+
+def require_group(db: Session, entity_id: str | None) -> ProductGroup:
+    group = db.get(ProductGroup, entity_id) if entity_id else db.scalar(
+        select(ProductGroup).where(ProductGroup.slug == 'other')
+    )
+    if not group or not group.active:
+        raise DomainError('PRODUCT_GROUP_INVALID', 'Выберите действующую товарную группу', 422, 'product_group_id')
+    return group
+
+
+def require_nomenclature(db: Session, entity_id: str) -> Nomenclature:
+    row = db.get(Nomenclature, entity_id)
+    if not row or not row.active:
+        raise DomainError('NOMENCLATURE_INVALID', 'Выберите действующую номенклатуру', 422, 'nomenclature_id')
+    return row
+
+
+def require_packing(db: Session, entity_id: str, nomenclature_id: str) -> Packing:
+    row = db.get(Packing, entity_id)
+    if not row or not row.active or row.nomenclature_id != nomenclature_id:
+        raise DomainError('PACKING_INVALID', 'Фасовка не относится к выбранной номенклатуре', 422, 'packing_id')
+    return row
+
+
+def require_currency(db: Session, entity_id: str) -> Currency:
+    row = db.get(Currency, entity_id)
+    if not row or not row.active:
+        raise DomainError('CURRENCY_INVALID', 'Выберите валюту из справочника', 422, 'currency_id')
+    return row
+
+
+def require_supplier(db: Session, entity_id: str) -> Counterparty:
+    row = db.get(Counterparty, entity_id)
+    if not row or row.archived or row.kind not in ('supplier', 'both'):
+        raise DomainError('SUPPLIER_INVALID', 'Выберите действующего поставщика', 422, 'supplier_id')
+    return row
+
+
+def require_catalog_create(db: Session, user: User) -> None:
+    if not any(can(db, user, permission) for permission in ('catalog.write', 'requests.write')):
+        raise DomainError('FORBIDDEN', 'Недостаточно прав для создания записи в справочнике', 403)
+
+
+def packing_name(value: Decimal, unit: str) -> str:
+    number = format(value, 'f')
+    if '.' in number:
+        number = number.rstrip('0').rstrip('.')
+    return f'{number} {unit}'
+
+
+def nomenclature_view(db: Session, row: Nomenclature) -> dict[str, Any]:
+    value = serialize(row)
+    group = db.get(ProductGroup, row.product_group_id) if row.product_group_id else None
+    value['product_group_name'] = group.name if group else None
+    value['product_group_slug'] = group.slug if group else None
+    value['packings'] = [
+        serialize(packing) for packing in db.scalars(
+            select(Packing).where(Packing.nomenclature_id == row.id, Packing.active.is_(True))
+            .order_by(Packing.value, Packing.unit)
+        )
+    ]
+    return value
+
+
+def request_item_view(db: Session, user: User, row: RequestItem) -> dict[str, Any]:
+    value = serialize(row)
+    nomenclature = db.get(Nomenclature, row.nomenclature_id) if row.nomenclature_id else None
+    packing = db.get(Packing, row.packing_id) if row.packing_id else None
+    group = db.get(ProductGroup, row.product_group_id) if row.product_group_id else None
+    supplier = db.get(Counterparty, row.supplier_id) if row.supplier_id else None
+    currency = db.get(Currency, row.purchase_currency_id) if row.purchase_currency_id else None
+    value.update({
+        'nomenclature_name': nomenclature.name if nomenclature else None,
+        'packing_name': packing.display_name if packing else None,
+        'product_group_name': group.name if group else None,
+        'product_group_slug': group.slug if group else None,
+        'supplier_name': supplier.name if supplier else None,
+        'purchase_currency_code': currency.code if currency else None,
+    })
+    if not has_request_permission(db, user, row.request_id, 'finance.purchase.read'):
+        value.pop('purchase_price', None)
+    return value
+
+
+def structured_item_fields(db: Session, data: dict[str, Any], previous: RequestItem | None = None) -> dict[str, Any]:
+    nomenclature_id = data.get('nomenclature_id', previous.nomenclature_id if previous else None)
+    packing_id = data.get('packing_id', previous.packing_id if previous else None)
+    if bool(nomenclature_id) != bool(packing_id):
+        raise DomainError('PACKING_REQUIRED', 'Для номенклатуры выберите фасовку', 422, 'packing_id')
+    if nomenclature_id:
+        nomenclature = require_nomenclature(db, nomenclature_id)
+        packing = require_packing(db, packing_id, nomenclature.id)
+        quantity = data.get('quantity', previous.quantity if previous else None)
+        if quantity is None or quantity != quantity.to_integral_value():
+            raise DomainError('QUANTITY_UNITS_REQUIRED', 'Укажите целое число единиц выбранной фасовки', 422, 'quantity')
+        if data.get('unit') not in (None, 'pcs'):
+            raise DomainError('UNIT_INVALID', 'Количество указывается в единицах выбранной фасовки', 422, 'unit')
+        data['unit'] = 'pcs'
+        if 'product_group_id' in data and data['product_group_id'] not in (None, nomenclature.product_group_id):
+            raise DomainError('PRODUCT_GROUP_MISMATCH', 'Группа не совпадает с номенклатурой', 422, 'product_group_id')
+        data['product_group_id'] = nomenclature.product_group_id
+        if not data.get('description') and previous is None:
+            data['description'] = nomenclature.name
+        if previous and previous.nomenclature_id != nomenclature.id and 'description' not in data:
+            old = db.get(Nomenclature, previous.nomenclature_id) if previous.nomenclature_id else None
+            if old and previous.description == old.name:
+                data['description'] = nomenclature.name
+        if previous is None:
+            data['article'] = data.get('article') or nomenclature.article
+            data['cas'] = data.get('cas') or nomenclature.cas
+            data['packaging'] = data.get('packaging') or packing.display_name
+    elif not (data.get('description') or (previous and previous.description)):
+        raise DomainError('ITEM_DESCRIPTION_REQUIRED', 'Укажите номенклатуру или описание позиции', 422, 'description')
+    if data.get('product_group_id'):
+        require_group(db, data['product_group_id'])
+    supplier_id = data.get('supplier_id', previous.supplier_id if previous else None)
+    if supplier_id:
+        require_supplier(db, supplier_id)
+    country_id = data.get('supplier_country_id', previous.supplier_country_id if previous else None)
+    if country_id:
+        country = db.get(Country, country_id)
+        if not country or not country.active:
+            raise DomainError('COUNTRY_INVALID', 'Выберите страну из справочника', 422, 'supplier_country_id')
+    currency_id = data.get('purchase_currency_id', previous.purchase_currency_id if previous else None)
+    if currency_id:
+        require_currency(db, currency_id)
+    price = data.get('purchase_price', previous.purchase_price if previous else None)
+    if price is not None and currency_id is None:
+        raise DomainError('CURRENCY_REQUIRED', 'Для закупочной цены укажите валюту', 422, 'purchase_currency_id')
+    return data
+
+
+@router.get('/product-groups')
+def product_groups(q: str = '', active: bool = True, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_permission(db, user, 'catalog.read')
+    stmt = select(ProductGroup).where(ProductGroup.active == active)
+    if q:
+        stmt = stmt.where(or_(ProductGroup.name.ilike(f'%{q}%'), ProductGroup.slug.ilike(f'%{q}%')))
+    return paginate(db, stmt.order_by(ProductGroup.name), 1, 100)
+
+
+@router.post('/product-groups', status_code=201)
+def create_product_group(body: ProductGroupInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_permission(db, user, 'catalog.write')
+    advisory(db, 'catalog.product_groups')
+    if db.scalar(select(ProductGroup.id).where(or_(ProductGroup.slug == body.slug, ProductGroup.name == body.name))):
+        raise DomainError('PRODUCT_GROUP_EXISTS', 'Товарная группа уже существует', 409)
+    return save(db, user, ProductGroup(**body.model_dump()), 'product_group')
+
+
+@router.get('/currencies')
+def currencies(active: bool = True, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_permission(db, user, 'catalog.read')
+    return paginate(db, select(Currency).where(Currency.active == active).order_by(Currency.code), 1, 100)
+
+
+@router.post('/currencies', status_code=201)
+def create_currency(body: CurrencyInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_permission(db, user, 'admin.settings')
+    advisory(db, 'catalog.currencies')
+    if db.scalar(select(Currency.id).where(Currency.code == body.code)):
+        raise DomainError('CURRENCY_EXISTS', 'Валюта уже есть в справочнике', 409, 'code')
+    return save(db, user, Currency(**body.model_dump()), 'currency')
+
+
+@router.get('/countries')
+def countries(q: str = '', active: bool = True, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_permission(db, user, 'catalog.read')
+    stmt = select(Country).where(Country.active == active)
+    if q:
+        stmt = stmt.where(or_(Country.name.ilike(f'%{q}%'), Country.iso2.ilike(f'%{q}%')))
+    return paginate(db, stmt.order_by(Country.name), 1, 100)
+
+
+@router.post('/countries', status_code=201)
+def create_country(body: CountryInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_catalog_create(db, user)
+    advisory(db, 'catalog.countries')
+    if db.scalar(select(Country.id).where(or_(Country.iso2 == body.iso2, Country.name == body.name))):
+        raise DomainError('COUNTRY_EXISTS', 'Страна уже есть в справочнике', 409)
+    return save(db, user, Country(**body.model_dump()), 'country')
+
+
+@router.get('/nomenclatures')
+def nomenclatures(
+    q: str = '', product_group_id: str | None = None, page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100), active: bool = True,
+    user: User = Depends(current_user), db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    require_permission(db, user, 'catalog.read')
+    stmt = select(Nomenclature).where(Nomenclature.active == active)
+    if q:
+        stmt = stmt.where(or_(Nomenclature.name.ilike(f'%{q}%'), Nomenclature.article.ilike(f'%{q}%'), Nomenclature.cas.ilike(f'%{q}%')))
+    if product_group_id:
+        stmt = stmt.where(Nomenclature.product_group_id == product_group_id)
+    result = paginate(db, stmt.order_by(Nomenclature.name, Nomenclature.id), page, page_size)
+    result['items'] = [nomenclature_view(db, db.get(Nomenclature, item['id'])) for item in result['items']]
+    return result
+
+
+@router.post('/nomenclatures', status_code=201)
+def create_nomenclature(body: NomenclatureInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_catalog_create(db, user)
+    group = require_group(db, body.product_group_id)
+    keys = [(item.value, item.unit.strip()) for item in body.packings]
+    if len(keys) != len(set(keys)):
+        raise DomainError('PACKING_DUPLICATE', 'Фасовка повторяется', 422, 'packings')
+    row = Nomenclature(**body.model_dump(exclude={'packings', 'product_group_id'}), product_group_id=group.id)
+    db.add(row)
+    db.flush()
+    for item in body.packings:
+        db.add(Packing(
+            nomenclature_id=row.id, value=item.value, unit=item.unit.strip(),
+            display_name=item.display_name or packing_name(item.value, item.unit.strip()),
+        ))
+    db.flush()
+    result = nomenclature_view(db, row)
+    audit(db, user, 'nomenclature', row.id, 'created', after=result)
+    return result
+
+
+@router.get('/nomenclatures/{entity_id}')
+def nomenclature_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_permission(db, user, 'catalog.read')
+    row = db.get(Nomenclature, entity_id)
+    if not row:
+        raise DomainError('NOT_FOUND', 'Номенклатура не найдена', 404)
+    return nomenclature_view(db, row)
+
+
+@router.patch('/nomenclatures/{entity_id}')
+def edit_nomenclature(entity_id: str, body: NomenclaturePatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_permission(db, user, 'catalog.write')
+    row = lock(db, Nomenclature, entity_id)
+    check_version(row, body.version)
+    before = nomenclature_view(db, row)
+    data = body.model_dump(exclude_unset=True, exclude={'version'})
+    if 'product_group_id' in data:
+        data['product_group_id'] = require_group(db, data['product_group_id']).id
+    for key, value in data.items():
+        setattr(row, key, value)
+    row.version += 1
+    row.updated_at = utcnow()
+    result = nomenclature_view(db, row)
+    audit(db, user, 'nomenclature', row.id, 'updated', before, result)
+    return result
+
+
+@router.get('/nomenclatures/{entity_id}/packings')
+def packings(entity_id: str, active: bool = True, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_permission(db, user, 'catalog.read')
+    if not db.get(Nomenclature, entity_id):
+        raise DomainError('NOT_FOUND', 'Номенклатура не найдена', 404)
+    return paginate(db, select(Packing).where(Packing.nomenclature_id == entity_id, Packing.active == active).order_by(Packing.value, Packing.unit), 1, 100)
+
+
+@router.post('/nomenclatures/{entity_id}/packings', status_code=201)
+def create_packing(entity_id: str, body: PackingInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_catalog_create(db, user)
+    require_nomenclature(db, entity_id)
+    unit = body.unit.strip()
+    advisory(db, f'catalog.packing:{entity_id}')
+    existing = db.scalar(select(Packing).where(Packing.nomenclature_id == entity_id, Packing.value == body.value, Packing.unit == unit))
+    if existing:
+        if existing.active:
+            return serialize(existing)
+        raise DomainError('PACKING_ARCHIVED', 'Эта фасовка отключена; восстановите её в справочнике', 409)
+    return save(db, user, Packing(
+        nomenclature_id=entity_id, value=body.value, unit=unit,
+        display_name=body.display_name or packing_name(body.value, unit),
+    ), 'packing')
+
+
+@router.patch('/packings/{entity_id}')
+def edit_packing(entity_id: str, body: PackingPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_permission(db, user, 'catalog.write')
+    row = lock(db, Packing, entity_id)
+    check_version(row, body.version)
+    before = serialize(row)
+    for key, value in body.model_dump(exclude_unset=True, exclude={'version'}).items():
+        setattr(row, key, value)
+    row.version += 1
+    result = serialize(row)
+    audit(db, user, 'packing', row.id, 'updated', before, result)
+    return result
 
 
 @router.get('/counterparties')
@@ -460,20 +763,28 @@ def share_request(entity_id: str, body: ShareInput, user: User = Depends(current
 
 
 @router.get('/requests/{entity_id}/items')
-def items(entity_id: str, page: int = 1, page_size: int = 100, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def items(entity_id: str, q: str = '', page: int = 1, page_size: int = 100, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     check_request(db, user, entity_id)
-    return paginate(db, select(RequestItem).where(RequestItem.request_id == entity_id).order_by(RequestItem.created_at), page, page_size)
+    stmt = select(RequestItem).where(RequestItem.request_id == entity_id)
+    if q:
+        names = select(Nomenclature.id).where(or_(
+            Nomenclature.name.ilike(f'%{q}%'), Nomenclature.article.ilike(f'%{q}%'),
+        ))
+        stmt = stmt.where(or_(RequestItem.description.ilike(f'%{q}%'), RequestItem.nomenclature_id.in_(names)))
+    result = paginate(db, stmt.order_by(RequestItem.created_at), page, page_size)
+    result['items'] = [request_item_view(db, user, db.get(RequestItem, item['id'])) for item in result['items']]
+    return result
 
 
 @router.post('/requests/{entity_id}/items', status_code=201)
 def create_item(entity_id: str, body: ItemInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     check_request(db, user, entity_id, 'requests.write')
     parent = lock(db, Request, entity_id)
-    row = RequestItem(request_id=entity_id, **body.model_dump())
+    row = RequestItem(request_id=entity_id, **structured_item_fields(db, body.model_dump()))
     result = save(db, user, row, 'request_item')
     db.add(RequestItemRevision(item_id=row.id, revision=1, snapshot=result, author_id=user.id))
     parent.version += 1
-    return result
+    return request_item_view(db, user, row)
 
 
 @router.patch('/request-items/{entity_id}')
@@ -485,26 +796,27 @@ def edit_item(entity_id: str, body: ItemPatch, user: User = Depends(current_user
     parent = lock(db, Request, initial.request_id)
     row = lock(db, RequestItem, entity_id)
     check_version(row, body.version)
-    if 'quantity' in body.model_fields_set or 'unit' in body.model_fields_set:
+    data = structured_item_fields(db, body.model_dump(exclude_unset=True, exclude={'version', 'reason'}), row)
+    if 'quantity' in data or 'unit' in data:
         from app.commerce.models import Execution
         accepted = db.scalar(select(sa.func.sum(Execution.quantity - Execution.cancelled_quantity)).where(Execution.item_id == row.id)) or Decimal('0')
         if accepted > 0:
-            if 'unit' in body.model_fields_set and body.unit != row.unit:
+            if 'unit' in data and data['unit'] != row.unit:
                 raise DomainError('UNIT_ACCEPTED', 'Единица измерения уже используется в принятых предложениях', 409, 'unit')
-            new_qty = body.quantity if 'quantity' in body.model_fields_set else row.quantity
+            new_qty = data['quantity'] if 'quantity' in data else row.quantity
             if new_qty is None:
                 raise DomainError('QUANTITY_REQUIRED', 'Количество нельзя очистить после принятия', 422, 'quantity')
             if new_qty < accepted:
                 raise DomainError('QUANTITY_EXCEEDED', f'Количество не может быть меньше уже принятого ({accepted})', 409, 'quantity')
     before = serialize(row)
-    for k, v in body.model_dump(exclude_unset=True, exclude={'version', 'reason'}).items():
+    for k, v in data.items():
         setattr(row, k, v)
     row.version += 1
     row.revision += 1
     parent.version += 1
     db.add(RequestItemRevision(item_id=row.id, revision=row.revision, snapshot=serialize(row), author_id=user.id, reason=body.reason))
     audit(db, user, 'request_item', row.id, 'revised', before, serialize(row), body.reason)
-    return serialize(row)
+    return request_item_view(db, user, row)
 
 
 @router.get('/request-items/{entity_id}/revisions')
@@ -513,7 +825,11 @@ def item_revisions(entity_id: str, user: User = Depends(current_user), db: Sessi
     if not row:
         raise DomainError('NOT_FOUND', 'Позиция не найдена', 404)
     check_request(db, user, row.request_id)
-    return paginate(db, select(RequestItemRevision).where(RequestItemRevision.item_id == entity_id).order_by(RequestItemRevision.revision.desc()), 1, 100)
+    result = paginate(db, select(RequestItemRevision).where(RequestItemRevision.item_id == entity_id).order_by(RequestItemRevision.revision.desc()), 1, 100)
+    if not has_request_permission(db, user, row.request_id, 'finance.purchase.read'):
+        for item in result['items']:
+            item['snapshot'].pop('purchase_price', None)
+    return result
 
 
 @router.get('/requests/{entity_id}/history')
@@ -526,6 +842,229 @@ def history(entity_id: str, page: int = 1, page_size: int = 50, user: User = Dep
             row.pop('before', None)
             row.pop('after', None)
     return result
+
+
+def aware_utc(value: Any) -> Any:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def quote_item_view(db: Session, row: QuoteItem, show_purchase: bool = True) -> dict[str, Any]:
+    value = serialize(row)
+    sheet = db.get(QuoteSheet, row.quote_id)
+    request = db.get(Request, sheet.request_id)
+    nomenclature = db.get(Nomenclature, row.nomenclature_id)
+    packing = db.get(Packing, row.packing_id)
+    group = db.get(ProductGroup, nomenclature.product_group_id) if nomenclature.product_group_id else None
+    currency = db.get(Currency, row.currency_id)
+    supplier = db.get(Counterparty, row.supplier_id)
+    value.update({
+        'quote_sheet_id': sheet.id,
+        'quote_number': sheet.number,
+        'request_id': sheet.request_id,
+        'request_number': request.number,
+        'supplier_request_id': sheet.supplier_request_id,
+        'nomenclature_name': nomenclature.name,
+        'packing_name': packing.display_name,
+        'product_group_id': nomenclature.product_group_id,
+        'product_group_name': group.name if group else None,
+        'product_group_slug': group.slug if group else None,
+        'currency_code': currency.code,
+        'supplier_name': supplier.name,
+        'expired': aware_utc(row.valid_until) <= utcnow(),
+    })
+    if not show_purchase:
+        value.pop('unit_price', None)
+        value.pop('price_source_id', None)
+    return value
+
+
+def quote_sheet_view(db: Session, row: QuoteSheet, show_purchase: bool = True) -> dict[str, Any]:
+    value = serialize(row)
+    request = db.get(Request, row.request_id)
+    supplier = db.get(Counterparty, row.supplier_id)
+    value.update({
+        'request_number': request.number,
+        'supplier_name': supplier.name,
+        'items': [
+            quote_item_view(db, item, show_purchase) for item in db.scalars(
+                select(QuoteItem).where(QuoteItem.quote_id == row.id)
+                .order_by(QuoteItem.created_at, QuoteItem.id)
+            )
+        ],
+    })
+    return value
+
+
+def latest_price(
+    db: Session, user: User, supplier_id: str, nomenclature_id: str,
+    packing_id: str, currency_id: str | None = None, at: Any = None,
+) -> QuoteItem | None:
+    at = at or utcnow()
+    stmt = (
+        select(QuoteItem)
+        .join(QuoteSheet, QuoteSheet.id == QuoteItem.quote_id)
+        .where(
+            QuoteItem.supplier_id == supplier_id,
+            QuoteItem.nomenclature_id == nomenclature_id,
+            QuoteItem.packing_id == packing_id,
+            QuoteItem.quoted_at <= at,
+            QuoteItem.valid_until > at,
+            QuoteSheet.request_id.in_(select(Request.id).where(request_predicate(db, user, 'finance.purchase.read'))),
+        )
+    )
+    if currency_id:
+        stmt = stmt.where(QuoteItem.currency_id == currency_id)
+    return db.scalar(stmt.order_by(QuoteItem.quoted_at.desc(), QuoteItem.created_at.desc(), QuoteItem.id.desc()).limit(1))
+
+
+@router.get('/quote-items/latest')
+def latest_quote_item(
+    supplier_id: str, nomenclature_id: str, packing_id: str, currency_id: str | None = None,
+    user: User = Depends(current_user), db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    require_permission(db, user, 'finance.purchase.read')
+    require_supplier(db, supplier_id)
+    require_nomenclature(db, nomenclature_id)
+    require_packing(db, packing_id, nomenclature_id)
+    if currency_id:
+        require_currency(db, currency_id)
+    row = latest_price(db, user, supplier_id, nomenclature_id, packing_id, currency_id)
+    return {'item': quote_item_view(db, row) if row else None}
+
+
+@router.get('/quote-items/history')
+def quote_item_history(
+    supplier_id: str | None = None, nomenclature_id: str | None = None,
+    packing_id: str | None = None, currency_id: str | None = None,
+    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=100),
+    user: User = Depends(current_user), db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    require_permission(db, user, 'finance.purchase.read')
+    stmt = select(QuoteItem).join(QuoteSheet, QuoteSheet.id == QuoteItem.quote_id).where(
+        QuoteSheet.request_id.in_(select(Request.id).where(request_predicate(db, user, 'finance.purchase.read')))
+    )
+    for field, value in (
+        ('supplier_id', supplier_id), ('nomenclature_id', nomenclature_id),
+        ('packing_id', packing_id), ('currency_id', currency_id),
+    ):
+        if value:
+            stmt = stmt.where(getattr(QuoteItem, field) == value)
+    result = paginate(db, stmt.order_by(QuoteItem.quoted_at.desc(), QuoteItem.id.desc()), page, page_size)
+    result['items'] = [quote_item_view(db, db.get(QuoteItem, item['id'])) for item in result['items']]
+    return result
+
+
+@router.get('/requests/{entity_id}/quote-items')
+def request_quote_items(
+    entity_id: str, page: int = Query(1, ge=1), page_size: int = Query(100, ge=1, le=100), ids: str = '',
+    user: User = Depends(current_user), db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    check_request(db, user, entity_id)
+    stmt = select(QuoteItem).join(QuoteSheet, QuoteSheet.id == QuoteItem.quote_id).where(QuoteSheet.request_id == entity_id)
+    if ids:
+        selected_ids = [value.strip() for value in ids.split(',') if value.strip()]
+        if len(selected_ids) > 100:
+            raise DomainError('QUOTE_SELECTION_LIMIT', 'Выберите не более 100 позиций квоты', 422, 'ids')
+        stmt = stmt.where(QuoteItem.id.in_(selected_ids))
+    result = paginate(db, stmt.order_by(QuoteItem.created_at.desc(), QuoteItem.id.desc()), page, page_size)
+    show_purchase = has_request_permission(db, user, entity_id, 'finance.purchase.read')
+    result['items'] = [quote_item_view(db, db.get(QuoteItem, item['id']), show_purchase) for item in result['items']]
+    return result
+
+
+@router.get('/requests/{entity_id}/quote-sheets')
+def request_quote_sheets(
+    entity_id: str, page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100),
+    user: User = Depends(current_user), db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    check_request(db, user, entity_id)
+    result = paginate(db, select(QuoteSheet).where(QuoteSheet.request_id == entity_id).order_by(QuoteSheet.created_at.desc()), page, page_size)
+    show_purchase = has_request_permission(db, user, entity_id, 'finance.purchase.read')
+    result['items'] = [quote_sheet_view(db, db.get(QuoteSheet, item['id']), show_purchase) for item in result['items']]
+    return result
+
+
+@router.get('/quote-sheets/{entity_id}')
+def quote_sheet_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    row = db.get(QuoteSheet, entity_id)
+    if not row:
+        raise DomainError('NOT_FOUND', 'Квота не найдена', 404)
+    check_request(db, user, row.request_id)
+    return quote_sheet_view(db, row, has_request_permission(db, user, row.request_id, 'finance.purchase.read'))
+
+
+@router.post('/requests/{entity_id}/quote-sheets', status_code=201)
+def create_quote_sheet(
+    entity_id: str, body: QuoteSheetInput, idempotency_key: str | None = Header(default=None),
+    user: User = Depends(current_user), db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    check_request(db, user, entity_id, 'quotes.write')
+    require_supplier(db, body.supplier_id)
+    if body.supplier_request_id:
+        from app.commerce.models import SupplierRequest
+        rfq = db.get(SupplierRequest, body.supplier_request_id)
+        if not rfq or rfq.request_id != entity_id or rfq.supplier_id != body.supplier_id:
+            raise DomainError('SUPPLIER_REQUEST_INVALID', 'Запрос поставщику не соответствует заявке и поставщику', 422, 'supplier_request_id')
+
+    def operation() -> dict[str, Any]:
+        advisory(db, 'quote_sheet.number')
+        count = db.scalar(select(func.count()).select_from(QuoteSheet)) or 0
+        sheet = QuoteSheet(
+            number=f'Q-{count + 1:06d}', request_id=entity_id, supplier_id=body.supplier_id,
+            supplier_request_id=body.supplier_request_id, author_id=user.id,
+        )
+        db.add(sheet)
+        db.flush()
+        for item in body.items:
+            nomenclature = require_nomenclature(db, item.nomenclature_id)
+            require_packing(db, item.packing_id, nomenclature.id)
+            source = db.get(RequestItem, item.source_request_item_id)
+            if not source or source.request_id != entity_id or source.archived:
+                raise DomainError('REQUEST_ITEM_INVALID', 'Позиция не относится к выбранной заявке', 422, 'source_request_item_id')
+            if not source.nomenclature_id or not source.packing_id or source.quantity is None or source.unit != 'pcs':
+                raise DomainError('REQUEST_ITEM_UNSTRUCTURED', 'Сначала укажите номенклатуру, фасовку и количество в позиции заявки', 422, 'source_request_item_id')
+            if source.nomenclature_id != nomenclature.id:
+                raise DomainError('NOMENCLATURE_MISMATCH', 'Номенклатура не совпадает с позицией заявки', 422, 'nomenclature_id')
+            if source.packing_id != item.packing_id:
+                raise DomainError('PACKING_MISMATCH', 'Фасовка не совпадает с позицией заявки', 422, 'packing_id')
+            quoted_at = item.quoted_at.astimezone(timezone.utc) if item.quoted_at else utcnow()
+            if quoted_at > utcnow() + timedelta(minutes=1):
+                raise DomainError('QUOTE_DATE_FUTURE', 'Дата квоты не может быть в будущем', 422, 'quoted_at')
+            currency_id = item.currency_id
+            if currency_id:
+                require_currency(db, currency_id)
+            candidate = latest_price(
+                db, user, body.supplier_id, item.nomenclature_id, item.packing_id,
+                currency_id, quoted_at,
+            ) if item.unit_price is None or currency_id is None or item.delivery_days is None else None
+            if item.unit_price is None and candidate is None:
+                raise DomainError('QUOTE_PRICE_REQUIRED', 'Свежей цены нет. Укажите цену позиции', 422, 'unit_price')
+            if currency_id is None:
+                if candidate is None:
+                    raise DomainError('CURRENCY_REQUIRED', 'Укажите валюту закупки', 422, 'currency_id')
+                currency_id = candidate.currency_id
+            unit_price = item.unit_price if item.unit_price is not None else candidate.unit_price
+            delivery_days = item.delivery_days if item.delivery_days is not None else (candidate.delivery_days if candidate else None)
+            row = QuoteItem(
+                quote_id=sheet.id, supplier_id=body.supplier_id, nomenclature_id=item.nomenclature_id,
+                packing_id=item.packing_id, quantity=item.quantity, unit_price=unit_price,
+                currency_id=currency_id, delivery_days=delivery_days, quoted_at=quoted_at,
+                valid_until=quoted_at + timedelta(days=21),
+                source_request_item_id=item.source_request_item_id,
+                price_source_id=candidate.id if candidate and item.unit_price is None else None,
+                author_id=user.id,
+            )
+            db.add(row)
+            db.flush()
+            audit(db, user, 'quote_item', row.id, 'created', after=serialize(row))
+        result = quote_sheet_view(db, sheet)
+        audit(db, user, 'quote_sheet', sheet.id, 'created', after=result)
+        return result
+
+    payload = body.model_dump(mode='json')
+    if idempotency_key:
+        return idem(db, user, idempotency_key, f'quote_sheets.create:{entity_id}', payload, operation)
+    return operation()
 
 
 @router.get('/sellers')

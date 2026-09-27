@@ -1,17 +1,28 @@
-import { Download, Pencil } from 'lucide-react';
-import { useState } from 'react';
+import { Download, Plus, Trash2 } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { Collection } from '../components/Collection';
-import { RecordForm } from '../components/Form';
+import { DirectorySelect, RecordForm } from '../components/Form';
 import { Badge, Button, DetailPairs, ErrorBox, Modal } from '../components/ui';
-import { download } from '../lib/api';
-import { date, decimal, nowLocal, units } from '../lib/format';
-import { useApi } from '../lib/hooks';
+import { ApiError, api, download } from '../lib/api';
+import { date, decimal, nowLocal } from '../lib/format';
+import { useApi, useCommand, useDebounced, useDirtyProtection } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
-export function RequestRfqs({ requestId }: { requestId: string }) {
+export function RequestRfqs({
+  requestId,
+  requestNumber,
+  launchItemIds = [],
+  onLaunchConsumed,
+}: {
+  requestId: string;
+  requestNumber?: string;
+  launchItemIds?: string[];
+  onLaunchConsumed?: () => void;
+}) {
   const [selected, setSelected] = useState<Entity>();
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<unknown>();
   const [revision, setRevision] = useState(0);
+  const [launching, setLaunching] = useState(launchItemIds.length > 0);
   const fields: Field[] = [
     {
       name: 'supplier_id',
@@ -45,7 +56,12 @@ export function RequestRfqs({ requestId }: { requestId: string }) {
         refreshKey={revision}
         onSelect={setSelected}
         columns={[
-          { key: 'id', label: 'Запрос', render: (r) => `Запрос · ${r.id.slice(0, 8)}` },
+          {
+            key: 'id',
+            label: 'Запрос',
+            render: (r) =>
+              String(r.number || r.request_number || requestNumber || 'Запрос поставщику'),
+          },
           {
             key: 'supplier_id',
             label: 'Поставщик',
@@ -66,9 +82,10 @@ export function RequestRfqs({ requestId }: { requestId: string }) {
               <Button
                 variant="ghost"
                 onClick={() =>
-                  void download(`/rfqs/${r.id}/file`, `Запрос_${r.id.slice(0, 8)}.xlsx`).catch(
-                    setError,
-                  )
+                  void download(
+                    `/rfqs/${r.id}/file`,
+                    `RFQ_${String(r.request_number || requestNumber || 'request')}.xlsx`,
+                  ).catch(setError)
                 }
               >
                 <Download size={16} />
@@ -78,6 +95,24 @@ export function RequestRfqs({ requestId }: { requestId: string }) {
           },
         ]}
       />
+      {launching && (
+        <RecordForm
+          title="Запрос поставщику по выбранным позициям"
+          endpoint={`/requests/${requestId}/rfqs`}
+          fields={fields}
+          initial={{ item_ids: launchItemIds }}
+          command
+          onClose={() => {
+            setLaunching(false);
+            onLaunchConsumed?.();
+          }}
+          onSuccess={() => {
+            setLaunching(false);
+            onLaunchConsumed?.();
+            setRevision((value) => value + 1);
+          }}
+        />
+      )}
       {selected && !sending && (
         <Modal title="Запрос поставщику" onClose={() => setSelected(undefined)}>
           <div className="form-body">
@@ -120,172 +155,513 @@ export function RequestRfqs({ requestId }: { requestId: string }) {
     </>
   );
 }
-export function RequestQuotes({ requestId }: { requestId: string }) {
-  const [selected, setSelected] = useState<Entity>();
-  const [editing, setEditing] = useState(false);
-  const [revision, setRevision] = useState(0);
-  const items = useApi<Page>(`/requests/${requestId}/items`);
-  const quoteFields: Field[] = [
-    {
-      name: 'item_id',
-      label: 'Позиция потребности',
-      type: 'select',
-      source: `/requests/${requestId}/items`,
-      labelKey: 'description',
-      required: true,
-    },
-    {
-      name: 'supplier_id',
-      label: 'Поставщик',
-      type: 'select',
-      source: '/counterparties?kind=supplier',
-      required: true,
-    },
-    {
-      name: 'product_id',
-      label: 'Товарный вариант',
-      type: 'select',
-      source: '/catalog/products',
-      required: true,
-    },
-    {
-      name: 'supplier_request_id',
-      label: 'Запрос поставщику',
-      type: 'select',
-      source: `/requests/${requestId}/rfqs`,
-    },
-    { name: 'price', label: 'Закупочная цена', type: 'decimal', required: true },
-    { name: 'currency', label: 'Валюта квоты', required: true, placeholder: 'USD' },
-    { name: 'price_unit', label: 'Единица цены', required: true, type: 'select', options: units },
-    { name: 'available_quantity', label: 'Доступное количество', required: true, type: 'decimal' },
-    { name: 'minimum_quantity', label: 'Минимальный заказ', type: 'decimal', value: '0' },
-    { name: 'multiple', label: 'Кратность заказа', type: 'decimal', value: '0.000001' },
-    { name: 'valid_until', label: 'Цена действует до', type: 'date' },
-    { name: 'requires_confirmation', label: 'Цена требует подтверждения', type: 'checkbox' },
-    { name: 'is_analogue', label: 'Предлагается аналог', type: 'checkbox' },
-    { name: 'sample', label: 'Бесплатный образец', type: 'checkbox' },
-    {
-      name: 'terms',
-      label: 'Условия и первоисточник',
-      type: 'json',
-      value: {},
-      help: 'Срок готовности, базис и место поставки, порядок оплаты, ссылка на исходный документ.',
-    },
-  ];
-  function transform(body: Record<string, unknown>) {
-    return {
-      ...body,
-      item_revision: items.data?.items.find((item) => item.id === body.item_id)?.revision || 1,
-    };
+type QuoteDraft = {
+  key: number;
+  source_request_item_id: string;
+  nomenclature_id: string;
+  packing_id: string;
+  quantity: string;
+  unit_price: string;
+  currency_id: string;
+  delivery_days: string;
+  historyHint?: string;
+};
+function blankQuoteRow(key: number): QuoteDraft {
+  return {
+    key,
+    source_request_item_id: '',
+    nomenclature_id: '',
+    packing_id: '',
+    quantity: '1',
+    unit_price: '',
+    currency_id: '',
+    delivery_days: '',
+  };
+}
+function quoteName(row: Entity) {
+  return String(
+    row.nomenclature_name || (row.nomenclature as Entity | undefined)?.name || row.name || 'Товар',
+  );
+}
+function QuoteSheetEditor({
+  requestId,
+  onClose,
+  onSaved,
+}: {
+  requestId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const currencies = useApi<Page>('/currencies?page_size=100');
+  const [itemSearch, setItemSearch] = useState('');
+  const [knownItems, setKnownItems] = useState<Record<string, Entity>>({});
+  const debouncedItemSearch = useDebounced(itemSearch);
+  const requestItems = useApi<Page>(`/requests/${requestId}/items?page_size=100&q=${encodeURIComponent(debouncedItemSearch)}`);
+  const requestItemOptions = [...Object.values(knownItems), ...(requestItems.data?.items || [])]
+    .filter((item, index, all) => !item.archived && all.findIndex((candidate) => candidate.id === item.id) === index);
+  const rfqs = useApi<Page>(`/requests/${requestId}/rfqs?page_size=100`);
+  const operation = useCommand();
+  const nextKey = useRef(1);
+  const [supplierId, setSupplierId] = useState('');
+  const [rfqId, setRfqId] = useState('');
+  const [rows, setRows] = useState<QuoteDraft[]>([blankQuoteRow(0)]);
+  const [localError, setLocalError] = useState<unknown>();
+  const [rowErrors, setRowErrors] = useState<Record<number, string>>({});
+  const dirty = Boolean(
+    supplierId ||
+    rfqId ||
+    rows.some((row) => row.nomenclature_id || row.unit_price || row.source_request_item_id),
+  );
+  useDirtyProtection(dirty);
+  const close = () => {
+    if (!dirty || window.confirm('Есть несохранённые строки. Закрыть без сохранения?')) onClose();
+  };
+  function patchRow(key: number, values: Partial<QuoteDraft>) {
+    setRows((current) =>
+      current.map((row) =>
+        row.key === key ? { ...row, ...values, historyHint: values.historyHint } : row,
+      ),
+    );
+    setRowErrors((current) => ({ ...current, [key]: '' }));
+    setLocalError(undefined);
+  }
+  async function findLatest(
+    key: number,
+    supplier: string,
+    nomenclature: string,
+    packing: string,
+    currency = '',
+  ) {
+    if (!supplier || !nomenclature || !packing) return;
+    const query = new URLSearchParams({
+      supplier_id: supplier,
+      nomenclature_id: nomenclature,
+      packing_id: packing,
+    });
+    if (currency) query.set('currency_id', currency);
+    try {
+      const result = await api<{ item: Entity | null }>(`/quote-items/latest?${query}`);
+      const latest = result.item;
+      if (!latest) return;
+      setRows((current) =>
+        current.map((row) =>
+          row.key === key &&
+          row.nomenclature_id === nomenclature &&
+          row.packing_id === packing &&
+          !row.unit_price
+            ? {
+                ...row,
+                unit_price: String(latest.unit_price ?? ''),
+                currency_id: String(latest.currency_id || row.currency_id),
+                delivery_days: String(latest.delivery_days ?? row.delivery_days),
+                historyHint: 'Подставлена актуальная цена из истории; её можно изменить.',
+              }
+            : row,
+        ),
+      );
+    } catch {
+      // История ускоряет ввод, но недоступность подсказки не блокирует ручное заполнение.
+    }
+  }
+  async function save() {
+    const active = rows.filter(
+      (row) =>
+        row.source_request_item_id ||
+        row.nomenclature_id ||
+        row.packing_id ||
+        row.unit_price ||
+        row.currency_id ||
+        row.delivery_days,
+    );
+    const errors: Record<number, string> = {};
+    if (!supplierId) setLocalError(new Error('Выберите поставщика для квоты.'));
+    else if (!active.length) setLocalError(new Error('Добавьте хотя бы одну строку квоты.'));
+    if (!supplierId || !active.length) return;
+    active.forEach((row) => {
+      if (
+        !row.source_request_item_id ||
+        !row.nomenclature_id ||
+        !row.packing_id ||
+        !row.quantity ||
+        !row.currency_id ||
+        !row.unit_price
+      )
+        errors[row.key] =
+          'Выберите структурированную позицию заявки, товар, фасовку, количество, цену и валюту.';
+      else if (
+        !Number.isInteger(Number(row.quantity)) ||
+        Number(row.quantity) <= 0 ||
+        !Number.isFinite(Number(row.unit_price.replace(',', '.'))) ||
+        Number(row.unit_price.replace(',', '.')) < 0
+      )
+        errors[row.key] =
+          'Количество фасовок должно быть целым числом больше нуля, цена не может быть отрицательной.';
+      else if (
+        row.delivery_days &&
+        (!Number.isInteger(Number(row.delivery_days)) || Number(row.delivery_days) < 0)
+      )
+        errors[row.key] = 'Срок поставки должен быть целым числом дней.';
+    });
+    setRowErrors(errors);
+    if (Object.keys(errors).length) {
+      setLocalError(new Error('Исправьте отмеченные строки квоты.'));
+      return;
+    }
+    try {
+      await operation.run(
+        `/requests/${requestId}/quote-sheets`,
+        {
+          supplier_id: supplierId,
+          ...(rfqId ? { supplier_request_id: rfqId } : {}),
+          items: active.map((row) => ({
+            source_request_item_id: row.source_request_item_id,
+            nomenclature_id: row.nomenclature_id,
+            packing_id: row.packing_id,
+            quantity: row.quantity.replace(',', '.'),
+            unit_price: row.unit_price.replace(',', '.'),
+            currency_id: row.currency_id,
+            ...(row.delivery_days ? { delivery_days: Number(row.delivery_days) } : {}),
+          })),
+        },
+        'POST',
+      );
+      onSaved();
+    } catch (error) {
+      if (error instanceof ApiError && error.field) {
+        const index = Number(error.field.match(/items(?:\.|\[)([0-9]+)/)?.[1]);
+        if (Number.isInteger(index) && active[index])
+          setRowErrors((current) => ({ ...current, [active[index].key]: error.message }));
+      }
+    }
   }
   return (
+    <Modal title="Новая квота поставщика" wide onClose={close}>
+      <form
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+      >
+        <div className="form-body quote-sheet-editor">
+          <p className="muted">
+            Заполните строки подряд и сохраните квоту одним действием. Цены из актуальной истории
+            подставляются при выборе фасовки.
+          </p>
+          <ErrorBox
+            error={
+              operation.error ||
+              localError ||
+              currencies.error ||
+              requestItems.error
+            }
+          />
+          <div className="form-grid quote-sheet-header">
+            <div className="field"><label htmlFor="field-supplier_id">Поставщик</label>
+              <DirectorySelect field={{ name: 'supplier_id', label: 'Поставщик', type: 'select', source: '/counterparties?kind=supplier', required: true }}
+                value={supplierId} onChange={(value) => {
+                  const nextSupplier = String(value);
+                  setSupplierId(nextSupplier);
+                  setRfqId('');
+                  const needsHistory = rows.filter((row) => row.historyHint || !row.unit_price);
+                  setRows((current) =>
+                    current.map((row) =>
+                      row.historyHint
+                        ? {
+                            ...row,
+                            unit_price: '',
+                            currency_id: '',
+                            delivery_days: '',
+                            historyHint: undefined,
+                          }
+                        : row,
+                    ),
+                  );
+                  needsHistory.forEach(
+                    (row) =>
+                      void findLatest(
+                        row.key,
+                        nextSupplier,
+                        row.nomenclature_id,
+                        row.packing_id,
+                        row.historyHint ? '' : row.currency_id,
+                      ),
+                  );
+                }} />
+            </div>
+            <label className="field">
+              Запрос поставщику
+              <select value={rfqId} onChange={(event) => setRfqId(event.target.value)}>
+                <option value="">Без связи с запросом</option>
+                {rfqs.data?.items
+                  .filter((rfq) => !supplierId || rfq.supplier_id === supplierId)
+                  .map((rfq) => (
+                    <option key={rfq.id} value={rfq.id}>
+                      {String(rfq.number || rfq.request_number || date(rfq.created_at))}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          </div>
+          <label className="field quote-item-search">Поиск позиции заявки
+            <input value={itemSearch} onChange={(event) => setItemSearch(event.target.value)} placeholder="Название, артикул или описание" />
+          </label>
+          <div className="quote-sheet-table-scroll">
+            <table className="quote-sheet-table">
+              <thead>
+                <tr>
+                  <th scope="col">№</th>
+                  <th scope="col">Позиция заявки</th>
+                  <th scope="col">Номенклатура</th>
+                  <th scope="col">Фасовка</th>
+                  <th scope="col">Кол-во</th>
+                  <th scope="col">Цена</th>
+                  <th scope="col">Валюта</th>
+                  <th scope="col">Срок, дней</th>
+                  <th scope="col">
+                    <span className="sr-only">Удалить</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, index) => {
+                  const sourceItem = requestItemOptions.find((item) => item.id === row.source_request_item_id);
+                  return (
+                    <tr key={row.key} className={rowErrors[row.key] ? 'quote-row-error' : ''}>
+                      <td>{index + 1}</td>
+                      <td>
+                        <select
+                          aria-label={`Позиция заявки, строка ${index + 1}`}
+                          value={row.source_request_item_id}
+                          onChange={(event) => {
+                            const item = requestItemOptions.find(
+                              (entry) => entry.id === event.target.value,
+                            );
+                            if (item) setKnownItems((current) => ({ ...current, [item.id]: item }));
+                            const nomenclatureId = String(item?.nomenclature_id || '');
+                            const packingId = String(item?.packing_id || '');
+                            patchRow(row.key, {
+                              source_request_item_id: event.target.value,
+                              nomenclature_id: nomenclatureId,
+                              packing_id: packingId,
+                              quantity: String(item?.quantity || row.quantity),
+                              unit_price: '',
+                              currency_id: '',
+                            });
+                            if (item && (!nomenclatureId || !packingId || item.unit !== 'pcs'))
+                              setRowErrors((current) => ({
+                                ...current,
+                                [row.key]:
+                                  'Сначала укажите номенклатуру и фасовку у позиции заявки.',
+                              }));
+                            void findLatest(row.key, supplierId, nomenclatureId, packingId);
+                          }}
+                        >
+                          <option value="">Выберите позицию</option>
+                          {requestItemOptions.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {String(item.nomenclature_name || item.description)}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>{String(sourceItem?.nomenclature_name || '—')}</td>
+                      <td>{String(sourceItem?.packing_name || '—')}</td>
+                      <td>
+                        <input
+                          aria-label={`Количество, строка ${index + 1}`}
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={row.quantity}
+                          onChange={(event) => patchRow(row.key, { quantity: event.target.value })}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          aria-label={`Цена, строка ${index + 1}`}
+                          inputMode="decimal"
+                          value={row.unit_price}
+                          onChange={(event) =>
+                            patchRow(row.key, {
+                              unit_price: event.target.value.replace(',', '.'),
+                              historyHint: undefined,
+                            })
+                          }
+                        />
+                        {(rowErrors[row.key] || row.historyHint) && (
+                          <small className="quote-row-message">
+                            {rowErrors[row.key] || row.historyHint}
+                          </small>
+                        )}
+                      </td>
+                      <td>
+                        <select
+                          aria-label={`Валюта, строка ${index + 1}`}
+                          value={row.currency_id}
+                          onChange={(event) => {
+                            patchRow(row.key, { currency_id: event.target.value });
+                            if (!row.unit_price)
+                              void findLatest(
+                                row.key,
+                                supplierId,
+                                row.nomenclature_id,
+                                row.packing_id,
+                                event.target.value,
+                              );
+                          }}
+                        >
+                          <option value="">Валюта</option>
+                          {currencies.data?.items.map((currency) => (
+                            <option key={currency.id} value={currency.id}>
+                              {String(currency.code || currency.name)}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <input
+                          aria-label={`Срок поставки, строка ${index + 1}`}
+                          type="number"
+                          min="0"
+                          value={row.delivery_days}
+                          onChange={(event) =>
+                            patchRow(row.key, { delivery_days: event.target.value })
+                          }
+                        />
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={`Удалить строку ${index + 1}`}
+                          disabled={rows.length === 1}
+                          onClick={() =>
+                            setRows((current) => current.filter((entry) => entry.key !== row.key))
+                          }
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={rows.length >= 100}
+            onClick={() => setRows((current) => [...current, blankQuoteRow(nextKey.current++)])}
+          >
+            <Plus size={15} /> Добавить строку
+          </Button>
+          <p className="quote-sheet-count">
+            Строк: {rows.length}. Можно ввести до 100 позиций в одной квоте.
+          </p>
+        </div>
+        <div className="modal-footer">
+          <Button type="button" variant="secondary" onClick={close}>
+            Отмена
+          </Button>
+          <Button type="submit" busy={operation.busy}>
+            Сохранить квоту
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+export function RequestQuotes({
+  requestId,
+  onCalculate,
+}: {
+  requestId: string;
+  onCalculate: (quoteItemIds: string[]) => void;
+}) {
+  const [selected, setSelected] = useState<Entity>();
+  const [creating, setCreating] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  return (
     <>
+      <div className="tab-actions">
+        <Button variant="secondary" onClick={() => setCreating(true)}>
+          <Plus size={16} /> Новая квота
+        </Button>
+        <span className="selection-count">Выбрано позиций: {selectedIds.size}</span>
+        <Button
+          disabled={!selectedIds.size || selectedIds.size > 100}
+          title={!selectedIds.size ? 'Сначала выберите позиции квот' : selectedIds.size > 100 ? 'Один расчёт содержит до 100 позиций' : undefined}
+          onClick={() => onCalculate([...selectedIds])}
+        >
+          Сформировать расчёт
+        </Button>
+        {selectedIds.size > 100 && <small className="field-error">Один расчёт содержит до 100 позиций.</small>}
+      </div>
       <Collection
-        title="Квоты поставщиков"
-        description="Сравните характеристики, сроки и доступные цены. Для КП выбирается один поставщик и одна исходная валюта."
-        endpoint={`/requests/${requestId}/quotes`}
-        fields={quoteFields}
-        createLabel="Добавить квоту"
-        command
-        transform={transform}
+        title="Позиции квот"
+        description="Отметьте нужные строки разных поставщиков и валют. Выбор сохраняется при перелистывании страниц."
+        endpoint={`/requests/${requestId}/quote-items`}
         refreshKey={revision}
+        pageSize={100}
+        selection={{
+          selectedIds,
+          onToggle: (id) =>
+            setSelectedIds((current) => {
+              const next = new Set(current);
+              if (next.has(id)) next.delete(id);
+              else next.add(id);
+              return next;
+            }),
+          onSelectPage: (ids, checked) =>
+            setSelectedIds((current) => {
+              const next = new Set(current);
+              ids.forEach((id) => {
+                if (checked) next.add(id);
+                else next.delete(id);
+              });
+              return next;
+            }),
+        }}
         onSelect={setSelected}
         columns={[
-          {
-            key: 'product',
-            label: 'Товар',
-            render: (r) => (
-              <span className="stacked">
-                <strong>{String((r.product as Entity)?.name || r.product_id)}</strong>
-                <small>
-                  {r.is_analogue ? 'Аналог · требуется решение клиента' : 'Заявленная позиция'}
-                </small>
-              </span>
-            ),
-          },
-          {
-            key: 'supplier_id',
-            label: 'Поставщик',
-            render: (r) => String(r.supplier_name || r.supplier_id),
-          },
-          {
-            key: 'price',
-            label: 'Цена закупки',
-            render: (r) =>
-              r.price !== undefined
-                ? `${decimal(r.price)} ${r.currency} / ${r.price_unit}`
-                : 'Нет доступа',
-          },
-          {
-            key: 'available_quantity',
-            label: 'Доступно',
-            render: (r) => `${decimal(r.available_quantity)} ${r.price_unit}`,
-          },
-          {
-            key: 'valid_until',
-            label: 'Действует до',
-            render: (r) => (
-              <span
-                className={
-                  r.valid_until && new Date(String(r.valid_until) + 'T23:59:59') < new Date() ? 'overdue' : ''
-                }
-              >
-                {date(r.valid_until)}
-              </span>
-            ),
-          },
-          { key: 'revision', label: 'Версия' },
+          { key: 'nomenclature_name', label: 'Номенклатура', render: quoteName },
+          { key: 'packing_name', label: 'Фасовка' },
+          { key: 'quantity', label: 'Количество', render: (row) => decimal(row.quantity) },
+          { key: 'supplier_name', label: 'Поставщик' },
+          { key: 'unit_price', label: 'Цена', render: (row) => decimal(row.unit_price) },
+          { key: 'currency_code', label: 'Валюта' },
+          { key: 'delivery_days', label: 'Срок, дней' },
         ]}
       />
-      {selected && !editing && (
-        <Modal title="Предложение поставщика" wide onClose={() => setSelected(undefined)}>
+      {creating && (
+        <QuoteSheetEditor
+          requestId={requestId}
+          onClose={() => setCreating(false)}
+          onSaved={() => {
+            setCreating(false);
+            setRevision((value) => value + 1);
+          }}
+        />
+      )}
+      {selected && (
+        <Modal title="Позиция квоты" onClose={() => setSelected(undefined)}>
           <div className="form-body">
             <DetailPairs
               values={{
-                Товар: (selected.product as Entity)?.name,
-                Поставщик: selected.supplier_name || selected.supplier_id,
-                Количество: `${decimal(selected.available_quantity)} ${selected.price_unit}`,
-                Цена:
-                  selected.price === undefined
-                    ? 'Нет доступа'
-                    : `${decimal(selected.price)} ${selected.currency}`,
+                Номенклатура: quoteName(selected),
+                Фасовка: selected.packing_name,
+                Поставщик: selected.supplier_name,
+                Количество: decimal(selected.quantity),
+                Цена: `${decimal(selected.unit_price)} ${String(selected.currency_code || '')}`,
+                'Срок поставки': selected.delivery_days,
                 'Действует до': date(selected.valid_until),
-                Редакция: selected.revision,
-                Аналог: selected.is_analogue,
-                Условия: selected.terms,
               }}
             />
-            <Button variant="secondary" onClick={() => setEditing(true)}>
-              <Pencil size={15} />
-              Новая редакция квоты
-            </Button>
           </div>
         </Modal>
-      )}
-      {selected && editing && (
-        <RecordForm
-          title="Новая редакция квоты"
-          endpoint={`/quotes/${selected.id}/revise`}
-          fields={[
-            ...quoteFields,
-            {
-              name: 'revision_reason',
-              label: 'Причина новой редакции',
-              type: 'textarea',
-              required: true,
-              minLength: 3,
-            },
-          ]}
-          command
-          initial={selected}
-          transform={transform}
-          onClose={() => setEditing(false)}
-          onSuccess={() => {
-            setSelected(undefined);
-            setEditing(false);
-            setRevision((v) => v + 1);
-          }}
-        />
       )}
     </>
   );

@@ -1,4 +1,5 @@
 from datetime import date
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -11,7 +12,7 @@ from app.core.errors import error
 from app.core.models import User
 from app.core.security import check_request, current_user, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
-from app.crm.models import Counterparty, RequestItem
+from app.crm.models import Counterparty, Nomenclature, Packing, Request as CRMRequest, RequestItem
 
 from .calculator import convert, dec, digest, validate_cas
 from .files import put_file, read_file, workbook
@@ -342,6 +343,7 @@ def create_rfq(request_id: str, data: RfqIn, db: DB, user: Actor):
 
     def operation():
         advisory(db, f"request-commerce:{request_id}")
+        request = db.get(CRMRequest, request_id)
         recipient = supplier(db, data.supplier_id)
         if len(set(data.item_ids)) != len(data.item_ids):
             error("DUPLICATE_ITEM", "Позиция указана повторно")
@@ -362,27 +364,28 @@ def create_rfq(request_id: str, data: RfqIn, db: DB, user: Actor):
         ):
             error("RFQ_PARENT", "Исходный запрос поставщику не найден", 404)
         snapshot = {
+            "request_number": request.number,
             "supplier": {"id": recipient.id, "name": recipient.name, "email": recipient.email},
             "items": [serialize(item) for item in items],
             "response_due": data.response_due.isoformat(),
             "comment": data.comment,
         }
+        rows = []
+        for item in items:
+            nomenclature = db.get(Nomenclature, item.nomenclature_id) if item.nomenclature_id else None
+            packing = db.get(Packing, item.packing_id) if item.packing_id else None
+            rows.append([
+                nomenclature.name if nomenclature else item.description,
+                packing.display_name if packing else (item.packaging or ""),
+                str(item.quantity),
+                "",
+                nomenclature.article or "" if nomenclature else "",
+                item.comment or "",
+            ])
         content = workbook(
-            ["№", "Наименование", "CAS", "Качество", "Фасовка", "Количество", "Единица", "Комментарий"],
-            [
-                [
-                    str(i),
-                    item.description,
-                    item.cas or "",
-                    item.purity or "",
-                    item.packaging or "",
-                    str(item.quantity),
-                    item.unit,
-                    item.comment or "",
-                ]
-                for i, item in enumerate(items, 1)
-            ],
-            "Запрос поставщику",
+            ["Name", "Packing", "Quantity", "Cost", "Article", "Comment"],
+            rows,
+            "Supplier request",
         )
         metadata = put_file(content, "xlsx")
         obj = SupplierRequest(
@@ -411,10 +414,12 @@ def download_rfq(rfq_id: str, db: DB, user: Actor):
     check_request(db, user, obj.request_id)
     require_permission(db, user, "exports.download", obj.request_id)
     audit(db, user, "supplier_request", obj.id, "download")
+    number = obj.snapshot.get("request_number") or db.get(CRMRequest, obj.request_id).number
+    safe_number = re.sub(r"[^A-Za-z0-9_-]", "_", number)
     return Response(
         read_file({"key": obj.file_key, "sha256": obj.sha256}),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="rfq-{obj.id}.xlsx"'},
+        headers={"Content-Disposition": f'attachment; filename="RFQ_{safe_number}.xlsx"'},
     )
 
 
