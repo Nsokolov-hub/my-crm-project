@@ -317,7 +317,7 @@ class DecisionIn(VersionCommand):
 
 class WaveIn(Command):
     number: str = Field(default="", max_length=80)
-    supplier_id: str | None = None
+    supplier_id: str
     route: str = Field(min_length=1, max_length=300)
     origin_country: str = Field(min_length=1, max_length=100)
     owner_id: str

@@ -602,20 +602,17 @@ def create_wave(data: WaveIn, db: DB, user: Actor):
     require_permission(db, user, "waves.write")
 
     def operation():
-        supplier = db.get(Counterparty, data.supplier_id) if data.supplier_id else None
-        if data.supplier_id and (not supplier or supplier.archived or supplier.kind not in ("supplier", "both")):
+        supplier = db.get(Counterparty, data.supplier_id)
+        if not supplier or supplier.archived or supplier.kind not in ("supplier", "both"):
             error("SUPPLIER_REQUIRED", "Поставщик волны не найден", field="supplier_id")
         if not data.close_date <= data.departure_date <= data.arrival_date:
             error("WAVE_DATES", "Даты закрытия, отправления и прибытия должны идти по порядку")
         owner = db.get(User, data.owner_id)
         if not owner or not owner.active:
             error("OWNER_REQUIRED", "Выберите действующего ответственного")
-        if supplier:
-            advisory(db, f"wave-supplier:{supplier.id}")
+        advisory(db, f"wave-supplier:{supplier.id}")
         number = data.number.strip()
         if not number:
-            if not supplier:
-                error("SUPPLIER_REQUIRED", "Укажите поставщика для автоматического номера", field="supplier_id")
             prefix = supplier.name[:65].strip()
             existing = db.scalars(select(Wave.number).where(Wave.supplier_id == supplier.id)).all()
             sequence = max((int(value[len(prefix) + 1:]) for value in existing
