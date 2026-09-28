@@ -46,11 +46,15 @@ def test_wave_quantity_shares_fixed_expenses_and_fee_and_columns_share_duty():
     assert Decimal(columns["detail"]["duty"]) == Decimal("73800.00")
     assert Decimal(sample["detail"]["duty"]) == Decimal("1000.00")
     assert Decimal(sample["detail"]["internal_bonus"]) == (
-        Decimal(sample["detail"]["cost_before_adjustment"]) * Decimal("0.15")
+        Decimal(sample["detail"]["pre_bonus_sale_net"]) * Decimal("0.15")
     ).quantize(Decimal("0.01"))
     assert Decimal(columns["detail"]["internal_bonus"]) == (
-        Decimal(columns["detail"]["cost_before_adjustment"]) * Decimal("0.70")
+        Decimal(columns["detail"]["pre_bonus_sale_net"]) * Decimal("0.70")
     ).quantize(Decimal("0.01"))
+    assert Decimal(sample["detail"]["service_fee"]) == (
+        Decimal(sample["detail"]["internal_bonus"]) * Decimal("0.16")
+    ).quantize(Decimal("0.01"))
+    assert Decimal(sample["unit_price"]) * Decimal(sample["quantity"]) == Decimal(sample["total"])
     assert Decimal(sample["detail"]["customs_fee"]) + Decimal(columns["detail"]["customs_fee"]) + \
         Decimal(result["wave_distribution"]["existing_customs_fee_share"]) == Decimal("4997.00")
 
@@ -75,3 +79,44 @@ def test_fixed_group_duty_is_split_between_column_rows():
     assert second["detail"]["duty"] == "24600.00"
     assert first["detail"]["fixed_group_quantity"] == "3"
     assert second["detail"]["fixed_group_quantity"] == "3"
+
+
+def test_excel_purine_rows_match_cached_gross_unit_prices():
+    # Считалка 94: Вход-Выход!D14:H16, Колонки!AG6:AL7, AE6:AE7, AS6:AS7.
+    profile = itemized_profile()
+    profile["import_country_id"] = "country-1"
+    profile["vat_deduction_mode"] = False
+    profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "0"}]
+    first_selection = _selection("sample", "reference_standards", "2", "2500", "1.15")
+    second_selection = _selection("sample-small", "reference_standards", "2", "1000", "1.15")
+    for selection, markup in ((first_selection, "1.8"), (second_selection, "1.7")):
+        selection["currency_code"] = "CNY"
+        selection["markup_coefficient"] = markup
+    expenses = [
+        {"name": name, "amount": amount, "currency": "RUB", "method": "BY_QUANTITY",
+         "stage": stage, "calculation_type": "FIXED", "include_in_cost": True, "include_in_cash": True}
+        for name, amount, stage in (
+            ("Логистика МД", "56250", "INTERNATIONAL_LOGISTICS"),
+            ("Логистика РФ", "6000", "GENERAL"),
+            ("Терминал", "5000", "GENERAL"),
+            ("Подача декларации", "5000", "GENERAL"),
+            ("Декларант", "21000", "GENERAL"),
+        )
+    ]
+    expenses.append({
+        "name": "Комиссия за перевод", "amount": "380.86", "currency": "RUB",
+        "method": "MANUAL", "manual": {"sample": "260.74", "sample-small": "120.12"}, "stage": "GENERAL",
+        "calculation_type": "FIXED", "include_in_cost": True, "include_in_cash": True,
+    })
+    result = calculate_itemized(
+        profile, [first_selection, second_selection], expenses,
+        [{"currency": "CNY", "management_per_unit": "12.5", "quoted_units": "1",
+          "date": "2026-09-28", "source": "Профиль"}],
+        wave_existing_quantity=Decimal("4"),
+    )
+    first, second = result["lines"]
+    assert first["detail"]["sale_unit_gross"] == "133237"
+    assert first["total"] == "266474.00"
+    assert second["detail"]["sale_unit_gross"] == "67630"
+    assert second["total"] == "135260.00"
+    assert abs(Decimal(first["detail"]["profit"]) - Decimal("78461.25")) <= Decimal("0.01")

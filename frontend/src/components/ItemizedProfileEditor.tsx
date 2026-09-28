@@ -32,6 +32,8 @@ type ItemizedDefinition = {
   financing_start_event: 'delivery' | 'shipment' | 'invoice';
   default_markup_coefficient: string;
   default_bonus_coefficient: string;
+  bonus_withdrawal_percent: string;
+  round_sale_up_to_ruble: boolean;
   default_expenses: ProfileExpense[];
   exchange_rates: ProfileRate[];
   customs_rules: CustomsRule[];
@@ -74,6 +76,8 @@ export function ItemizedProfileEditor({
   const hiddenRules = !Array.isArray(raw.customs_rules) || !Array.isArray(raw.customs_fee_brackets);
   const definition = {
     ...raw,
+    bonus_withdrawal_percent: String(raw.bonus_withdrawal_percent ?? '16'),
+    round_sale_up_to_ruble: raw.round_sale_up_to_ruble !== false,
     customs_rules: Array.isArray(raw.customs_rules) ? raw.customs_rules : [],
     customs_fee_brackets: Array.isArray(raw.customs_fee_brackets) ? raw.customs_fee_brackets : [],
     default_expenses: Array.isArray(raw.default_expenses) ? raw.default_expenses : [],
@@ -154,6 +158,9 @@ function ItemizedProfileForm({
     if (!decimal.test(definition.default_bonus_coefficient || '1') ||
       Number((definition.default_bonus_coefficient || '1').replace(',', '.')) < 1)
       return 'Бонус должен быть коэффициентом не меньше 1.';
+    if (!decimal.test(definition.bonus_withdrawal_percent) ||
+      Number(definition.bonus_withdrawal_percent.replace(',', '.')) > 100)
+      return 'Комиссия за вывод бонуса должна быть от 0 до 100%.';
     const slugs = definition.customs_rules.map((row) => row.product_group_slug);
     if (new Set(slugs).size !== slugs.length || slugs.some((slug) => !slug)) return 'Проверьте уникальность товарных групп.';
     if (definition.customs_rules.some((row) => !decimal.test(row.value))) return 'Проверьте значения таможенных правил.';
@@ -189,6 +196,7 @@ function ItemizedProfileForm({
           financing_annual_rate: definition.financing_annual_rate.replace(',', '.'),
           default_markup_coefficient: definition.default_markup_coefficient.replace(',', '.'),
           default_bonus_coefficient: (definition.default_bonus_coefficient || '1').replace(',', '.'),
+          bonus_withdrawal_percent: definition.bonus_withdrawal_percent.replace(',', '.'),
           customs_rules: definition.customs_rules.map((row) => ({ ...row, value: row.value.replace(',', '.') })),
           customs_fee_brackets: definition.customs_fee_brackets.map((row) => ({
             from_amount: row.from_amount.replace(',', '.'), to_amount: row.to_amount ? row.to_amount.replace(',', '.') : null,
@@ -231,8 +239,10 @@ function ItemizedProfileForm({
             <label className="field">Событие начала отсрочки<select value={definition.financing_start_event} onChange={(event) => update({ financing_start_event: event.target.value as ItemizedDefinition['financing_start_event'] })}><option value="delivery">Поставка</option><option value="shipment">Отгрузка</option><option value="invoice">Счёт</option></select></label>
             <label className="field">Наценка по умолчанию, коэффициент<input inputMode="decimal" value={definition.default_markup_coefficient} onChange={(event) => update({ default_markup_coefficient: event.target.value })} /></label>
             <label className="field">Бонус по умолчанию, коэффициент<input inputMode="decimal" value={definition.default_bonus_coefficient || '1'} onChange={(event) => update({ default_bonus_coefficient: event.target.value })} /></label>
+            <label className="field">Комиссия за вывод бонуса, %<input inputMode="decimal" value={definition.bonus_withdrawal_percent} onChange={(event) => update({ bonus_withdrawal_percent: event.target.value })} /></label>
             <label className="field">Округление<select value={definition.rounding} onChange={(event) => update({ rounding: event.target.value as ItemizedDefinition['rounding'] })}><option value="half_up">0,5 в большую сторону</option><option value="half_even">К ближайшему чётному</option><option value="down">Вниз</option></select></label>
             <label className="profile-confirmation wide"><input type="checkbox" checked={definition.vat_deduction_mode} onChange={(event) => update({ vat_deduction_mode: event.target.checked })} />Учитывать вычет входного НДС</label>
+            <label className="profile-confirmation wide"><input type="checkbox" checked={definition.round_sale_up_to_ruble} onChange={(event) => update({ round_sale_up_to_ruble: event.target.checked })} />Округлять цену за штуку с НДС вверх до рубля, как в Excel</label>
           </div>
         </section>
         <section className="profile-section">

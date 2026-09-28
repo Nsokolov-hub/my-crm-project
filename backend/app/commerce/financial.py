@@ -47,6 +47,7 @@ def filter_profile_definition(definition: dict, *, purchase: bool, reward: bool,
         definition.pop("reward_label", None)
         definition.pop("reward_basis", None)
         definition.pop("default_bonus_coefficient", None)
+        definition.pop("bonus_withdrawal_percent", None)
     if not purchase:
         definition.pop("default_expenses", None)
         definition.pop("exchange_rates", None)
@@ -104,7 +105,10 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
                     allowed.add("purchase")
                     allowed.update(("purchase_foreign", "exchange_rate", "purchase_rub"))
                 if can_reward:
-                    allowed.update(("reward", "manager_bonus", "internal_bonus", "bonus_coefficient", "service_fee"))
+                    allowed.update((
+                        "reward", "manager_bonus", "internal_bonus", "bonus_coefficient", "service_fee",
+                        "bonus_withdrawal_percent", "bonus_withdrawal_fee", "additional_service_fee",
+                    ))
                 if can_profit:
                     allowed.update(("cost", "profit", "margin", "markup_amount", "profitability_percent"))
                 line["detail"] = {key: value for key, value in line["detail"].items() if key in allowed}
