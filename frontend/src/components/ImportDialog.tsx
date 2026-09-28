@@ -20,6 +20,24 @@ const importMapping = {
   comment: 'Комментарий',
   owner_id: 'Ответственный',
 };
+const callsImportMapping = {
+  name: 'Название',
+  tax_id: 'ИНН',
+  profile: 'ПРОФИЛЬ',
+  category: 'Тип/категория',
+  federal_district: 'Федеральный округ',
+  city: 'Регион/город',
+  registration_number: 'ОГРН',
+  business_profile: 'Основной профиль',
+  okved: 'ОКВЭД',
+  revenue: 'Выручка (посл. изв. год)',
+  website: 'Сайт',
+  email: 'E-mail',
+  phone: 'Телефон',
+  comment: 'Примечание',
+  procurement_phone: 'Телефон отдела закупок/снабжения',
+  procurement_email: 'E-mail отдела закупок/снабжения',
+};
 const pageSize = 100;
 const statusLabels: Record<string, string> = {
   preview: 'Проверка перед импортом',
@@ -70,14 +88,17 @@ export function ImportDialog({
   open,
   onClose,
   onSuccess,
+  mode = 'general',
 }: {
   open: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  mode?: 'general' | 'calls';
 }) {
+  const mappingFields = mode === 'calls' ? callsImportMapping : importMapping;
   const [view, setView] = useState<'upload' | 'batch' | 'history'>('upload');
   const [file, setFile] = useState<File>();
-  const [mapping, setMapping] = useState<Record<string, string>>({ ...importMapping });
+  const [mapping, setMapping] = useState<Record<string, string>>({ ...mappingFields });
   const [selectedId, setSelectedId] = useState<string>();
   const [batch, setBatch] = useState<ImportBatch>();
   const [page, setPage] = useState(1);
@@ -165,8 +186,11 @@ export function ImportDialog({
   async function preview(e: React.FormEvent) {
     e.preventDefault();
     if (!file) return;
-    if (!mapping.name.trim() && !mapping.contact.trim()) {
-      setError(new Error('Сопоставьте колонку организации или контактного лица.'));
+    if (mode === 'calls' ? (!mapping.name?.trim() || !mapping.tax_id?.trim())
+      : (!mapping.name?.trim() && !mapping.contact?.trim())) {
+      setError(new Error(mode === 'calls'
+        ? 'Сопоставьте столбцы «Название» и «ИНН».'
+        : 'Сопоставьте колонку организации или контактного лица.'));
       return;
     }
     setBusy(true);
@@ -175,6 +199,7 @@ export function ImportDialog({
       const body = new FormData();
       body.set('file', file);
       body.set('mapping', JSON.stringify(mapping));
+      body.set('mode', mode);
       const result = await api<ImportBatch>('/imports/preview', { method: 'POST', body });
       setBatch(result);
       setSelectedId(result.id);
@@ -246,7 +271,7 @@ export function ImportDialog({
   const total = batch?.summary.total || 0;
   const editable = batch?.status === 'preview' && !command.busy && !loading;
   return (
-    <Modal title="Импорт клиентской базы" wide onClose={onClose}>
+    <Modal title={mode === 'calls' ? 'Импорт базы обзвона' : 'Импорт клиентской базы'} wide onClose={onClose}>
       <div className="form-body">
         <div className="tabs">
           <button
@@ -277,13 +302,17 @@ export function ImportDialog({
         {view === 'upload' && (
           <>
             <p className="muted">
-              Загрузите XLSX, сопоставьте столбцы и проверьте совпадения. Импорт начнётся после
-              подтверждения.
+              {mode === 'calls'
+                ? 'Загрузите лист «Данные» из XLSX. Для добавления нужны только «Название» (B) и «ИНН» (H). Остальные сведения необязательны. Совпадения по ИНН будут пропущены; перед подтверждением это можно изменить.'
+                : 'Загрузите XLSX, сопоставьте столбцы и проверьте совпадения. Импорт начнётся после подтверждения.'}
             </p>
             <Button
               variant="secondary"
               onClick={() =>
-                void download('/imports/template.xlsx', 'Шаблон_клиентов.xlsx').catch(setError)
+                void download(
+                  mode === 'calls' ? '/imports/template-calls.xlsx' : '/imports/template.xlsx',
+                  mode === 'calls' ? 'Шаблон_обзвона.xlsx' : 'Шаблон_клиентов.xlsx',
+                ).catch(setError)
               }
             >
               <Download size={16} /> Скачать шаблон
@@ -306,7 +335,7 @@ export function ImportDialog({
                 импортировать столбец.
               </p>
               <div className="form-grid">
-                {Object.entries(importMapping).map(([key, title]) => (
+                {Object.entries(mappingFields).map(([key, title]) => (
                   <label className="field" key={key}>
                     {title}
                     <input
@@ -316,7 +345,7 @@ export function ImportDialog({
                         setMapping((current) => ({ ...current, [key]: e.target.value }))
                       }
                     />
-                    {key === 'owner_id' && (
+                    {key === 'owner_id' && mode === 'general' && (
                       <small>
                         Значения столбца — ID активных сотрудников. Без столбца новые карточки
                         назначаются вам.
