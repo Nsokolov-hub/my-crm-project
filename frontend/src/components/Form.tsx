@@ -6,6 +6,7 @@ import { label } from '../lib/format';
 import { useApi, useCommand, useDebounced, useDirtyProtection } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
 import { Button, ErrorBox, Modal } from './ui';
+import { CounterpartyDetailsEditor } from './CounterpartyDetailsEditor';
 import '../styles/forms-v2.scss';
 export function validateFields(fields: Field[], values: Record<string, unknown>) {
   const errors: Record<string, string> = {};
@@ -159,7 +160,11 @@ export function DirectorySelect({
           )}
         </div>
       )}
-      {Boolean(source.error) && <p className="field-error">Не удалось загрузить справочник.</p>}
+      {Boolean(source.error) && (
+        <p className="field-error">
+          {source.error instanceof ApiError ? source.error.message : 'Не удалось загрузить справочник.'}
+        </p>
+      )}
       {creating && field.create && createPortal(
         <RecordForm
           title={field.create.title}
@@ -209,12 +214,16 @@ function FieldControl({
   };
   return (
     <div
-      className={`field ${field.wide || field.type === 'textarea' || field.type === 'json' ? 'wide' : ''} ${field.type === 'checkbox' ? 'checkbox-field' : ''}`}
+      className={`field ${field.wide || field.type === 'textarea' || field.type === 'json' || field.type === 'counterparty-details' ? 'wide' : ''} ${field.type === 'checkbox' ? 'checkbox-field' : ''}`}
     >
-      <label htmlFor={common.id}>
-        {field.label}
-        {field.required && <span> *</span>}
-      </label>
+      {field.type === 'counterparty-details' ? (
+        <div className="field-group-title">{field.label}</div>
+      ) : (
+        <label htmlFor={common.id}>
+          {field.label}
+          {field.required && <span> *</span>}
+        </label>
+      )}
       {field.type === 'checkbox' ? (
         <input
           {...common}
@@ -222,6 +231,8 @@ function FieldControl({
           checked={Boolean(value)}
           onChange={(e) => onChange(e.target.checked)}
         />
+      ) : field.type === 'counterparty-details' ? (
+        <CounterpartyDetailsEditor value={value} onChange={onChange} />
       ) : field.type === 'select' && field.source ? (
         <DirectorySelect field={field} value={value} error={error} onChange={onChange} />
       ) : field.type === 'select' || field.type === 'multiselect' ? (
@@ -283,7 +294,9 @@ function FieldControl({
       )}
       {Boolean(source.error) && (
         <p className="field-error">
-          Справочник недоступен. Проверьте права или повторно откройте форму.
+          {source.error instanceof ApiError
+            ? source.error.message
+            : 'Справочник недоступен. Проверьте права или повторно откройте форму.'}
         </p>
       )}
     </div>

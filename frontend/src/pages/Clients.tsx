@@ -1,6 +1,7 @@
 import { Pencil, Phone, Plus, Upload } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
 import { RecordForm } from '../components/Form';
 import { ImportDialog } from '../components/ImportDialog';
@@ -9,6 +10,7 @@ import { callFields, clientFields, contactFields } from '../lib/fields';
 import { date } from '../lib/format';
 import type { Entity, Field } from '../lib/types';
 export function Clients() {
+  const auth = useAuth();
   const [selected, setSelected] = useState<Entity>();
   const [form, setForm] = useState<'edit' | 'call'>();
   const [importing, setImporting] = useState(false);
@@ -31,6 +33,7 @@ export function Clients() {
         endpoint="/counterparties"
         fields={clientFields}
         createLabel="Добавить контрагента"
+        canCreate={auth.can('clients.write')}
         refreshKey={revision}
         columns={[
           {
@@ -58,14 +61,18 @@ export function Clients() {
         <Modal title={String(selected.name)} wide onClose={() => setSelected(undefined)}>
           <div className="form-body">
             <div className="inline-actions">
-              <Button variant="secondary" onClick={() => setForm('edit')}>
-                <Pencil size={15} />
-                Редактировать
-              </Button>
-              <Button onClick={() => setForm('call')}>
-                <Phone size={15} />
-                Записать звонок
-              </Button>
+              {auth.can('clients.write') && (
+                <Button variant="secondary" onClick={() => setForm('edit')}>
+                  <Pencil size={15} />
+                  Редактировать
+                </Button>
+              )}
+              {auth.can('calls.write') && auth.can('clients.write') && (
+                <Button onClick={() => setForm('call')}>
+                  <Phone size={15} />
+                  Записать звонок
+                </Button>
+              )}
               <Link
                 className="button secondary"
                 to={`/requests?client_id=${selected.id}`}
@@ -88,6 +95,7 @@ export function Clients() {
               endpoint={`/counterparties/${selected.id}/contacts`}
               fields={contactFields}
               createLabel="Добавить контакт"
+              canCreate={auth.can('clients.write')}
               columns={[
                 { key: 'name', label: 'Имя' },
                 { key: 'position', label: 'Должность' },
@@ -137,6 +145,7 @@ export function Clients() {
   );
 }
 export function Calls() {
+  const auth = useAuth();
   const [selected, setSelected] = useState<Entity>();
   return (
     <>
@@ -149,6 +158,7 @@ export function Calls() {
         endpoint="/calls"
         fields={callFields}
         createLabel="Записать звонок"
+        canCreate={auth.can('calls.write') && auth.can('clients.write')}
         onSelect={setSelected}
         columns={[
           {
