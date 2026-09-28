@@ -73,10 +73,12 @@ export function RequestDocuments({ requestId }: { requestId: string }) {
   return (
     <>
       <div className="tab-actions">
-        <Button onClick={() => setAction('proposal')}>
+        <Button disabled={!auth.can('documents.write')} title={!auth.can('documents.write') ? 'Для выпуска КП нужно право «Выпуск документов»' : undefined}
+          onClick={() => setAction('proposal')}>
           <Plus size={16} />
           Выпустить КП
         </Button>
+        {!auth.can('documents.write') && <span className="muted">Для выпуска КП администратор должен выдать право «Выпуск документов».</span>}
       </div>
       <ErrorBox error={error} />
       <Collection

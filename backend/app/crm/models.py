@@ -87,6 +87,7 @@ class Request(Entity):
     title: Mapped[str] = mapped_column(String(250), index=True)
     client_id: Mapped[str] = mapped_column(ForeignKey('counterparties.id'), index=True)
     seller_id: Mapped[str | None] = mapped_column(ForeignKey('sellers.id'))
+    wave_id: Mapped[str | None] = mapped_column(ForeignKey('waves.id'), index=True)
     contact_id: Mapped[str | None] = mapped_column(ForeignKey('contacts.id'))
     source_call_id: Mapped[str | None] = mapped_column(ForeignKey('calls.id'))
     owner_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)

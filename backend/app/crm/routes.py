@@ -1061,6 +1061,8 @@ def create_quote_sheet(
                 currency_id = candidate.currency_id
             unit_price = item.unit_price if item.unit_price is not None else candidate.unit_price
             delivery_days = item.delivery_days if item.delivery_days is not None else (candidate.delivery_days if candidate else None)
+            if delivery_days is None:
+                raise DomainError('DELIVERY_DAYS_REQUIRED', 'Укажите срок поставки в днях', 422, 'delivery_days')
             row = QuoteItem(
                 quote_id=sheet.id, supplier_id=body.supplier_id, nomenclature_id=item.nomenclature_id,
                 packing_id=item.packing_id, quantity=item.quantity, unit_price=unit_price,

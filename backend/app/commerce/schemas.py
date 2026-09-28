@@ -114,7 +114,9 @@ class ProfileDefinition(Input):
     day_basis: Annotated[int, Field(ge=1, le=366)] = 365
     financing_start_event: Literal["delivery", "shipment", "invoice"] = "delivery"
     default_markup_coefficient: Positive = Decimal("1.5")
+    default_bonus_coefficient: Positive = Decimal("1")
     default_expenses: list[dict] = Field(default_factory=list, max_length=30)
+    exchange_rates: list[dict] = Field(default_factory=list, max_length=30)
     funding_ratio: Annotated[Decimal, Field(ge=0, le=1, decimal_places=8)] = Decimal("1")
     require_same_sale_currency: bool = False
     allow_partial_acceptance: bool = True
@@ -157,6 +159,7 @@ class Selection(Input):
     quantity: Positive | None = None
     unit: Literal["g", "kg", "mg", "l", "ml", "pcs"] | None = None
     markup_coefficient: Positive | None = None
+    bonus_coefficient: Positive | None = None
     weight: Nonnegative | None = None
     mass: Nonnegative | None = None
     volume: Nonnegative | None = None
@@ -233,11 +236,16 @@ class CalculationIn(Command):
     profile_id: str
     selections: list[Selection] = Field(min_length=1, max_length=100)
     rates: list[Rate] = Field(default_factory=list)
-    expenses: list[Expense] = Field(default_factory=list, max_length=30)
+    expenses: list[Expense] | None = Field(default=None, max_length=30)
     internal_adjustment: dict = Field(default_factory=dict)
     payment_terms: dict = Field(default_factory=dict)
     previous_id: str | None = None
     reason: str = ""
+
+
+class RequestWaveIn(Command):
+    request_version: int = Field(ge=1)
+    wave_id: str | None = None
 
 
 class ProposalIn(Command):
@@ -308,7 +316,8 @@ class DecisionIn(VersionCommand):
 
 
 class WaveIn(Command):
-    number: str = Field(min_length=1, max_length=80)
+    number: str = Field(default="", max_length=80)
+    supplier_id: str | None = None
     route: str = Field(min_length=1, max_length=300)
     origin_country: str = Field(min_length=1, max_length=100)
     owner_id: str

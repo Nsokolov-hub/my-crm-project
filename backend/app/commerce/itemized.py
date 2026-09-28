@@ -62,6 +62,9 @@ def validate_itemized_profile(profile: dict) -> None:
         error("DAY_BASIS", "Укажите число дней в финансовом году от 1 до 366")
     if dec(profile.get("default_markup_coefficient", "1.5")) < 1:
         error("MARKUP", "Коэффициент наценки должен быть не меньше 1")
+    if dec(profile.get("default_bonus_coefficient", "1")) < 1:
+        error("BONUS", "Коэффициент бонуса должен быть не меньше 1")
+    _rate_map(profile.get("exchange_rates") or [], [])
     rules = profile.get("customs_rules") or []
     if not rules:
         error("CUSTOMS_RULE_REQUIRED", "Настройте таможенные правила по товарным группам", field="customs_rules")
@@ -151,19 +154,24 @@ def calculate_itemized(
     rates: list[dict],
     internal_adjustment: dict | None = None,
     payment_terms: dict | None = None,
+    wave_existing_quantity: Decimal = Decimal("0"),
 ) -> dict:
     with localcontext() as context:
         context.prec = 48
-        return _calculate_itemized(profile, selections, expenses, rates, internal_adjustment or {}, payment_terms or {})
+        return _calculate_itemized(profile, selections, expenses, rates, internal_adjustment or {},
+                                   payment_terms or {}, wave_existing_quantity)
 
 
-def _calculate_itemized(profile, selections, expenses, rates, internal_adjustment, payment_terms):
+def _calculate_itemized(profile, selections, expenses, rates, internal_adjustment, payment_terms, wave_existing_quantity):
     validate_itemized_profile(profile)
     rounding = profile.get("rounding", "half_up")
     if rounding not in ROUNDING:
         error("ROUNDING", "Неизвестное правило округления")
     if not selections:
         error("SELECTION_REQUIRED", "Выберите хотя бы одну позицию квоты", field="selections")
+    wave_existing_quantity = dec(wave_existing_quantity)
+    if wave_existing_quantity < 0:
+        error("WAVE_QUANTITY", "Количество в волне не может быть отрицательным")
     ids = [selection["quote_item"]["id"] for selection in selections]
     if len(ids) != len(set(ids)):
         error("DUPLICATE_SELECTION", "Позиция квоты выбрана повторно", field="selections")
@@ -180,12 +188,16 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         if quantity <= 0 or price < 0:
             error("QUOTE_PRICE", f"Проверьте цену и количество позиции {name} {packing}", field=f"selections.{index}")
         coefficient = dec(selection.get("markup_coefficient") or profile.get("default_markup_coefficient", "1.5"))
+        bonus_coefficient = dec(selection.get("bonus_coefficient") or profile.get("default_bonus_coefficient", "1"))
         if coefficient < 1:
             error("MARKUP", f"Наценка позиции {name} {packing} должна быть не меньше 1", field=f"selections.{index}.markup_coefficient")
+        if bonus_coefficient < 1:
+            error("BONUS", f"Бонус позиции {name} {packing} должен быть не меньше 1", field=f"selections.{index}.bonus_coefficient")
         foreign = price * quantity
         rows.append({
             "id": quote["id"], "source": selection, "quantity": quantity, "weight": dec(selection.get("weight") or "0"),
             "currency": currency, "group": group, "markup_coefficient": coefficient,
+            "bonus_coefficient": bonus_coefficient,
             "purchase_foreign": foreign, "exchange_rate": fx[currency],
             "purchase_rub": _money(foreign * fx[currency], rounding),
             "international_logistics": Decimal("0"), "general_expenses": Decimal("0"),
@@ -195,6 +207,16 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         })
 
     allocations = []
+    selected_quantity = sum(row["quantity"] for row in rows)
+    wave_total_quantity = selected_quantity + wave_existing_quantity
+
+    def shared_by_quantity(amount: Decimal) -> tuple[dict[str, Decimal], Decimal]:
+        bases = {row["id"]: row["quantity"] for row in rows}
+        if wave_existing_quantity:
+            bases["__wave_existing__"] = wave_existing_quantity
+        parts = distribute(amount, bases, Decimal("0.01"), rounding)
+        return ({row["id"]: parts[row["id"]] for row in rows},
+                parts.get("__wave_existing__", Decimal("0")))
 
     def expense_basis(kind):
         if kind == "PURCHASE":
@@ -226,7 +248,11 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         if amount < 0:
             error("EXPENSE_AMOUNT", f"Расход {name} не может быть отрицательным", field="expenses")
         method = expense.get("method", "BY_QUANTITY")
-        parts = _allocation(amount, rows, method, expense.get("manual") or {}, rounding)
+        if method == "BY_QUANTITY" and kind in ("FIXED", "BRACKET", "MANUAL"):
+            parts, existing_share = shared_by_quantity(amount)
+        else:
+            parts = _allocation(amount, rows, method, expense.get("manual") or {}, rounding)
+            existing_share = Decimal("0")
         stage = expense.get("stage", "GENERAL")
         for row in rows:
             part = parts[row["id"]]
@@ -240,6 +266,8 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "name": name, "calculation_type": kind, "method": method,
             "stage": stage, "amount": _string(amount),
             "currency": currency, "parts": {key: _string(value) for key, value in parts.items()},
+            "existing_wave_share": _string(existing_share),
+            "wave_total_quantity": _string(wave_total_quantity),
             "basis": expense.get("basis", ""), "percent_base": expense.get("percent_base"),
         })
 
@@ -265,13 +293,12 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             for row in group_rows:
                 row["duty"] = _money(row["customs_base"] * value / 100, rounding)
         elif rule["type"] == "FIXED_GROUP":
-            amount = _money(value, rounding)
-            parts = _allocation(amount, group_rows, "BY_QUANTITY", {}, rounding)
             for row in group_rows:
-                row["duty"] = parts[row["id"]]
+                # The configured amount is charged for every column, not once per group.
+                row["duty"] = _money(value * row["quantity"], rounding)
     customs_basis = sum(row["customs_base"] for row in rows)
     fee = _money(_bracket_amount(profile["customs_fee_brackets"], customs_basis, field="customs_fee_brackets"), rounding)
-    fee_parts = _allocation(fee, rows, "BY_QUANTITY", {}, rounding)
+    fee_parts, existing_fee_share = shared_by_quantity(fee)
     for row in rows:
         row["customs_fee"] = fee_parts[row["id"]]
     for expense in expenses:
@@ -316,17 +343,17 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         financed_amount = _money(cost_before_financing * deferred / 100, rounding)
         financing_cost = _money(financed_amount * annual_rate * Decimal(days) / day_basis, rounding)
         cost_before_adjustment = cost_before_financing + financing_cost
-        internal_bonus = Decimal("0")
+        internal_bonus = _money(cost_before_adjustment * (row["bonus_coefficient"] - 1), rounding)
         service_fee = Decimal("0")
         if adjustment_enabled:
             if adjustment_type == "PERCENTAGE":
-                internal_bonus = _money(cost_before_adjustment * adjustment_value / 100, rounding)
+                internal_bonus += _money(cost_before_adjustment * adjustment_value / 100, rounding)
             elif adjustment_type == "MULTIPLIER":
                 if adjustment_value < 1:
                     error("INTERNAL_ADJUSTMENT", "Внутренний множитель должен быть не меньше 1", field="internal_adjustment")
-                internal_bonus = _money(cost_before_adjustment * (adjustment_value - 1), rounding)
+                internal_bonus += _money(cost_before_adjustment * (adjustment_value - 1), rounding)
             else:
-                internal_bonus = fixed_adjustment[row["id"]]
+                internal_bonus += fixed_adjustment[row["id"]]
             service_fee = _money(cost_before_adjustment * service_percent / 100, rounding)
         cost = cost_before_adjustment + internal_bonus + service_fee
         sale_net = _money(cost * row["markup_coefficient"], rounding)
@@ -345,6 +372,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "import_vat": incoming_vat, "cost_before_financing": cost_before_financing,
             "financed_amount": financed_amount, "financing_cost": financing_cost,
             "cost_before_adjustment": cost_before_adjustment, "internal_bonus": internal_bonus,
+            "bonus_coefficient": row["bonus_coefficient"],
             "service_fee": service_fee, "cost": cost, "markup_coefficient": row["markup_coefficient"],
             "markup_amount": sale_net - cost, "sale_net": sale_net, "sale_tax": sale_tax,
             "sale_total": sale_total, "profit": profit, "vat_payable": vat_payable,
@@ -395,6 +423,11 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     return {
         "lines": output, "totals": totals, "currency": "RUB", "management_currency": "RUB",
         "expense_allocations": allocations, "rates": rates, "profile": profile,
+        "wave_distribution": {"existing_quantity": _string(wave_existing_quantity),
+                              "selected_quantity": _string(selected_quantity),
+                              "total_quantity": _string(wave_total_quantity),
+                              "existing_customs_fee_share": _string(existing_fee_share),
+                              "customs_fee": _string(fee)},
         "internal_adjustment": internal_adjustment,
         "payment_terms": {**payment_terms, "deferred_start_event": start_event},
         "algorithm_version": "itemized-v2",
@@ -409,6 +442,7 @@ def itemized_profile() -> dict:
         "vat_rate": "22", "vat_deduction_mode": True,
         "financing_annual_rate": "0", "day_basis": 365, "financing_start_event": "delivery",
         "default_markup_coefficient": "1.5",
+        "default_bonus_coefficient": "1",
         "default_expenses": [],
         "customs_rules": [
             {"product_group_slug": "reference_standards", "type": "PERCENTAGE", "value": "5"},

@@ -14,6 +14,10 @@ type ProfileExpense = {
   stage: string; calculation_type: string; percent_base: string | null; brackets: Record<string, unknown>[];
   include_in_cost: boolean; include_in_cash: boolean;
 };
+type ProfileRate = {
+  currency: string; management_per_unit: string; quoted_units: string;
+  date: string; source: string; reason: string;
+};
 type ItemizedDefinition = {
   methodology: 'itemized_v2';
   management_currency: 'RUB';
@@ -27,7 +31,9 @@ type ItemizedDefinition = {
   day_basis: number;
   financing_start_event: 'delivery' | 'shipment' | 'invoice';
   default_markup_coefficient: string;
+  default_bonus_coefficient: string;
   default_expenses: ProfileExpense[];
+  exchange_rates: ProfileRate[];
   customs_rules: CustomsRule[];
   customs_fee_brackets: FeeBracket[];
   tax_category: string;
@@ -71,6 +77,7 @@ export function ItemizedProfileEditor({
     customs_rules: Array.isArray(raw.customs_rules) ? raw.customs_rules : [],
     customs_fee_brackets: Array.isArray(raw.customs_fee_brackets) ? raw.customs_fee_brackets : [],
     default_expenses: Array.isArray(raw.default_expenses) ? raw.default_expenses : [],
+    exchange_rates: Array.isArray(raw.exchange_rates) ? raw.exchange_rates : [],
   };
   return <ItemizedProfileForm initial={initial} startingDefinition={definition} hiddenRules={hiddenRules} onClose={onClose} onSuccess={onSuccess} />;
 }
@@ -144,6 +151,9 @@ function ItemizedProfileForm({
       return 'База дней должна быть целым числом от 1 до 366.';
     if (!decimal.test(definition.default_markup_coefficient) || Number(definition.default_markup_coefficient.replace(',', '.')) <= 0)
       return 'Наценка должна быть положительным коэффициентом.';
+    if (!decimal.test(definition.default_bonus_coefficient || '1') ||
+      Number((definition.default_bonus_coefficient || '1').replace(',', '.')) < 1)
+      return 'Бонус должен быть коэффициентом не меньше 1.';
     const slugs = definition.customs_rules.map((row) => row.product_group_slug);
     if (new Set(slugs).size !== slugs.length || slugs.some((slug) => !slug)) return 'Проверьте уникальность товарных групп.';
     if (definition.customs_rules.some((row) => !decimal.test(row.value))) return 'Проверьте значения таможенных правил.';
@@ -156,6 +166,11 @@ function ItemizedProfileForm({
     if (!definition.template.title.trim()) return 'Укажите название коммерческого предложения.';
     if (definition.default_expenses.some((row) => !row.name.trim() || !decimal.test(row.amount)))
       return 'Проверьте начальные расходы профиля.';
+    if (new Set(definition.exchange_rates.map((row) => row.currency)).size !== definition.exchange_rates.length ||
+      definition.exchange_rates.some((row) => !/^[A-Z]{3}$/.test(row.currency) || row.currency === 'RUB' ||
+        !decimal.test(row.management_per_unit) || Number(row.management_per_unit.replace(',', '.')) <= 0 ||
+        !decimal.test(row.quoted_units) || Number(row.quoted_units.replace(',', '.')) <= 0 ||
+        !row.date || !row.source.trim())) return 'Проверьте курсы валют, даты и источники.';
     if (!confirmed) return 'Подтвердите проверку ставок и правил для вашей компании.';
     return '';
   }
@@ -173,12 +188,17 @@ function ItemizedProfileForm({
           vat_rate: definition.vat_rate.replace(',', '.'),
           financing_annual_rate: definition.financing_annual_rate.replace(',', '.'),
           default_markup_coefficient: definition.default_markup_coefficient.replace(',', '.'),
+          default_bonus_coefficient: (definition.default_bonus_coefficient || '1').replace(',', '.'),
           customs_rules: definition.customs_rules.map((row) => ({ ...row, value: row.value.replace(',', '.') })),
           customs_fee_brackets: definition.customs_fee_brackets.map((row) => ({
             from_amount: row.from_amount.replace(',', '.'), to_amount: row.to_amount ? row.to_amount.replace(',', '.') : null,
             fee: row.fee.replace(',', '.'), valid_from: row.valid_from || null, valid_to: row.valid_to || null,
           })),
           default_expenses: definition.default_expenses.map((row) => ({ ...row, amount: row.amount.replace(',', '.') })),
+          exchange_rates: definition.exchange_rates.map((row) => ({ ...row,
+            management_per_unit: row.management_per_unit.replace(',', '.'),
+            quoted_units: row.quoted_units.replace(',', '.'),
+          })),
         },
       };
       const result = await operation.run<Entity>('/profiles', body, 'POST', true);
@@ -210,9 +230,25 @@ function ItemizedProfileForm({
             <label className="field">База дней<input type="number" min={1} max={366} value={definition.day_basis} onChange={(event) => update({ day_basis: Number(event.target.value) })} /></label>
             <label className="field">Событие начала отсрочки<select value={definition.financing_start_event} onChange={(event) => update({ financing_start_event: event.target.value as ItemizedDefinition['financing_start_event'] })}><option value="delivery">Поставка</option><option value="shipment">Отгрузка</option><option value="invoice">Счёт</option></select></label>
             <label className="field">Наценка по умолчанию, коэффициент<input inputMode="decimal" value={definition.default_markup_coefficient} onChange={(event) => update({ default_markup_coefficient: event.target.value })} /></label>
+            <label className="field">Бонус по умолчанию, коэффициент<input inputMode="decimal" value={definition.default_bonus_coefficient || '1'} onChange={(event) => update({ default_bonus_coefficient: event.target.value })} /></label>
             <label className="field">Округление<select value={definition.rounding} onChange={(event) => update({ rounding: event.target.value as ItemizedDefinition['rounding'] })}><option value="half_up">0,5 в большую сторону</option><option value="half_even">К ближайшему чётному</option><option value="down">Вниз</option></select></label>
             <label className="profile-confirmation wide"><input type="checkbox" checked={definition.vat_deduction_mode} onChange={(event) => update({ vat_deduction_mode: event.target.checked })} />Учитывать вычет входного НДС</label>
           </div>
+        </section>
+        <section className="profile-section">
+          <h3>Курсы закупочных валют к рублю</h3>
+          <p>Курсы сохраняются в версии профиля. Новый расчёт автоматически зафиксирует их снимок.</p>
+          <div className="itemized-rule-list">
+            {definition.exchange_rates.map((rate, index) => <div className="itemized-rule" key={index}>
+              <label className="field">Валюта<input maxLength={3} value={rate.currency} onChange={(event) => update({ exchange_rates: definition.exchange_rates.map((row, n) => n === index ? { ...row, currency: event.target.value.toUpperCase() } : row) })} /></label>
+              <label className="field">Курс, ₽<input inputMode="decimal" value={rate.management_per_unit} onChange={(event) => update({ exchange_rates: definition.exchange_rates.map((row, n) => n === index ? { ...row, management_per_unit: event.target.value } : row) })} /></label>
+              <label className="field">За единиц<input inputMode="decimal" value={rate.quoted_units} onChange={(event) => update({ exchange_rates: definition.exchange_rates.map((row, n) => n === index ? { ...row, quoted_units: event.target.value } : row) })} /></label>
+              <label className="field">Дата<input type="date" value={rate.date} onChange={(event) => update({ exchange_rates: definition.exchange_rates.map((row, n) => n === index ? { ...row, date: event.target.value } : row) })} /></label>
+              <label className="field">Источник<input value={rate.source} onChange={(event) => update({ exchange_rates: definition.exchange_rates.map((row, n) => n === index ? { ...row, source: event.target.value } : row) })} /></label>
+              <Button type="button" variant="ghost" onClick={() => update({ exchange_rates: definition.exchange_rates.filter((_, n) => n !== index) })}>Удалить</Button>
+            </div>)}
+          </div>
+          <Button type="button" variant="secondary" onClick={() => update({ exchange_rates: [...definition.exchange_rates, { currency: '', management_per_unit: '', quoted_units: '1', date: today(), source: '', reason: 'Профиль расчёта' }] })}>+ Добавить курс</Button>
         </section>
         <section className="profile-section">
           <h3>Таможенные правила по группам</h3>

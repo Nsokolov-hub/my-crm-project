@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.core.errors import error
 from app.core.security import can, check_request, has_request_permission, require_permission
@@ -24,9 +24,18 @@ from app.crm.models import (
 
 from .calculator import calculate, digest, example_profile, validate_profile
 from .itemized import calculate_itemized, itemized_profile
-from .models import Calculation, CalculationProfile, ExpenseType, Product, Quote
+from .models import (
+    Calculation,
+    CalculationProfile,
+    Execution,
+    ExpenseType,
+    Product,
+    Quote,
+    Wave,
+    WaveAllocation,
+)
 from .procurement import DB, Actor, check_quote, product_view, validate_quantity
-from .schemas import CalculationIn, Expense, ExpenseTypeIn, ExpenseTypePatch, ProfileIn
+from .schemas import CalculationIn, Expense, ExpenseTypeIn, ExpenseTypePatch, ProfileIn, Rate, RequestWaveIn
 
 router = APIRouter(tags=["Расчёты и настраиваемые профили"])
 
@@ -37,8 +46,10 @@ def filter_profile_definition(definition: dict, *, purchase: bool, reward: bool,
         definition.pop("reward_enabled", None)
         definition.pop("reward_label", None)
         definition.pop("reward_basis", None)
+        definition.pop("default_bonus_coefficient", None)
     if not purchase:
         definition.pop("default_expenses", None)
+        definition.pop("exchange_rates", None)
     # Profile variables and formulas are user-defined: their names do not identify
     # the financial information they contain or can be used to reconstruct.
     if not (purchase and reward and profit):
@@ -93,7 +104,7 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
                     allowed.add("purchase")
                     allowed.update(("purchase_foreign", "exchange_rate", "purchase_rub"))
                 if can_reward:
-                    allowed.update(("reward", "manager_bonus", "internal_bonus", "service_fee"))
+                    allowed.update(("reward", "manager_bonus", "internal_bonus", "bonus_coefficient", "service_fee"))
                 if can_profit:
                     allowed.update(("cost", "profit", "margin", "markup_amount", "profitability_percent"))
                 line["detail"] = {key: value for key, value in line["detail"].items() if key in allowed}
@@ -122,6 +133,7 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
         snapshot.pop("expense_allocations", None)
         snapshot.pop("rates", None)
         snapshot.pop("payment_terms", None)
+        snapshot.pop("wave_distribution", None)
     if not can_reward:
         snapshot.pop("internal_adjustment", None)
 
@@ -248,6 +260,8 @@ def itemized_selection(db, request_id: str, selection, index: int) -> dict:
         error("QUOTE_ITEM_NOT_FOUND", "Позиция квоты не относится к этой заявке", 404, f"selections.{index}.quote_item_id")
     if quote.valid_until.replace(tzinfo=quote.valid_until.tzinfo or timezone.utc) <= datetime.now(timezone.utc):
         error("QUOTE_EXPIRED", "Срок действия выбранной позиции квоты истёк", field=f"selections.{index}.quote_item_id")
+    if quote.delivery_days is None:
+        error("DELIVERY_DAYS_REQUIRED", "Закупщик должен указать срок поставки в квоте", field=f"selections.{index}.quote_item_id")
     nomenclature = db.get(Nomenclature, quote.nomenclature_id)
     packing = db.get(Packing, quote.packing_id)
     currency = db.get(Currency, quote.currency_id)
@@ -265,6 +279,7 @@ def itemized_selection(db, request_id: str, selection, index: int) -> dict:
         "product_group": serialize(group),
         "currency_code": currency.code,
         "markup_coefficient": str(selection.markup_coefficient) if selection.markup_coefficient is not None else None,
+        "bonus_coefficient": str(selection.bonus_coefficient) if selection.bonus_coefficient is not None else None,
         "weight": str(selection.weight) if selection.weight is not None else None,
     }
 
@@ -285,26 +300,53 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         )
     itemized = profile.definition.get("methodology") == "itemized_v2"
     if itemized:
-        if data.internal_adjustment:
+        if data.internal_adjustment or any(selection.bonus_coefficient is not None
+                                           for selection in data.selections):
             require_permission(db, user, "finance.reward.read", request_id)
         if not all(selection.quote_item_id for selection in data.selections):
             error("QUOTE_ITEM_REQUIRED", "Для выбранной методики используйте позиции табличной квоты", field="selections")
         country = db.get(Country, profile.definition.get("import_country_id"))
         if not country or not country.active:
             error("IMPORT_COUNTRY_REQUIRED", "Выберите действующую страну ввоза из справочника", field="profile_id")
-        for index, rate in enumerate(data.rates):
-            currency = db.scalar(select(Currency).where(Currency.code == rate.currency))
+        try:
+            profile_rates = [Rate.model_validate(rate).model_dump(mode="json") for rate in profile.definition.get("exchange_rates", [])]
+        except ValidationError:
+            error("PROFILE_RATES_INVALID", "Проверьте курсы в профиле расчёта", field="profile_id")
+        rates = [rate.model_dump(mode="json") for rate in data.rates] or profile_rates
+        for index, rate in enumerate(rates):
+            currency = db.scalar(select(Currency).where(Currency.code == rate["currency"]))
             if not currency or not currency.active:
-                error("CURRENCY_REQUIRED", f"Валюта курса {rate.currency} не найдена в справочнике", field=f"rates.{index}.currency")
+                error("CURRENCY_REQUIRED", f"Валюта курса {rate['currency']} не найдена в справочнике", field=f"rates.{index}.currency")
         selections = [itemized_selection(db, request_id, selection, index) for index, selection in enumerate(data.selections)]
+        if not req.wave_id:
+            error("WAVE_REQUIRED", "Руководитель должен назначить волну поставки до расчёта", field="wave_id")
+        wave = db.get(Wave, req.wave_id)
+        suppliers = {row["quote_item"]["supplier_id"] for row in selections}
+        if not wave or suppliers != {wave.supplier_id}:
+            error("WAVE_SUPPLIER", "Выбранная волна должна быть открыта и относиться к поставщику всех позиций", field="wave_id")
+        advisory(db, f"wave:{wave.id}")
+        wave = lock(db, Wave, wave.id)
+        if wave.status not in ("planned", "assembling"):
+            error("WAVE_CLOSED", "Для расчёта выберите открытую волну поставки", field="wave_id")
+        selected_quote_ids = [row["quote_item"]["id"] for row in selections]
+        existing_quantity = db.scalar(
+            select(func.coalesce(func.sum(WaveAllocation.quantity), 0))
+            .join(Execution, Execution.id == WaveAllocation.execution_id)
+            .where(WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True),
+                   or_(Execution.quote_item_id.is_(None), Execution.quote_item_id.not_in(selected_quote_ids)))
+        )
         snapshot = calculate_itemized(
             profile.definition,
             selections,
-            [expense.model_dump(mode="json") for expense in data.expenses],
-            [{**rate.model_dump(mode="json"), "author_id": user.id} for rate in data.rates],
+            ([expense.model_dump(mode="json") for expense in data.expenses]
+             if data.expenses is not None else profile.definition.get("default_expenses", [])),
+            [{**rate, "author_id": user.id} for rate in rates],
             data.internal_adjustment,
             data.payment_terms,
+            wave_existing_quantity=existing_quantity,
         )
+        snapshot["wave"] = {"id": wave.id, "number": wave.number, "supplier_id": wave.supplier_id,
+                            "existing_quantity": str(existing_quantity)}
         snapshot["request_number"] = req.number
         snapshot["source_type"] = "QUOTE" if len({row["quote_item"]["quote_id"] for row in selections}) == 1 else "REQUEST"
         snapshot["source_id"] = selections[0]["quote_item"]["quote_id"] if snapshot["source_type"] == "QUOTE" else request_id
@@ -342,7 +384,7 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
     snapshot = calculate(
         profile.definition,
         selections,
-        [expense.model_dump(mode="json") for expense in data.expenses],
+        [expense.model_dump(mode="json") for expense in (data.expenses or [])],
         [{**rate.model_dump(mode="json"), "author_id": user.id} for rate in data.rates],
     )
     snapshot["input"] = data.model_dump(mode="json")
@@ -375,6 +417,29 @@ def sample_itemized_profile(db: DB, user: Actor):
     }
 
 
+@router.put("/requests/{request_id}/wave")
+def assign_request_wave(request_id: str, data: RequestWaveIn, db: DB, user: Actor):
+    require_permission(db, user, "waves.write", request_id)
+
+    def operation():
+        advisory(db, f"request-commerce:{request_id}")
+        req = lock(db, CRMRequest, request_id)
+        check_version(req, data.request_version)
+        wave = db.get(Wave, data.wave_id) if data.wave_id else None
+        if data.wave_id and (not wave or not wave.supplier_id or wave.status not in ("planned", "assembling")):
+            error("WAVE_REQUIRED", "Выберите открытую волну с указанным поставщиком", field="wave_id")
+        before = {"wave_id": req.wave_id}
+        req.wave_id = wave.id if wave else None
+        req.version += 1
+        db.flush()
+        audit(db, user, "request", req.id, "assign_wave", before=before,
+              after={"wave_id": req.wave_id}, reason="Планирование поставки")
+        return {"wave_id": req.wave_id, "version": req.version}
+
+    return idem(db, user, data.idempotency_key, f"assign-wave:{request_id}",
+                data.model_dump(mode="json"), operation)
+
+
 @router.get("/profiles")
 def list_profiles(db: DB, user: Actor):
     require_permission(db, user, "finance.calculations.read")
@@ -395,15 +460,19 @@ def create_profile(data: ProfileIn, db: DB, user: Actor):
 
     def operation():
         definition = data.definition.model_dump(mode="json")
-        validate_profile(definition)
         if definition.get("methodology") == "itemized_v2":
             try:
                 definition["default_expenses"] = [
                     Expense.model_validate(expense).model_dump(mode="json")
                     for expense in definition.get("default_expenses", [])
                 ]
+                definition["exchange_rates"] = [
+                    Rate.model_validate(rate).model_dump(mode="json")
+                    for rate in definition.get("exchange_rates", [])
+                ]
             except ValidationError:
-                error("DEFAULT_EXPENSES_INVALID", "Проверьте начальные расходы профиля", field="definition.default_expenses")
+                error("PROFILE_INPUTS_INVALID", "Проверьте расходы и курсы профиля", field="definition")
+        validate_profile(definition)
         if definition.get("methodology") == "itemized_v2":
             country = db.get(Country, definition["import_country_id"])
             if not country or not country.active:
