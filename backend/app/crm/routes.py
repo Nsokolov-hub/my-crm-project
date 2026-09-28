@@ -171,7 +171,7 @@ def require_supplier(db: Session, entity_id: str) -> Counterparty:
 
 def require_catalog_create(db: Session, user: User) -> None:
     if not any(can(db, user, permission) for permission in ('catalog.write', 'requests.write')):
-        raise DomainError('FORBIDDEN', 'Недостаточно прав для создания записи в справочнике', 403)
+        raise DomainError('FORBIDDEN', 'Недостаточно прав для изменения справочника', 403)
 
 
 def packing_name(value: Decimal, unit: str) -> str:
@@ -181,8 +181,17 @@ def packing_name(value: Decimal, unit: str) -> str:
     return f'{number} {unit}'
 
 
+def nomenclature_creator(db: Session, entity_id: str) -> str | None:
+    return db.scalar(select(AuditEvent.actor_id).where(
+        AuditEvent.entity_type == 'nomenclature',
+        AuditEvent.entity_id == entity_id,
+        AuditEvent.action == 'created',
+    ).order_by(AuditEvent.created_at, AuditEvent.id).limit(1))
+
+
 def nomenclature_view(db: Session, row: Nomenclature) -> dict[str, Any]:
     value = serialize(row)
+    value['created_by_id'] = nomenclature_creator(db, row.id)
     group = db.get(ProductGroup, row.product_group_id) if row.product_group_id else None
     value['product_group_name'] = group.name if group else None
     value['product_group_slug'] = group.slug if group else None
@@ -350,6 +359,7 @@ def create_nomenclature(body: NomenclatureInput, user: User = Depends(current_us
         ))
     db.flush()
     result = nomenclature_view(db, row)
+    result['created_by_id'] = user.id
     audit(db, user, 'nomenclature', row.id, 'created', after=result)
     return result
 
@@ -365,8 +375,11 @@ def nomenclature_detail(entity_id: str, user: User = Depends(current_user), db: 
 
 @router.patch('/nomenclatures/{entity_id}')
 def edit_nomenclature(entity_id: str, body: NomenclaturePatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
-    require_permission(db, user, 'catalog.write')
     row = lock(db, Nomenclature, entity_id)
+    if not can(db, user, 'catalog.write'):
+        require_permission(db, user, 'requests.write')
+        if nomenclature_creator(db, entity_id) != user.id:
+            raise DomainError('FORBIDDEN', 'Изменять эту номенклатуру может её создатель или сотрудник с правом ведения каталога', 403)
     check_version(row, body.version)
     before = nomenclature_view(db, row)
     data = body.model_dump(exclude_unset=True, exclude={'version'})

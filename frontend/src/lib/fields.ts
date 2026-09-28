@@ -163,18 +163,6 @@ export const callFields: Field[] = [
     help: 'Заполните при отказе клиента.',
   },
 ];
-export const productFields: Field[] = [
-  { name: 'name', label: 'Название вещества / товара', required: true, wide: true },
-  { name: 'cas', label: 'CAS-номер' },
-  { name: 'no_cas_reason', label: 'Причина отсутствия CAS' },
-  { name: 'manufacturer', label: 'Производитель', required: true },
-  { name: 'article', label: 'Артикул' },
-  { name: 'purity', label: 'Чистота / марка' },
-  { name: 'packaging', label: 'Фасовка' },
-  { name: 'unit', label: 'Базовая единица', type: 'select', options: units, required: true },
-  { name: 'package_quantity', label: 'Содержимое упаковки', type: 'decimal' },
-  { name: 'specification', label: 'Спецификация', type: 'json', value: {} },
-];
 export const paymentFields: Field[] = [
   { name: 'amount', label: 'Сумма поступления', type: 'decimal', required: true },
   { name: 'currency', label: 'Валюта (ISO)', required: true, placeholder: 'RUB' },

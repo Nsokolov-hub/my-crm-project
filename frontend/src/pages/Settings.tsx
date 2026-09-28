@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ShieldCheck } from 'lucide-react';
+import { Plus, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
+import { ExpenseTypeEditor } from '../components/ExpenseTypeEditor';
 import { FinancialProfileEditor } from '../components/FinancialProfileEditor';
 import { ItemizedProfileEditor } from '../components/ItemizedProfileEditor';
 import { RolePermissionsEditor, UserAccessEditor } from '../components/RolePermissionsEditor';
@@ -65,36 +66,17 @@ const userFields: Field[] = [
   { name: 'password', label: 'Начальный пароль', type: 'password', minLength: 12, required: true },
   { name: 'role_ids', label: 'Роли', type: 'multiselect', source: '/admin/roles' },
 ];
-const expenseTypeFields: Field[] = [
-  { name: 'name', label: 'Название расхода', required: true },
-  { name: 'calculation_type', label: 'Тип расчёта', type: 'select', required: true, value: 'FIXED', options: [
-    { value: 'FIXED', label: 'Фиксированная сумма' }, { value: 'PERCENTAGE', label: 'Процент' },
-    { value: 'BRACKET', label: 'По диапазону' }, { value: 'MANUAL', label: 'Ручной ввод' },
-  ] },
-  { name: 'default_value', label: 'Сумма или ставка по умолчанию', type: 'decimal', value: '0', required: true },
-  { name: 'currency_id', label: 'Валюта', type: 'select', source: '/currencies', labelKey: 'code', required: true,
-    create: { title: 'Новая валюта', endpoint: '/currencies', fields: [
-      { name: 'code', label: 'Код ISO 3', required: true, help: 'Три заглавные латинские буквы, например INR.' },
-      { name: 'name', label: 'Название', required: true },
-    ] },
-  },
-  { name: 'distribution_method', label: 'Распределение', type: 'select', value: 'BY_QUANTITY', required: true, options: [
-    { value: 'BY_QUANTITY', label: 'По количеству' }, { value: 'BY_PURCHASE_VALUE', label: 'По закупочной стоимости' },
-    { value: 'EQUALLY_BY_POSITION', label: 'Поровну по строкам' }, { value: 'BY_WEIGHT', label: 'По весу' },
-    { value: 'MANUAL', label: 'Вручную' },
-  ] },
-  { name: 'stage', label: 'Этап', type: 'select', value: 'GENERAL', required: true, options: [
-    { value: 'GENERAL', label: 'Общий расход' }, { value: 'INTERNATIONAL_LOGISTICS', label: 'Международная логистика' },
-  ] },
-  { name: 'percent_base', label: 'База процента или диапазона', type: 'select', options: [
-    { value: 'PURCHASE', label: 'Закупка' }, { value: 'CUSTOMS_BASE', label: 'Таможенная база' },
-    { value: 'DUTY', label: 'Пошлина' }, { value: 'COST', label: 'Себестоимость' },
-  ] },
-  { name: 'brackets', label: 'Диапазоны для типа «По диапазону»', type: 'json', value: [], wide: true,
-    help: 'Массив объектов: [{"from_amount":"0","to_amount":"500000","fee":"4997"}]' },
-  { name: 'include_in_cost', label: 'Включать в себестоимость', type: 'checkbox', value: true },
-  { name: 'include_in_cash', label: 'Включать в денежную потребность', type: 'checkbox', value: true },
-];
+const calculationLabels: Record<string, string> = {
+  FIXED: 'Фиксированная сумма', PERCENTAGE: 'Процент',
+  BRACKET: 'По диапазону', MANUAL: 'Ручной ввод',
+};
+const distributionLabels: Record<string, string> = {
+  BY_QUANTITY: 'По количеству', BY_PURCHASE_VALUE: 'По закупочной стоимости',
+  EQUALLY_BY_POSITION: 'Поровну по строкам', BY_WEIGHT: 'По весу', MANUAL: 'Вручную',
+};
+const baseLabels: Record<string, string> = {
+  PURCHASE: 'Закупка', CUSTOMS_BASE: 'Таможенная база', DUTY: 'Пошлина', COST: 'Себестоимость',
+};
 export function Settings() {
   const auth = useAuth();
   const [tab, setTab] = useState('organization');
@@ -102,6 +84,7 @@ export function Settings() {
   const [editing, setEditing] = useState(false);
   const [profileMode, setProfileMode] = useState<'itemized_v2' | 'legacy_formula'>('itemized_v2');
   const [expenseRevision, setExpenseRevision] = useState(0);
+  const [creatingExpense, setCreatingExpense] = useState(false);
   const [expenseType, setExpenseType] = useState<Entity>();
   const [revision, setRevision] = useState(0);
   const [error, setError] = useState<unknown>();
@@ -190,22 +173,22 @@ export function Settings() {
           <Collection
             title="Виды расходов"
             description="Создавайте статьи для профилей и расчётов. Суммы и способы распределения можно изменить для конкретной сделки."
-            endpoint="/expense-types" fields={expenseTypeFields} command
-            createLabel="Добавить вид расхода" canCreate={auth.can('profiles.write')}
-            refreshKey={expenseRevision} onSelect={auth.can('profiles.write') ? setExpenseType : undefined}
+            endpoint="/expense-types"
+            action={auth.can('profiles.write') ? <Button onClick={() => setCreatingExpense(true)}><Plus size={16} /> Добавить вид расхода</Button> : undefined}
+            refreshKey={expenseRevision} onSelect={setExpenseType}
             columns={[
               { key: 'name', label: 'Название' },
-              { key: 'calculation_type', label: 'Тип' },
+              { key: 'calculation_type', label: 'Тип', render: (row) => calculationLabels[String(row.calculation_type)] || String(row.calculation_type) },
               { key: 'default_value', label: 'По умолчанию' },
               { key: 'currency_code', label: 'Валюта' },
-              { key: 'distribution_method', label: 'Распределение' },
+              { key: 'distribution_method', label: 'Распределение', render: (row) => distributionLabels[String(row.distribution_method)] || String(row.distribution_method) },
             ]}
           />
           <Collection
             title="Отключённые виды расходов"
             endpoint="/expense-types?active=false" canCreate={false}
-            refreshKey={expenseRevision} onSelect={auth.can('profiles.write') ? setExpenseType : undefined}
-            columns={[{ key: 'name', label: 'Название' }, { key: 'calculation_type', label: 'Тип' }]}
+            refreshKey={expenseRevision} onSelect={setExpenseType}
+            columns={[{ key: 'name', label: 'Название' }, { key: 'calculation_type', label: 'Тип', render: (row) => calculationLabels[String(row.calculation_type)] || String(row.calculation_type) }]}
           />
           <Section
             title="Настраиваемая финансовая модель"
@@ -296,16 +279,40 @@ export function Settings() {
         </>
       )}
       {currentTab === 'profiles' && expenseType && <Section title="Вид расхода">
-        <div className="form-body"><p>{String(expenseType.name)} · {expenseType.active ? 'действует' : 'отключён'}</p>
+        <div className="form-body">
+          <DetailPairs values={{
+            Название: expenseType.name,
+            Состояние: expenseType.active ? 'Действует' : 'Отключён',
+            'Тип расчёта': calculationLabels[String(expenseType.calculation_type)] || expenseType.calculation_type,
+            'Значение по умолчанию': expenseType.default_value,
+            Валюта: expenseType.currency_code,
+            Распределение: distributionLabels[String(expenseType.distribution_method)] || expenseType.distribution_method,
+            Этап: expenseType.stage === 'INTERNATIONAL_LOGISTICS' ? 'Международная логистика' : 'Общий расход',
+            ...(expenseType.percent_base ? { 'База начисления': baseLabels[String(expenseType.percent_base)] || expenseType.percent_base } : {}),
+            'В себестоимости': expenseType.include_in_cost ? 'Да' : 'Нет',
+            'В денежной потребности': expenseType.include_in_cash ? 'Да' : 'Нет',
+          }} />
+          {Array.isArray(expenseType.brackets) && expenseType.brackets.length > 0 && <div className="expense-bracket-summary">
+            <strong>Диапазоны расходов</strong>
+            <ul>{(expenseType.brackets as Record<string, unknown>[]).map((range, index) => <li key={index}>
+              От {String(range.from_amount)} до {range.to_amount == null ? 'без верхней границы' : String(range.to_amount)} — {String(range.fee)} {String(expenseType.currency_code || '')}
+              {range.valid_from ? ` · с ${String(range.valid_from)}` : null}
+              {range.valid_to ? ` по ${String(range.valid_to)}` : null}
+            </li>)}</ul>
+          </div>}
           <div className="inline-actions"><Button variant="secondary" onClick={() => setExpenseType(undefined)}>Закрыть</Button>
-            <Button variant="secondary" onClick={() => {
+            {auth.can('profiles.write') && <Button variant="secondary" onClick={() => {
               void command.run(`/expense-types/${expenseType.id}`, { version: expenseType.version, active: !expenseType.active }, 'PATCH')
                 .then(() => { setExpenseType(undefined); setExpenseRevision((value) => value + 1); })
                 .catch(setError);
-            }}>{expenseType.active ? 'Отключить' : 'Включить'}</Button>
+            }}>{expenseType.active ? 'Отключить' : 'Включить'}</Button>}
           </div>
         </div>
       </Section>}
+      {currentTab === 'profiles' && creatingExpense && <ExpenseTypeEditor
+        onClose={() => setCreatingExpense(false)}
+        onSuccess={() => { setCreatingExpense(false); setExpenseRevision((value) => value + 1); }}
+      />}
       {currentTab === 'settings' && <WorkingRulesEditor />}
       {currentTab === 'audit' && (
         <Collection

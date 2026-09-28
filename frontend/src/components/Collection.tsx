@@ -1,5 +1,6 @@
 import { Bookmark, Plus, Search } from 'lucide-react';
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { useApi, useDebounced } from '../lib/hooks';
 import type { Column, Entity, Field, Page } from '../lib/types';
 import { RecordForm } from './Form';
@@ -10,6 +11,7 @@ export type CollectionProps = {
   columns: Column[];
   fields?: Field[];
   createLabel?: string;
+  action?: ReactNode;
   extra?: Record<string, unknown>;
   command?: boolean;
   onSelect?: (row: Entity) => void;
@@ -32,6 +34,7 @@ export function Collection({
   columns,
   fields,
   createLabel = 'Добавить',
+  action,
   extra,
   command,
   onSelect,
@@ -104,12 +107,12 @@ export function Collection({
       title={title}
       description={description}
       action={
-        fields && canCreate ? (
+        action || (fields && canCreate ? (
           <Button onClick={() => setCreating(true)}>
             <Plus size={16} />
             {createLabel}
           </Button>
-        ) : undefined
+        ) : undefined)
       }
     >
       <div className="collection-toolbar">

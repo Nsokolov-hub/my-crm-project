@@ -730,6 +730,8 @@ tr:hover td {
   background: #fcfbff;
 }
 
+tr.clickable-row { cursor: pointer; }
+
 .row-link {
   background: none;
   border: 0;

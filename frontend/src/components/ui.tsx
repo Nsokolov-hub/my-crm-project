@@ -217,7 +217,13 @@ export function DataTable<T extends Entity>({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.id} className={rowClassName?.(row)}>
+            <tr
+              key={row.id}
+              className={[rowClassName?.(row), onRow ? 'clickable-row' : ''].filter(Boolean).join(' ')}
+              onClick={onRow ? (event) => {
+                if (!(event.target as HTMLElement).closest('button, a, input, select, textarea, [role="button"]')) onRow(row);
+              } : undefined}
+            >
               {columns.map((col, index) => (
                 <td key={col.key}>
                   {index === linkIndex && onRow ? (

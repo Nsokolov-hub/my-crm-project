@@ -278,7 +278,6 @@ const waveFields: Field[] = [
   { name: 'close_date', label: 'Закрытие для добавления', type: 'date', required: true },
   { name: 'departure_date', label: 'Плановая отправка', type: 'date', required: true },
   { name: 'arrival_date', label: 'Плановое прибытие', type: 'date', required: true },
-  { name: 'details', label: 'Дополнительные параметры', type: 'json', value: {} },
 ];
 export function Waves() {
   const [selected, setSelected] = useState<Entity>();

@@ -324,44 +324,48 @@ export function ChatRoom({ chat, onBack }: { chat: Entity; onBack?: () => void }
           maxLength={20000}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
-              e.currentTarget.form?.requestSubmit();
+              if (!operation.busy && (text.trim() || attached.length)) e.currentTarget.form?.requestSubmit();
             }
           }}
         />
-        <div>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Прикрепить файл"
-            onClick={() => setFilesOpen(true)}
-          >
-            <Paperclip size={19} />
-          </button>
-          <select
-            aria-label="Упомянуть участника"
-            value=""
-            onChange={(e) => {
-              setMentionIds((v) => [...new Set([...v, e.target.value])]);
-              setText(
-                (v) =>
-                  `${v}@${((chat.members || []) as Entity[]).find((m) => m.id === e.target.value)?.name} `,
-              );
-            }}
-          >
-            <option value="">@ Упомянуть</option>
-            {((chat.members || []) as Entity[]).map((m) => (
-              <option key={m.id} value={m.id}>
-                {String(m.name)}
-              </option>
-            ))}
-          </select>
-          <span>Ctrl + Enter</span>
-          <Button type="submit" disabled={!text.trim() && !attached.length} busy={operation.busy}>
-            <Send size={17} />
-            Отправить
-          </Button>
+        <div className="message-compose-actions">
+          <div className="message-compose-tools">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Прикрепить файл"
+              onClick={() => setFilesOpen(true)}
+            >
+              <Paperclip size={19} />
+            </button>
+            <select
+              aria-label="Упомянуть участника"
+              value=""
+              onChange={(e) => {
+                setMentionIds((v) => [...new Set([...v, e.target.value])]);
+                setText(
+                  (v) =>
+                    `${v}@${((chat.members || []) as Entity[]).find((m) => m.id === e.target.value)?.name} `,
+                );
+              }}
+            >
+              <option value="">@ Упомянуть</option>
+              {((chat.members || []) as Entity[]).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {String(m.name)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="message-compose-submit">
+            <span className="message-compose-hint">Enter — отправить · Shift + Enter — новая строка</span>
+            <Button type="submit" disabled={!text.trim() && !attached.length} busy={operation.busy}>
+              <Send size={17} />
+              Отправить
+            </Button>
+          </div>
         </div>
       </form>
       {filesOpen && (
