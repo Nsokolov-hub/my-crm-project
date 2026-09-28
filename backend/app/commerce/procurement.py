@@ -1,5 +1,5 @@
-from datetime import date
 import re
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -12,7 +12,8 @@ from app.core.errors import error
 from app.core.models import User
 from app.core.security import check_request, current_user, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
-from app.crm.models import Counterparty, Nomenclature, Packing, Request as CRMRequest, RequestItem
+from app.crm.models import Counterparty, Nomenclature, Packing, RequestItem
+from app.crm.models import Request as CRMRequest
 
 from .calculator import convert, dec, digest, validate_cas
 from .files import put_file, read_file, workbook
