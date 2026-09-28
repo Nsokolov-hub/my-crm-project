@@ -22,9 +22,10 @@ export const clientFields: Field[] = [
   {
     name: 'details',
     label: 'Реквизиты и дополнительные сведения',
-    type: 'json',
+    type: 'counterparty-details',
     value: {},
-    help: 'Юридический адрес, банковские реквизиты и другие согласованные поля.',
+    wide: true,
+    help: 'Заполните нужные реквизиты обычным текстом. Пустые поля можно оставить незаполненными.',
   },
 ];
 export const contactFields: Field[] = [

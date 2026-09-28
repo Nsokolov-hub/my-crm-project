@@ -33,7 +33,8 @@ export type Field = {
     | 'decimal'
     | 'number'
     | 'checkbox'
-    | 'json';
+    | 'json'
+    | 'counterparty-details';
   required?: boolean;
   placeholder?: string;
   help?: string;

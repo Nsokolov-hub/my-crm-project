@@ -127,6 +127,17 @@
   color: #808394;
 }
 
+.message-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+}
+
+.message-meta time {
+  color: #85899a;
+}
+
 .message-compose {
   padding: 16px 20px 20px;
   border-top: 1px solid #e9eaf0;

@@ -69,6 +69,11 @@ from app.crm.schemas import (
 
 router = APIRouter(tags=['CRM'])
 
+DEFAULT_CALL_RESULTS = (
+    'interested', 'not_interested', 'callback', 'no_answer', 'wrong_number',
+    'meeting_scheduled', 'request_received', 'rejected', 'invalid_contact',
+)
+
 
 @router.get('/dictionaries/{key}')
 def dictionary(key: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
@@ -81,7 +86,7 @@ def dictionary(key: str, user: User = Depends(current_user), db: Session = Depen
     value_key, permission = dictionaries[key]
     require_permission(db, user, permission)
     setting = db.scalar(select(AppSetting).where(AppSetting.key == key, AppSetting.status == 'published'))
-    if not setting:
+    if not setting and key != 'call_results':
         raise DomainError('SETUP_REQUIRED', 'Справочник не настроен. Обратитесь к администратору.', 409)
     labels = {
         'no_answer': 'Не дозвонились', 'callback': 'Перезвонить', 'interested': 'Есть интерес',
@@ -91,7 +96,7 @@ def dictionary(key: str, user: User = Depends(current_user), db: Session = Depen
         'went_to_competitor': 'Выбран конкурент', 'no_budget': 'Нет бюджета',
         'timing': 'Не подходят сроки', 'other': 'Другая причина',
     }
-    values = setting.value.get(value_key, [])
+    values = setting.value.get(value_key, []) if setting else DEFAULT_CALL_RESULTS
     items = [{'id': value, 'name': labels.get(value, value)} for value in values if isinstance(value, str)]
     return {'items': items, 'total': len(items)}
 
@@ -578,14 +583,10 @@ def edit_task(entity_id: str, body: TaskPatch, user: User = Depends(current_user
     return serialize(row)
 
 
-CALL_RESULTS = ['no_answer', 'callback', 'interested', 'request_received', 'rejected', 'invalid_contact']
-
-
 def valid_call(db: Session, result: str, next_at: Any, reason: str | None) -> None:
     setting = db.scalar(select(AppSetting).where(AppSetting.key == 'call_results', AppSetting.status == 'published'))
-    if not setting:
-        raise DomainError('SETUP_REQUIRED', 'Справочник результатов звонка не настроен. Заполните его в настройках организации.', 409)
-    if result not in setting.value.get('results', []):
+    allowed = setting.value.get('results', []) if setting else DEFAULT_CALL_RESULTS
+    if result not in allowed:
         raise DomainError('CALL_RESULT_INVALID', 'Выберите результат из справочника', 422, 'result')
     if result == 'callback' and not next_at:
         raise DomainError('NEXT_ACTION_REQUIRED', 'Для перезвона укажите дату следующего действия', 422, 'next_at')

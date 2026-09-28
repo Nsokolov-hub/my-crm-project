@@ -1,9 +1,11 @@
 """Daily workflow checks with real authentication and an isolated database."""
 
+from sqlalchemy import delete
 from test_crm import PASSWORD, login, post
 from test_crm import crm as crm
 
 from app import bootstrap
+from app.core.models import AppSetting
 from app.core.settings_registry import SETTING_META
 
 
@@ -71,3 +73,17 @@ def test_manager_call_form_uses_configured_results_and_cannot_read_other_setting
     assert "calls.write" not in permissions.json()["permissions"]
     login(crm, "manager@example.com")
     assert crm["client"].get("/api/v1/dictionaries/call_results").status_code == 403
+
+
+def test_calls_work_before_call_results_are_published(crm):
+    login(crm, "manager@example.com")
+    with crm["sessions"].begin() as db:
+        db.execute(delete(AppSetting).where(AppSetting.key == "call_results"))
+
+    options = crm["client"].get("/api/v1/dictionaries/call_results")
+    assert options.status_code == 200, options.text
+    assert {"id": "interested", "name": "Есть интерес"} in options.json()["items"]
+
+    client = post(crm, "/counterparties", {"name": "Клиент без настроек звонков"})
+    call = post(crm, "/calls", {"client_id": client["id"], "result": "interested"})
+    assert call["result"] == "interested"
