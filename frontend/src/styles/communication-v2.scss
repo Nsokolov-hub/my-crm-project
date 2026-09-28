@@ -127,6 +127,54 @@
   color: #808394;
 }
 
+.message-compose {
+  padding: 16px 20px 20px;
+  border-top: 1px solid #e9eaf0;
+}
+
+.message-compose textarea {
+  display: block;
+  width: 100%;
+  min-height: 76px;
+  resize: vertical;
+}
+
+.message-compose-actions,
+.message-compose-tools,
+.message-compose-submit {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.message-compose-actions {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.message-compose-submit { margin-left: auto; }
+
+.message-compose-hint {
+  color: #808394;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.message-compose-tools select { min-width: 150px; }
+
+@media (width <= 600px) {
+  .message-compose-actions { align-items: stretch; }
+
+  .message-compose-submit {
+    width: 100%;
+    justify-content: space-between;
+    margin-left: 0;
+  }
+
+  .message-compose-hint { white-space: normal; }
+}
+
 .chat-placeholder {
   display: flex;
   flex-direction: column;

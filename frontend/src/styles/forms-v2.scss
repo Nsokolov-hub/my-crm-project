@@ -49,3 +49,40 @@
   color: #6245ad;
   font-weight: 700;
 }
+
+.expense-brackets {
+  display: grid;
+  gap: 12px;
+}
+
+.expense-bracket {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(105px, 1fr)) repeat(2, minmax(125px, 1fr)) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e9eaf0;
+  border-radius: 10px;
+}
+
+.expense-bracket label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.expense-bracket input {
+  width: 100%;
+  min-width: 0;
+}
+
+.expense-bracket-summary { margin: 20px 0; }
+
+.expense-bracket-summary ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+@media (width <= 800px) {
+  .expense-bracket { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

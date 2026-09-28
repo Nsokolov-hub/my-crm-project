@@ -1,11 +1,11 @@
-import { Plus } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
 import { RecordForm } from '../components/Form';
 import { Badge, Button, DataTable, DetailPairs, ErrorBox, Loading, Modal, PageHeading, Pagination, Section } from '../components/ui';
 import { api } from '../lib/api';
-import { productFields } from '../lib/fields';
-import { useApi, useDebounced } from '../lib/hooks';
+import { useApi, useCommand, useDebounced } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
 
 type Packing = Entity & { value: string; unit: string; display_name: string };
@@ -16,6 +16,7 @@ type Nomenclature = Entity & {
   cas?: string;
   linear_formula?: string;
   description?: string;
+  created_by_id?: string;
   packings: Packing[];
 };
 
@@ -34,8 +35,11 @@ const packingFields: Field[] = [
   { name: 'unit', label: 'Единица', required: true, placeholder: 'mg, g, ml…' },
   { name: 'display_name', label: 'Название для показа' },
 ];
+const editFields = nomenclatureFields.filter((field) => !field.name.startsWith('packing_'));
 
 export function Catalog() {
+  const auth = useAuth();
+  const canCreate = auth.can('catalog.write') || auth.can('requests.write');
   const [tab, setTab] = useState<'nomenclature' | 'legacy'>('nomenclature');
   const [search, setSearch] = useState('');
   const debounced = useDebounced(search, 300);
@@ -44,9 +48,25 @@ export function Catalog() {
   const [selected, setSelected] = useState<Nomenclature>();
   const [creating, setCreating] = useState(false);
   const [addingPacking, setAddingPacking] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [legacySelected, setLegacySelected] = useState<Entity>();
   const [legacyRevision, setLegacyRevision] = useState(0);
   const [error, setError] = useState<unknown>();
+  const archive = useCommand();
+  const canEditSelected = auth.can('catalog.write') || (auth.can('requests.write') && selected?.created_by_id === auth.session?.user.id);
+
+  async function removeSelected() {
+    if (!selected || !window.confirm(`Удалить «${selected.name}» из номенклатуры? Ранее созданные документы сохранятся.`)) return;
+    try {
+      const result = await archive.run<Nomenclature>(`/nomenclatures/${selected.id}`, { version: selected.version, active: false }, 'PATCH');
+      if (result) {
+        setSelected(undefined);
+        list.refresh();
+      }
+    } catch {
+      /* error is displayed in the detail modal */
+    }
+  }
 
   async function refreshSelected(id: string) {
     try {
@@ -62,7 +82,7 @@ export function Catalog() {
       <PageHeading
         title="Номенклатура"
         description="Товары, группы и фасовки хранятся отдельно, чтобы квоты и расчёты ссылались на точную позицию."
-        actions={tab === 'nomenclature' && <Button onClick={() => setCreating(true)}><Plus size={16} /> Добавить номенклатуру</Button>}
+        actions={tab === 'nomenclature' && canCreate && <Button onClick={() => setCreating(true)}><Plus size={16} /> Добавить номенклатуру</Button>}
       />
       <div className="tabs">
         <button className={tab === 'nomenclature' ? 'active' : ''} onClick={() => setTab('nomenclature')}>Номенклатура и фасовки</button>
@@ -97,8 +117,7 @@ export function Catalog() {
         <Collection
           title="Товарные варианты предыдущей модели"
           endpoint="/catalog/products"
-          fields={productFields}
-          createLabel="Добавить товарный вариант"
+          canCreate={false}
           refreshKey={legacyRevision}
           onSelect={setLegacySelected}
           columns={[
@@ -121,8 +140,13 @@ export function Catalog() {
         onClose={() => setCreating(false)}
         onSuccess={(row) => { setCreating(false); setSelected(row as Nomenclature); list.refresh(); }}
       />}
-      {selected && <Modal title={selected.name} wide onClose={() => { setAddingPacking(false); setSelected(undefined); }}>
+      {selected && !editing && <Modal title={selected.name} wide onClose={() => { setAddingPacking(false); setSelected(undefined); }}>
         <div className="form-body">
+          <ErrorBox error={archive.error} />
+          {canEditSelected && <div className="inline-actions">
+            <Button variant="secondary" onClick={() => setEditing(true)}><Pencil size={16} /> Редактировать</Button>
+            <Button variant="danger" busy={archive.busy} onClick={() => void removeSelected()}><Trash2 size={16} /> Удалить</Button>
+          </div>}
           <DetailPairs values={{
             Артикул: selected.article || '—',
             'Товарная группа': selected.product_group_name || 'Другое',
@@ -130,7 +154,7 @@ export function Catalog() {
             'Линейная формула': selected.linear_formula || '—',
             Описание: selected.description || '—',
           }} />
-          <Section title="Фасовки" action={<Button onClick={() => setAddingPacking(true)}><Plus size={16} /> Добавить фасовку</Button>}>
+          <Section title="Фасовки" action={canCreate ? <Button onClick={() => setAddingPacking(true)}><Plus size={16} /> Добавить фасовку</Button> : undefined}>
             <DataTable<Packing>
               rows={selected.packings || []}
               columns={[
@@ -142,6 +166,24 @@ export function Catalog() {
           </Section>
         </div>
       </Modal>}
+      {editing && selected && <RecordForm
+        title={`Редактировать: ${selected.name}`}
+        endpoint={`/nomenclatures/${selected.id}`}
+        method="PATCH"
+        initial={selected}
+        extra={{ version: selected.version }}
+        fields={editFields}
+        transform={(values) => ({
+          ...values,
+          article: values.article || null,
+          product_group_id: values.product_group_id || null,
+          cas: values.cas || null,
+          linear_formula: values.linear_formula || null,
+          description: values.description || null,
+        })}
+        onClose={() => setEditing(false)}
+        onSuccess={(row) => { setEditing(false); setSelected(row as Nomenclature); list.refresh(); }}
+      />}
       {addingPacking && selected && <RecordForm
         title={`Добавить фасовку для ${selected.name}`}
         endpoint={`/nomenclatures/${selected.id}/packings`}
