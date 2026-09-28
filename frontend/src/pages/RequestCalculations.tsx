@@ -85,7 +85,7 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
         <p>Закупка: {decimal(quote.unit_price)} {String(line.purchase_currency || '')} × {decimal(line.quantity)} шт.
           × курс {decimal(detail.exchange_rate)} = {decimal(detail.purchase_rub)} ₽.</p>
         <p>Пошлина: {rule.type === 'FIXED_GROUP'
-          ? `${decimal(rule.value)} ₽ × ${decimal(line.quantity)} шт.`
+          ? `${decimal(rule.value)} ₽ × ${decimal(line.quantity)} / ${decimal(detail.fixed_group_quantity)} шт. группы`
           : rule.type === 'PERCENTAGE'
             ? `${decimal(detail.customs_base)} ₽ × ${decimal(rule.value)}%`
             : 'без пошлины'} = {decimal(detail.duty)} ₽.</p>

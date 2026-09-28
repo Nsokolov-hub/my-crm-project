@@ -1,4 +1,4 @@
-"""Regression checks for supplier wave cost sharing and per-column duty."""
+"""Regression checks for supplier wave cost sharing and shared column duty."""
 
 from decimal import Decimal
 
@@ -20,7 +20,7 @@ def _selection(identifier: str, group: str, quantity: str, price: str, bonus: st
     }
 
 
-def test_wave_quantity_shares_fixed_expenses_and_fee_but_not_per_column_duty():
+def test_wave_quantity_shares_fixed_expenses_and_fee_and_columns_share_duty():
     profile = itemized_profile()
     profile["import_country_id"] = "country-1"
     profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "4997"}]
@@ -43,7 +43,7 @@ def test_wave_quantity_shares_fixed_expenses_and_fee_but_not_per_column_duty():
     assert result["expense_allocations"][0]["existing_wave_share"] == "12500.00"
     assert sample["expense_details"]["Декларант"] == "6250.00"
     assert columns["expense_details"]["Декларант"] == "6250.00"
-    assert Decimal(columns["detail"]["duty"]) == Decimal("147600.00")
+    assert Decimal(columns["detail"]["duty"]) == Decimal("73800.00")
     assert Decimal(sample["detail"]["duty"]) == Decimal("1000.00")
     assert Decimal(sample["detail"]["internal_bonus"]) == (
         Decimal(sample["detail"]["cost_before_adjustment"]) * Decimal("0.15")
@@ -53,3 +53,25 @@ def test_wave_quantity_shares_fixed_expenses_and_fee_but_not_per_column_duty():
     ).quantize(Decimal("0.01"))
     assert Decimal(sample["detail"]["customs_fee"]) + Decimal(columns["detail"]["customs_fee"]) + \
         Decimal(result["wave_distribution"]["existing_customs_fee_share"]) == Decimal("4997.00")
+
+
+def test_fixed_group_duty_is_split_between_column_rows():
+    profile = itemized_profile()
+    profile["import_country_id"] = "country-1"
+    profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "4997"}]
+    result = calculate_itemized(
+        profile,
+        [
+            _selection("columns-a", "columns", "2", "100", "1"),
+            _selection("columns-b", "columns", "1", "100", "1"),
+        ],
+        [],
+        [{"currency": "USD", "management_per_unit": "100", "quoted_units": "1",
+          "date": "2026-09-28", "source": "Профиль"}],
+    )
+
+    first, second = result["lines"]
+    assert first["detail"]["duty"] == "49200.00"
+    assert second["detail"]["duty"] == "24600.00"
+    assert first["detail"]["fixed_group_quantity"] == "3"
+    assert second["detail"]["fixed_group_quantity"] == "3"

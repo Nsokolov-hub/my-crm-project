@@ -293,9 +293,15 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             for row in group_rows:
                 row["duty"] = _money(row["customs_base"] * value / 100, rounding)
         elif rule["type"] == "FIXED_GROUP":
+            # The old CRM charges this amount once for all columns in the
+            # calculation and divides it by their quantity.
+            group_quantity = sum(row["quantity"] for row in group_rows)
+            parts = distribute(_money(value, rounding),
+                               {row["id"]: row["quantity"] for row in group_rows},
+                               Decimal("0.01"), rounding)
             for row in group_rows:
-                # The configured amount is charged for every column, not once per group.
-                row["duty"] = _money(value * row["quantity"], rounding)
+                row["duty"] = parts[row["id"]]
+                row["fixed_group_quantity"] = group_quantity
     customs_basis = sum(row["customs_base"] for row in rows)
     fee = _money(_bracket_amount(profile["customs_fee_brackets"], customs_basis, field="customs_fee_brackets"), rounding)
     fee_parts, existing_fee_share = shared_by_quantity(fee)
@@ -367,6 +373,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "purchase_rub": row["purchase_rub"], "international_logistics": row["international_logistics"],
             "customs_base": row["customs_base"], "duty": row["duty"], "customs_fee": row["customs_fee"],
             "duty_per_unit": row["duty"] / qty,
+            "fixed_group_quantity": row.get("fixed_group_quantity", Decimal("0")),
             "general_expenses": row["general_expenses"], "expenses_total": expenses_total,
             "cash_expenses": row["cash_expenses"],
             "import_vat": incoming_vat, "cost_before_financing": cost_before_financing,
