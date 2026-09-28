@@ -5,7 +5,7 @@ the complete inputs and intermediate amounts needed to reproduce its result.
 """
 
 from datetime import date
-from decimal import Decimal, localcontext
+from decimal import ROUND_CEILING, Decimal, localcontext
 
 from app.core.errors import error
 
@@ -62,6 +62,11 @@ def validate_itemized_profile(profile: dict) -> None:
         error("DAY_BASIS", "Укажите число дней в финансовом году от 1 до 366")
     if dec(profile.get("default_markup_coefficient", "1.5")) < 1:
         error("MARKUP", "Коэффициент наценки должен быть не меньше 1")
+    if dec(profile.get("default_bonus_coefficient", "1")) < 1:
+        error("BONUS", "Коэффициент бонуса должен быть не меньше 1")
+    if not 0 <= dec(profile.get("bonus_withdrawal_percent", "16")) <= 100:
+        error("BONUS_WITHDRAWAL", "Комиссия за вывод бонуса должна быть от 0 до 100%")
+    _rate_map(profile.get("exchange_rates") or [], [])
     rules = profile.get("customs_rules") or []
     if not rules:
         error("CUSTOMS_RULE_REQUIRED", "Настройте таможенные правила по товарным группам", field="customs_rules")
@@ -151,19 +156,24 @@ def calculate_itemized(
     rates: list[dict],
     internal_adjustment: dict | None = None,
     payment_terms: dict | None = None,
+    wave_existing_quantity: Decimal = Decimal("0"),
 ) -> dict:
     with localcontext() as context:
         context.prec = 48
-        return _calculate_itemized(profile, selections, expenses, rates, internal_adjustment or {}, payment_terms or {})
+        return _calculate_itemized(profile, selections, expenses, rates, internal_adjustment or {},
+                                   payment_terms or {}, wave_existing_quantity)
 
 
-def _calculate_itemized(profile, selections, expenses, rates, internal_adjustment, payment_terms):
+def _calculate_itemized(profile, selections, expenses, rates, internal_adjustment, payment_terms, wave_existing_quantity):
     validate_itemized_profile(profile)
     rounding = profile.get("rounding", "half_up")
     if rounding not in ROUNDING:
         error("ROUNDING", "Неизвестное правило округления")
     if not selections:
         error("SELECTION_REQUIRED", "Выберите хотя бы одну позицию квоты", field="selections")
+    wave_existing_quantity = dec(wave_existing_quantity)
+    if wave_existing_quantity < 0:
+        error("WAVE_QUANTITY", "Количество в волне не может быть отрицательным")
     ids = [selection["quote_item"]["id"] for selection in selections]
     if len(ids) != len(set(ids)):
         error("DUPLICATE_SELECTION", "Позиция квоты выбрана повторно", field="selections")
@@ -180,12 +190,16 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         if quantity <= 0 or price < 0:
             error("QUOTE_PRICE", f"Проверьте цену и количество позиции {name} {packing}", field=f"selections.{index}")
         coefficient = dec(selection.get("markup_coefficient") or profile.get("default_markup_coefficient", "1.5"))
+        bonus_coefficient = dec(selection.get("bonus_coefficient") or profile.get("default_bonus_coefficient", "1"))
         if coefficient < 1:
             error("MARKUP", f"Наценка позиции {name} {packing} должна быть не меньше 1", field=f"selections.{index}.markup_coefficient")
+        if bonus_coefficient < 1:
+            error("BONUS", f"Бонус позиции {name} {packing} должен быть не меньше 1", field=f"selections.{index}.bonus_coefficient")
         foreign = price * quantity
         rows.append({
             "id": quote["id"], "source": selection, "quantity": quantity, "weight": dec(selection.get("weight") or "0"),
             "currency": currency, "group": group, "markup_coefficient": coefficient,
+            "bonus_coefficient": bonus_coefficient,
             "purchase_foreign": foreign, "exchange_rate": fx[currency],
             "purchase_rub": _money(foreign * fx[currency], rounding),
             "international_logistics": Decimal("0"), "general_expenses": Decimal("0"),
@@ -195,6 +209,16 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         })
 
     allocations = []
+    selected_quantity = sum(row["quantity"] for row in rows)
+    wave_total_quantity = selected_quantity + wave_existing_quantity
+
+    def shared_by_quantity(amount: Decimal) -> tuple[dict[str, Decimal], Decimal]:
+        bases = {row["id"]: row["quantity"] for row in rows}
+        if wave_existing_quantity:
+            bases["__wave_existing__"] = wave_existing_quantity
+        parts = distribute(amount, bases, Decimal("0.01"), rounding)
+        return ({row["id"]: parts[row["id"]] for row in rows},
+                parts.get("__wave_existing__", Decimal("0")))
 
     def expense_basis(kind):
         if kind == "PURCHASE":
@@ -226,7 +250,11 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         if amount < 0:
             error("EXPENSE_AMOUNT", f"Расход {name} не может быть отрицательным", field="expenses")
         method = expense.get("method", "BY_QUANTITY")
-        parts = _allocation(amount, rows, method, expense.get("manual") or {}, rounding)
+        if method == "BY_QUANTITY" and kind in ("FIXED", "BRACKET", "MANUAL"):
+            parts, existing_share = shared_by_quantity(amount)
+        else:
+            parts = _allocation(amount, rows, method, expense.get("manual") or {}, rounding)
+            existing_share = Decimal("0")
         stage = expense.get("stage", "GENERAL")
         for row in rows:
             part = parts[row["id"]]
@@ -240,6 +268,8 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "name": name, "calculation_type": kind, "method": method,
             "stage": stage, "amount": _string(amount),
             "currency": currency, "parts": {key: _string(value) for key, value in parts.items()},
+            "existing_wave_share": _string(existing_share),
+            "wave_total_quantity": _string(wave_total_quantity),
             "basis": expense.get("basis", ""), "percent_base": expense.get("percent_base"),
         })
 
@@ -265,13 +295,18 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             for row in group_rows:
                 row["duty"] = _money(row["customs_base"] * value / 100, rounding)
         elif rule["type"] == "FIXED_GROUP":
-            amount = _money(value, rounding)
-            parts = _allocation(amount, group_rows, "BY_QUANTITY", {}, rounding)
+            # The old CRM charges this amount once for all columns in the
+            # calculation and divides it by their quantity.
+            group_quantity = sum(row["quantity"] for row in group_rows)
+            parts = distribute(_money(value, rounding),
+                               {row["id"]: row["quantity"] for row in group_rows},
+                               Decimal("0.01"), rounding)
             for row in group_rows:
                 row["duty"] = parts[row["id"]]
+                row["fixed_group_quantity"] = group_quantity
     customs_basis = sum(row["customs_base"] for row in rows)
     fee = _money(_bracket_amount(profile["customs_fee_brackets"], customs_basis, field="customs_fee_brackets"), rounding)
-    fee_parts = _allocation(fee, rows, "BY_QUANTITY", {}, rounding)
+    fee_parts, existing_fee_share = shared_by_quantity(fee)
     for row in rows:
         row["customs_fee"] = fee_parts[row["id"]]
     for expense in expenses:
@@ -312,26 +347,44 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         qty = row["quantity"]
         incoming_vat = _money((row["customs_base"] + row["duty"]) * vat_rate, rounding)
         expenses_total = row["international_logistics"] + row["general_expenses"] + row["customs_fee"]
-        cost_before_financing = row["purchase_rub"] + expenses_total + row["duty"] + (Decimal("0") if deduct_vat else incoming_vat)
+        clean_cost = row["customs_base"] + row["duty"] + (Decimal("0") if deduct_vat else incoming_vat)
+        cost_before_financing = clean_cost + row["general_expenses"] + row["customs_fee"]
         financed_amount = _money(cost_before_financing * deferred / 100, rounding)
         financing_cost = _money(financed_amount * annual_rate * Decimal(days) / day_basis, rounding)
         cost_before_adjustment = cost_before_financing + financing_cost
-        internal_bonus = Decimal("0")
-        service_fee = Decimal("0")
+        # In the supplied workbook, markup applies to the clean landed cost;
+        # shared expenses are added afterwards, before the per-line bonus.
+        pre_bonus_sale_net = (
+            clean_cost * row["markup_coefficient"]
+            + row["general_expenses"] + row["customs_fee"] + financing_cost
+        )
+        internal_bonus = _money(pre_bonus_sale_net * (row["bonus_coefficient"] - 1), rounding)
         if adjustment_enabled:
             if adjustment_type == "PERCENTAGE":
-                internal_bonus = _money(cost_before_adjustment * adjustment_value / 100, rounding)
+                internal_bonus += _money(pre_bonus_sale_net * adjustment_value / 100, rounding)
             elif adjustment_type == "MULTIPLIER":
                 if adjustment_value < 1:
                     error("INTERNAL_ADJUSTMENT", "Внутренний множитель должен быть не меньше 1", field="internal_adjustment")
-                internal_bonus = _money(cost_before_adjustment * (adjustment_value - 1), rounding)
+                internal_bonus += _money(pre_bonus_sale_net * (adjustment_value - 1), rounding)
             else:
-                internal_bonus = fixed_adjustment[row["id"]]
-            service_fee = _money(cost_before_adjustment * service_percent / 100, rounding)
+                internal_bonus += fixed_adjustment[row["id"]]
+        withdrawal_percent = dec(profile.get("bonus_withdrawal_percent", "16"))
+        bonus_withdrawal_fee = _money(internal_bonus * withdrawal_percent / 100, rounding)
+        additional_service_fee = (
+            _money(cost_before_adjustment * service_percent / 100, rounding)
+            if adjustment_enabled else Decimal("0")
+        )
+        service_fee = bonus_withdrawal_fee + additional_service_fee
         cost = cost_before_adjustment + internal_bonus + service_fee
-        sale_net = _money(cost * row["markup_coefficient"], rounding)
-        sale_tax = _money(sale_net * vat_rate, rounding)
-        sale_total = sale_net + sale_tax
+        sale_net = _money(pre_bonus_sale_net + internal_bonus + service_fee, rounding)
+        if profile.get("round_sale_up_to_ruble", True):
+            unit_gross = (sale_net / qty * (Decimal("1") + vat_rate)).to_integral_value(rounding=ROUND_CEILING)
+            sale_total = _money(unit_gross * qty, rounding)
+            sale_tax = sale_total - sale_net
+        else:
+            sale_tax = _money(sale_net * vat_rate, rounding)
+            sale_total = sale_net + sale_tax
+            unit_gross = sale_total / qty
         profit = sale_net - cost
         vat_payable = max(Decimal("0"), sale_tax - (incoming_vat if deduct_vat else Decimal("0")))
         cash_need = row["purchase_rub"] + row["cash_expenses"] + row["customs_fee"] + row["duty"] + incoming_vat + financing_cost + internal_bonus + service_fee
@@ -340,16 +393,23 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "purchase_rub": row["purchase_rub"], "international_logistics": row["international_logistics"],
             "customs_base": row["customs_base"], "duty": row["duty"], "customs_fee": row["customs_fee"],
             "duty_per_unit": row["duty"] / qty,
+            "fixed_group_quantity": row.get("fixed_group_quantity", Decimal("0")),
             "general_expenses": row["general_expenses"], "expenses_total": expenses_total,
             "cash_expenses": row["cash_expenses"],
             "import_vat": incoming_vat, "cost_before_financing": cost_before_financing,
             "financed_amount": financed_amount, "financing_cost": financing_cost,
+            "clean_cost": clean_cost, "pre_bonus_sale_net": pre_bonus_sale_net,
             "cost_before_adjustment": cost_before_adjustment, "internal_bonus": internal_bonus,
+            "bonus_coefficient": row["bonus_coefficient"],
+            "bonus_withdrawal_percent": withdrawal_percent,
+            "bonus_withdrawal_fee": bonus_withdrawal_fee,
+            "additional_service_fee": additional_service_fee,
             "service_fee": service_fee, "cost": cost, "markup_coefficient": row["markup_coefficient"],
-            "markup_amount": sale_net - cost, "sale_net": sale_net, "sale_tax": sale_tax,
+            "markup_amount": clean_cost * (row["markup_coefficient"] - 1),
+            "sale_net": sale_net, "sale_tax": sale_tax,
             "sale_total": sale_total, "profit": profit, "vat_payable": vat_payable,
-            "cash_need": cash_need,
-            "profitability_percent": profit / cost * 100 if cost else Decimal("0"),
+            "cash_need": cash_need, "sale_unit_gross": unit_gross,
+            "profitability_percent": profit / sale_net * 100 if sale_net else Decimal("0"),
             "expense_share_percent": expenses_total / cost * 100 if cost else Decimal("0"),
             "investment_efficiency_percent": profit / cash_need * 100 if cash_need else Decimal("0"),
         }
@@ -368,14 +428,14 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "quantity": _string(qty), "unit": "pcs", "purchase_currency": row["currency"],
             "delivery_days": quote.get("delivery_days"),
             "net": _string(sale_net), "tax": _string(sale_tax), "total": _string(sale_total),
-            "unit_price": _string((sale_net / qty).quantize(Decimal("0.00000001"), rounding=ROUNDING[rounding])),
+            "unit_price": _string(unit_gross.quantize(Decimal("0.00000001"), rounding=ROUNDING[rounding])),
             "tax_category": profile.get("tax_category") or "НДС",
             "detail": {key: _string(value) for key, value in detail.items()},
             "expense_details": {key: _string(value) for key, value in row["expense_details"].items()},
             "quote_item": quote,
         })
     total_keys = (
-        "purchase_rub", "international_logistics", "customs_base", "duty",
+        "purchase_rub", "international_logistics", "customs_base", "duty", "clean_cost", "pre_bonus_sale_net",
         "customs_fee", "general_expenses", "expenses_total", "cash_expenses", "import_vat", "cost_before_financing",
         "financed_amount", "financing_cost", "internal_bonus", "service_fee", "cost", "markup_amount",
         "sale_net", "sale_tax", "sale_total", "profit", "vat_payable", "cash_need",
@@ -384,7 +444,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     totals.update(net=totals["sale_net"], tax=totals["sale_tax"], total=totals["sale_total"])
     if dec(totals["cost"]):
         totals["markup_coefficient"] = _string(dec(totals["sale_net"]) / dec(totals["cost"]))
-        totals["profitability_percent"] = _string(dec(totals["profit"]) / dec(totals["cost"]) * 100)
+        totals["profitability_percent"] = _string(dec(totals["profit"]) / dec(totals["sale_net"]) * 100)
         totals["expense_share_percent"] = _string(dec(totals["expenses_total"]) / dec(totals["cost"]) * 100)
     else:
         totals.update(markup_coefficient="0", profitability_percent="0", expense_share_percent="0")
@@ -395,6 +455,11 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     return {
         "lines": output, "totals": totals, "currency": "RUB", "management_currency": "RUB",
         "expense_allocations": allocations, "rates": rates, "profile": profile,
+        "wave_distribution": {"existing_quantity": _string(wave_existing_quantity),
+                              "selected_quantity": _string(selected_quantity),
+                              "total_quantity": _string(wave_total_quantity),
+                              "existing_customs_fee_share": _string(existing_fee_share),
+                              "customs_fee": _string(fee)},
         "internal_adjustment": internal_adjustment,
         "payment_terms": {**payment_terms, "deferred_start_event": start_event},
         "algorithm_version": "itemized-v2",
@@ -406,9 +471,12 @@ def itemized_profile() -> dict:
     return {
         "methodology": "itemized_v2", "management_currency": "RUB", "sale_currency": "RUB",
         "currency_precision": {"RUB": 2}, "rounding": "half_up", "import_country_id": None,
-        "vat_rate": "22", "vat_deduction_mode": True,
+        "vat_rate": "22", "vat_deduction_mode": False,
         "financing_annual_rate": "0", "day_basis": 365, "financing_start_event": "delivery",
         "default_markup_coefficient": "1.5",
+        "default_bonus_coefficient": "1",
+        "bonus_withdrawal_percent": "16",
+        "round_sale_up_to_ruble": True,
         "default_expenses": [],
         "customs_rules": [
             {"product_group_slug": "reference_standards", "type": "PERCENTAGE", "value": "5"},

@@ -76,12 +76,10 @@ describe('everyday CRM forms', () => {
         onSuccess={vi.fn()}
       />,
     );
-    await screen.findByRole('option', { name: 'Нет бюджета' });
+    fireEvent.focus(screen.getByLabelText('Причина закрытия без продажи'));
+    fireEvent.click(await screen.findByRole('option', { name: 'Нет бюджета' }));
     fireEvent.change(screen.getByLabelText('Коммерческий этап'), {
       target: { value: 'closed_lost' },
-    });
-    fireEvent.change(screen.getByLabelText('Причина закрытия без продажи'), {
-      target: { value: 'no_budget' },
     });
     fireEvent.change(screen.getByLabelText(/Причина изменения/), {
       target: { value: 'Клиент отменил закупку' },

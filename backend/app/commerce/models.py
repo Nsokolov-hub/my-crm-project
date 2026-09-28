@@ -230,6 +230,7 @@ class Approval(Entity, Base):
 class Wave(Entity, Base):
     __tablename__ = "waves"
     number: Mapped[str] = mapped_column(String(80), unique=True)
+    supplier_id: Mapped[str | None] = mapped_column(ForeignKey("counterparties.id"), index=True)
     route: Mapped[str] = mapped_column(String(300))
     origin_country: Mapped[str] = mapped_column(String(100))
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"))

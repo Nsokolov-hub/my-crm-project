@@ -260,6 +260,80 @@ def test_import_errors_before_writes_formula_lengths_and_numeric_identifiers(crm
         assert db.scalar(select(func.count()).select_from(ImportBatch)) == 0
 
 
+def test_call_base_import_uses_name_and_inn_only_and_preserves_optional_details(crm):
+    login(crm)
+    existing = post(crm, "/counterparties", {"name": "Уже есть", "tax_id": "1234567890"})
+    book = Workbook()
+    book.active.title = "Обложка"
+    sheet = book.create_sheet("Данные")
+    sheet.append([
+        "Название", "ИНН", "ПРОФИЛЬ", "Регион/город", "E-mail", "Телефон",
+        "Примечание", "ОГРН",
+    ])
+    sheet.append([
+        "Новый клиент", "0987654321", "Фарма", "Москва", "не найдено",
+        "+7 900 111-22-33; +7 900 444-55-66", "Для обзвона", "не найдено",
+    ])
+    sheet.append(["Без ИНН", "не найдено", "", "", "", "", "", ""])
+    sheet.append(["Другая карточка", "1234567890", "", "", "", "", "", ""])
+    stream = io.BytesIO()
+    book.save(stream)
+    parsed = parse_rows(stream.getvalue(), {}, mode="calls")
+    assert len(parsed) == 3
+    assert parsed[0]["data"]["email"] == ""
+    assert parsed[0]["data"]["phone"] == "+7 900 111-22-33; +7 900 444-55-66"
+    assert parsed[1]["errors"] == [{"field": "tax_id", "message": "Укажите ИНН"}]
+
+    response = crm["client"].post(
+        "/api/v1/imports/preview",
+        files={"file": ("calls.xlsx", stream.getvalue())},
+        data={"mapping": "{}", "mode": "calls"},
+    )
+    assert response.status_code == 200, response.text
+    batch = response.json()
+    assert batch["summary"]["create"] == 1
+    assert batch["summary"]["error"] == 1
+    assert batch["summary"]["skip"] == 1
+    post(crm, f"/imports/{batch['id']}/confirm", {"decisions": []}, 200)
+    with crm["sessions"].begin() as db:
+        result = process_import(db, {"batch_id": batch["id"], "user_id": crm["admin"].id})
+        assert result["summary"]["created"] == 1
+        new = db.scalar(select(Counterparty).where(Counterparty.tax_id == "0987654321"))
+        assert new.kind == "client"
+        assert new.details["profile"] == "Фарма"
+        assert new.details["city"] == "Москва"
+        assert new.details["comment"] == "Для обзвона"
+        assert db.get(Counterparty, existing["id"]).name == "Уже есть"
+
+
+def test_call_user_can_import_call_base_without_general_import_permission(crm):
+    login(crm, "manager@example.com")
+    template = crm["client"].get("/api/v1/imports/template-calls.xlsx")
+    assert template.status_code == 200
+    book = load_workbook(io.BytesIO(template.content), read_only=True)
+    assert book.active["A1"].value == "Название"
+    assert book.active["B1"].value == "ИНН"
+    book.close()
+    data = xlsx([["Название", "ИНН"], ["Клиент обзвона", "0012345678"]])
+    preview = crm["client"].post(
+        "/api/v1/imports/preview",
+        files={"file": ("calls.xlsx", data)},
+        data={"mapping": "{}", "mode": "calls"},
+    )
+    assert preview.status_code == 200, preview.text
+    batch = preview.json()
+    assert crm["client"].get(f"/api/v1/imports/{batch['id']}").status_code == 200
+    post(crm, f"/imports/{batch['id']}/confirm", {"decisions": []}, 200)
+    with crm["sessions"].begin() as db:
+        process_import(db, {"batch_id": batch["id"], "user_id": crm["manager"].id})
+        created = db.scalar(select(Counterparty).where(Counterparty.tax_id == "0012345678"))
+        assert created.owner_id == crm["manager"].id
+    denied = crm["client"].post(
+        "/api/v1/imports/preview", files={"file": ("general.xlsx", data)}, data={"mapping": "{}"},
+    )
+    assert denied.status_code == 403
+
+
 def test_a02_callback_then_request_preserves_client_and_history(crm):
     login(crm, "manager@example.com")
     client = post(crm, "/counterparties", {"name": "Клиент обзвона"})

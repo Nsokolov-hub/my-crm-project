@@ -6,8 +6,8 @@ from fastapi import APIRouter, Query
 from fastapi.responses import Response
 from sqlalchemy import func, select
 
-from app.core.errors import error
-from app.core.security import check_request, require_permission
+from app.core.errors import DomainError, error
+from app.core.security import check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.crm.models import Counterparty, QuoteItem, RequestItem, Seller
 from app.crm.models import Request as CRMRequest
@@ -169,7 +169,10 @@ def base_snapshot(
 
 @router.post("/requests/{request_id}/proposals")
 def issue_proposal(request_id: str, data: ProposalIn, db: DB, user: Actor):
-    check_request(db, user, request_id, "documents.write")
+    check_request(db, user, request_id)
+    require_permission(db, user, "documents.write")
+    if not has_request_permission(db, user, request_id, "documents.write"):
+        raise DomainError("FORBIDDEN", "Нет права выпускать КП по этой заявке", 403)
 
     def operation():
         advisory(db, f"request-commerce:{request_id}")

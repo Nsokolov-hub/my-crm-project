@@ -1,14 +1,14 @@
 import { Plus, Save, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
 import { Badge, Button, DataTable, DetailPairs, ErrorBox, Modal } from '../components/ui';
 import { ApiError } from '../lib/api';
-import { date, decimal, label, today } from '../lib/format';
+import { date, decimal, label } from '../lib/format';
 import { useApi, useCommand, useDirtyProtection } from '../lib/hooks';
 import type { Entity, Page } from '../lib/types';
 
-type Selection = { quote_item_id: string; markup_coefficient: string };
+type Selection = { quote_item_id: string; markup_coefficient: string; bonus_coefficient?: string };
 type Rate = {
   currency: string;
   management_per_unit: string;
@@ -34,6 +34,87 @@ const nameOf = (row: Entity) => String(row.nomenclature_name || row.description 
 const currencyOf = (row: Entity) => String(row.currency_code || row.currency || '');
 const positive = (value: string) => Number.isFinite(Number(value)) && Number(value) > 0;
 const validMarkup = (value: string) => Number.isFinite(Number(value)) && Number(value) >= 1;
+const detailLabels: Record<string, string> = {
+  purchase_foreign: 'Закупка в валюте', exchange_rate: 'Курс к ₽', purchase_rub: 'Закупка, ₽',
+  international_logistics: 'Международная логистика, ₽', customs_base: 'Таможенная база, ₽',
+  duty: 'Пошлина, ₽', duty_per_unit: 'Пошлина за единицу, ₽', customs_fee: 'Таможенный сбор, ₽',
+  general_expenses: 'Прочие расходы, ₽', expenses_total: 'Все распределённые расходы, ₽',
+  cash_expenses: 'Денежные расходы, ₽', import_vat: 'Ввозной НДС, ₽',
+  clean_cost: 'Чистая стоимость до наценки, ₽', pre_bonus_sale_net: 'Цена до бонуса без НДС, ₽',
+  cost_before_financing: 'Себестоимость до финансирования, ₽', financed_amount: 'Финансируемая сумма, ₽',
+  financing_cost: 'Стоимость финансирования, ₽', cost_before_adjustment: 'Затраты до бонуса, ₽',
+  internal_bonus: 'Бонус, ₽', service_fee: 'Сервисная комиссия, ₽', cost: 'Себестоимость, ₽',
+  bonus_withdrawal_percent: 'Комиссия за вывод бонуса, %', sale_unit_gross: 'Цена за штуку с НДС, ₽',
+  bonus_withdrawal_fee: 'Комиссия за вывод бонуса, ₽', additional_service_fee: 'Дополнительная комиссия, ₽',
+  fixed_group_quantity: 'Количество в группе пошлины, шт.',
+  markup_coefficient: 'Коэффициент наценки', markup_amount: 'Наценка, ₽',
+  bonus_coefficient: 'Коэффициент бонуса',
+  sale_net: 'Продажа без НДС, ₽', sale_tax: 'НДС продажи, ₽', sale_total: 'Продажа с НДС, ₽',
+  profit: 'Прибыль, ₽', vat_payable: 'НДС к уплате, ₽', cash_need: 'Потребность в средствах, ₽',
+  profitability_percent: 'Рентабельность, %', expense_share_percent: 'Доля расходов, %',
+  investment_efficiency_percent: 'Эффективность средств, %',
+};
+
+function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
+  const lines = (snapshot.lines || []) as Entity[];
+  const wave = (snapshot.wave || {}) as Entity;
+  const distribution = (snapshot.wave_distribution || {}) as Entity;
+  const allocations = (snapshot.expense_allocations || []) as Entity[];
+  const rates = (snapshot.rates || []) as Entity[];
+  const rows = [...lines.map((line) => ({ ...line, id: String(line.line_id) })),
+    ...(Number(distribution.existing_quantity || 0) > 0 ? [{ id: 'wave-existing', description: 'Уже подтверждено в волне',
+      quantity: distribution.existing_quantity, detail: {} }] : [])];
+  return <div className="calculation-breakdown">
+    <h4>Общий расчёт по позициям</h4>
+    <p>Волна: {String(wave.number || '—')}. Расходы по количеству делятся на {decimal(distribution.total_quantity || 0)} шт.
+      ({decimal(distribution.selected_quantity || 0)} шт. в этом расчёте + {decimal(distribution.existing_quantity || 0)} шт. уже подтверждено).</p>
+    <DataTable<Entity> rows={rows} columns={[
+      { key: 'description', label: 'Товар' },
+      { key: 'quantity', label: 'Кол-во', render: (row) => decimal(row.quantity) },
+      ...(['purchase_rub', 'international_logistics', 'customs_base', 'duty', 'customs_fee',
+        'general_expenses', 'import_vat', 'cost', 'internal_bonus', 'markup_coefficient',
+        'sale_net', 'sale_tax', 'sale_total', 'profit'] as const).map((key) => ({
+        key, label: detailLabels[key], render: (row: Entity) =>
+          (row.detail as Entity | undefined)?.[key] == null ? '—' : decimal((row.detail as Entity)[key]),
+      })),
+    ]} />
+    <h4>Расшифровка каждой позиции</h4>
+    {lines.map((line) => {
+      const detail = (line.detail || {}) as Entity;
+      const rule = (line.customs_rule || {}) as Entity;
+      const expenses = (line.expense_details || {}) as Entity;
+      const quote = (line.quote_item || {}) as Entity;
+      return <details key={String(line.line_id)}>
+        <summary>{String(line.description)} · {decimal(line.quantity)} шт. · {decimal(line.total)} ₽</summary>
+        <p>Закупка: {decimal(quote.unit_price)} {String(line.purchase_currency || '')} × {decimal(line.quantity)} шт.
+          × курс {decimal(detail.exchange_rate)} = {decimal(detail.purchase_rub)} ₽.</p>
+        <p>Пошлина: {rule.type === 'FIXED_GROUP'
+          ? `${decimal(rule.value)} ₽ × ${decimal(line.quantity)} / ${decimal(detail.fixed_group_quantity)} шт. группы`
+          : rule.type === 'PERCENTAGE'
+            ? `${decimal(detail.customs_base)} ₽ × ${decimal(rule.value)}%`
+            : 'без пошлины'} = {decimal(detail.duty)} ₽.</p>
+        <DetailPairs values={Object.fromEntries(Object.entries(detail).map(([key, value]) =>
+          [detailLabels[key] || key, decimal(value)]))} />
+        {Object.keys(expenses).length > 0 && <DetailPairs values={Object.fromEntries(
+          Object.entries(expenses).map(([key, value]) => [key + ', ₽', decimal(value)]))} />}
+      </details>;
+    })}
+    {allocations.length > 0 && <>
+      <h4>Распределение общих расходов</h4>
+      <DataTable<Entity> rows={allocations.map((row, index) => ({ ...row, id: String(index) }))} columns={[
+        { key: 'name', label: 'Расход' }, { key: 'amount', label: 'Всего, ₽', render: (row) => decimal(row.amount) },
+        { key: 'method', label: 'Способ' },
+        { key: 'wave_total_quantity', label: 'Кол-во в волне', render: (row) => decimal(row.wave_total_quantity) },
+        { key: 'existing_wave_share', label: 'На прежние заказы, ₽', render: (row) => decimal(row.existing_wave_share) },
+        { key: 'parts', label: 'На позиции расчёта, ₽', render: (row) =>
+          decimal(Object.values((row.parts || {}) as Entity).reduce<number>((sum, value) => sum + Number(value), 0)) },
+      ]} />
+    </>}
+    {rates.length > 0 && <p>Зафиксированные курсы: {rates.map((rate) =>
+      `${rate.currency}: ${decimal(rate.management_per_unit)} ₽ за ${decimal(rate.quoted_units)} (${date(rate.date)}, ${rate.source})`).join('; ')}.</p>}
+    <details><summary>Полный снимок расчёта</summary><pre className="snapshot-json">{JSON.stringify(snapshot, null, 2)}</pre></details>
+  </div>;
+}
 function expenseFromReference(row: Entity): Expense {
   return {
     name: String(row.name || ''),
@@ -81,17 +162,12 @@ function CalculationEditor({
     Object.fromEntries(
       initialIds.map((id) => {
         const old = previousSelections.find((item) => item.quote_item_id === id);
-        return [id, { quote_item_id: id, markup_coefficient: String(old?.markup_coefficient || '1.5') }];
+        return [id, { quote_item_id: id, markup_coefficient: String(old?.markup_coefficient || '1.5'),
+          ...(old?.bonus_coefficient ? { bonus_coefficient: String(old.bonus_coefficient) } : {}) }];
       }),
     ),
   );
   const [bulkMarkup, setBulkMarkup] = useState('1.5');
-  const [rates, setRates] = useState<Rate[]>(() => Array.isArray(previousInput.rates)
-    ? (previousInput.rates as Entity[]).map((rate) => ({
-      currency: String(rate.currency || ''), management_per_unit: String(rate.management_per_unit || ''),
-      quoted_units: String(rate.quoted_units || '1'), date: String(rate.date || ''),
-      source: String(rate.source || ''), reason: String(rate.reason || ''),
-    })) : []);
   const [expenses, setExpenses] = useState<Expense[]>(() => Array.isArray(previousInput.expenses)
     ? (previousInput.expenses as Entity[]).map(expenseFromReference) : []);
   const [expenseTypeId, setExpenseTypeId] = useState('');
@@ -106,10 +182,11 @@ function CalculationEditor({
   const [preview, setPreview] = useState<Entity>();
   const [showDetails, setShowDetails] = useState(false);
   const [attempted, setAttempted] = useState(false);
+  const autoCalculate = useRef<() => void>(() => {});
+  const currentSignature = useRef('');
   const dirty = Boolean(
     profileId ||
     Object.keys(selections).length ||
-    rates.length ||
     expenses.length ||
     prepayment !== '100' ||
     deferred !== '0' ||
@@ -134,12 +211,15 @@ function CalculationEditor({
         profile.status === 'published' &&
         (profile.definition as Entity | undefined)?.methodology === 'itemized_v2',
     ) || [];
+  const selectedProfile = profileOptions.find((profile) => profile.id === profileId);
+  const profileRates = ((selectedProfile?.definition as Entity | undefined)?.exchange_rates || []) as Rate[];
   const serverError = command.error instanceof ApiError ? command.error : undefined;
   const serverSelectionIndex = Number(serverError?.field?.match(/^selections\.(\d+)/)?.[1]);
   const serverSelectionId = Number.isInteger(serverSelectionIndex)
     ? Object.values(selections)[serverSelectionIndex]?.quote_item_id
     : undefined;
   const errors: string[] = [];
+  if (!request.wave_id) errors.push('Руководитель должен назначить волну поставки в заявке.');
   if (!profileId) errors.push('Не выбран профиль расчёта.');
   if (!Object.keys(selections).length) errors.push('Выберите хотя бы одну позицию квоты.');
   if (Object.keys(selections).length > selectedRows.length)
@@ -151,12 +231,17 @@ function CalculationEditor({
       errors.push('Для позиции ' + title + ' не определена товарная группа.');
     if (row.unit_price == null)
       errors.push('Для позиции ' + title + ' отсутствует закупочная цена.');
+    if (row.delivery_days == null)
+      errors.push('Для позиции ' + title + ' не указан срок поставки.');
     if (!validMarkup(selections[row.id].markup_coefficient))
       errors.push('Наценка позиции ' + title + ' должна быть не меньше 1.');
+    if (auth.can('finance.reward.read') && !validMarkup(String(selections[row.id].bonus_coefficient ||
+      (selectedProfile?.definition as Entity | undefined)?.default_bonus_coefficient || '1')))
+      errors.push('Коэффициент бонуса позиции ' + title + ' должен быть не меньше 1.');
     if (row.expired) errors.push('Срок действия цены позиции ' + title + ' истёк.');
   });
   neededCurrencies.forEach((currency) => {
-    const rate = rates.find((entry) => entry.currency === currency);
+    const rate = profileRates.find((entry) => entry.currency === currency);
     if (!rate) errors.push('Для ' + currency + ' отсутствует курс к RUB.');
     else if (
       !positive(rate.management_per_unit) ||
@@ -216,9 +301,10 @@ function CalculationEditor({
     });
     invalidate();
   }
-  async function calculate(save = false) {
-    setAttempted(true);
+  async function calculate(save = false, quiet = false) {
+    if (!quiet) setAttempted(true);
     if (errors.length || (save && !preview)) return;
+    const submittedSignature = inputSignature;
     try {
       const result = await command.run<Entity>(
         '/requests/' + request.id + '/calculations' + (save ? '' : '/preview'),
@@ -226,7 +312,7 @@ function CalculationEditor({
           request_version: request.version,
           profile_id: profileId,
           selections: Object.values(selections),
-          rates: rates.filter((rate) => neededCurrencies.includes(rate.currency)),
+          rates: [],
           expenses,
           payment_terms: {
             prepayment_percent: prepayment,
@@ -252,13 +338,25 @@ function CalculationEditor({
         true,
       );
       if (save && result) onSuccess();
-      else if (result) setPreview(result);
+      else if (result && submittedSignature === currentSignature.current) setPreview(result);
     } catch {
       /* Сохраняем ввод, сообщение показывает ErrorBox. */
     }
   }
+  autoCalculate.current = () => { void calculate(false, true); };
+  const inputSignature = JSON.stringify({ profileId, selections, expenses, prepayment, deferred,
+    deferredDays, deferredStart, internalEnabled, internalType, internalValue, serviceFeePercent,
+    requestVersion: request.version, waveId: request.wave_id, selectedRows: selectedRows.map((row) => row.id) });
+  currentSignature.current = inputSignature;
+  const autoReady = !preview && !command.busy && !command.error && errors.length === 0;
+  useEffect(() => {
+    if (!autoReady) return;
+    const timer = window.setTimeout(() => autoCalculate.current(), 450);
+    return () => window.clearTimeout(timer);
+  }, [autoReady, inputSignature]);
   const snapshot = (preview?.snapshot || preview) as Record<string, unknown> | undefined;
   const outputLines = (snapshot?.lines || []) as Entity[];
+  const waveDistribution = (snapshot?.wave_distribution || {}) as Entity;
   const totals = snapshot?.totals as Record<string, unknown> | undefined;
   const resultLabels: Record<string, string> = {
     purchase_rub: 'Закупка, ₽',
@@ -425,6 +523,21 @@ function CalculationEditor({
                       '—'
                     ),
                 },
+                ...(auth.can('finance.reward.read') ? [{
+                  key: 'bonus', label: 'Бонус / откат', sortable: false,
+                  render: (row: Entity) => selections[row.id] ? <input
+                    className="calculation-markup" inputMode="decimal"
+                    aria-label={'Бонус ' + nameOf(row)}
+                    value={selections[row.id].bonus_coefficient ||
+                      String((selectedProfile?.definition as Entity | undefined)?.default_bonus_coefficient || '1')}
+                    onChange={(event) => {
+                      setSelections((current) => ({ ...current, [row.id]: {
+                        ...current[row.id], bonus_coefficient: event.target.value.replace(',', '.'),
+                      } }));
+                      invalidate();
+                    }}
+                  /> : '—',
+                }] : []),
               ]}
             />
             <div className="calculation-bulk-markup">
@@ -459,124 +572,18 @@ function CalculationEditor({
           <section className="calculation-section">
             <div className="section-heading">
               <div>
-                <h3>Курсы валют</h3>
-                <p>Прямой курс каждой закупочной валюты к RUB.</p>
+                <h3>Курсы валют из профиля</h3>
+                <p>Для нового курса создайте версию финансового профиля. В расчёте сохранится его снимок.</p>
               </div>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={
-                  !neededCurrencies.some(
-                    (currency) => !rates.some((rate) => rate.currency === currency),
-                  )
-                }
-                onClick={() => {
-                  const missing = neededCurrencies.filter(
-                    (currency) => !rates.some((rate) => rate.currency === currency),
-                  );
-                  setRates((current) => [
-                    ...current,
-                    ...missing.map((currency) => ({
-                      currency,
-                      management_per_unit: '',
-                      quoted_units: '1',
-                      date: today(),
-                      source: '',
-                      reason: '',
-                    })),
-                  ]);
-                  invalidate();
-                }}
-              >
-                <Plus size={15} /> Добавить курсы
-              </Button>
             </div>
-            {serverError?.field?.startsWith('rates') && (
-              <p className="field-error">{serverError.message}</p>
-            )}
-            {rates.map((rate, index) => (
-              <div className="calculation-rate-row" key={rate.currency}>
-                <strong>{rate.currency} → RUB</strong>
-                <label>
-                  Курс{' '}
-                  <input
-                    inputMode="decimal"
-                    value={rate.management_per_unit}
-                    aria-invalid={attempted && !positive(rate.management_per_unit)}
-                    onChange={(event) => {
-                      setRates((current) =>
-                        current.map((entry, i) =>
-                          i === index
-                            ? {
-                                ...entry,
-                                management_per_unit: event.target.value.replace(',', '.'),
-                              }
-                            : entry,
-                        ),
-                      );
-                      invalidate();
-                    }}
-                  />
-                </label>
-                <label>
-                  За единиц{' '}
-                  <input
-                    inputMode="decimal"
-                    value={rate.quoted_units}
-                    onChange={(event) => {
-                      setRates((current) =>
-                        current.map((entry, i) =>
-                          i === index
-                            ? { ...entry, quoted_units: event.target.value.replace(',', '.') }
-                            : entry,
-                        ),
-                      );
-                      invalidate();
-                    }}
-                  />
-                </label>
-                <label>
-                  Дата{' '}
-                  <input
-                    type="date"
-                    value={rate.date}
-                    onChange={(event) => {
-                      setRates((current) =>
-                        current.map((entry, i) =>
-                          i === index ? { ...entry, date: event.target.value } : entry,
-                        ),
-                      );
-                      invalidate();
-                    }}
-                  />
-                </label>
-                <label>
-                  Источник{' '}
-                  <input
-                    value={rate.source}
-                    onChange={(event) => {
-                      setRates((current) =>
-                        current.map((entry, i) =>
-                          i === index ? { ...entry, source: event.target.value } : entry,
-                        ),
-                      );
-                      invalidate();
-                    }}
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label={'Удалить курс ' + rate.currency}
-                  onClick={() => {
-                    setRates((current) => current.filter((_, i) => i !== index));
-                    invalidate();
-                  }}
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            ))}
+            {neededCurrencies.map((currency) => {
+              const rate = profileRates.find((entry) => entry.currency === currency);
+              return <p key={currency}>
+                <strong>{currency} → RUB:</strong> {rate
+                  ? `${decimal(rate.management_per_unit)} ₽ за ${decimal(rate.quoted_units)} · ${date(rate.date)} · ${rate.source}`
+                  : 'Курс не задан в выбранном профиле'}
+              </p>;
+            })}
           </section>
           <section className="calculation-section">
             <div className="section-heading">
@@ -947,10 +954,11 @@ function CalculationEditor({
                 />
               )}
               <DataTable<Entity>
-                rows={outputLines.map((line, index) => ({
-                  ...line,
-                  id: String(line.line_id || index),
-                }))}
+                rows={[...outputLines.map((line, index) => ({
+                  ...line, id: String(line.line_id || index),
+                })), ...(Number(waveDistribution.existing_quantity || 0) > 0
+                  ? [{ id: 'wave-existing', description: 'Уже подтверждено в волне',
+                    quantity: waveDistribution.existing_quantity, detail: {} }] : [])]}
                 columns={[
                   { key: 'description', label: 'Товар' },
                   { key: 'packing', label: 'Фасовка' },
@@ -980,7 +988,7 @@ function CalculationEditor({
                 ]}
               />
               {showDetails && (
-                <pre className="snapshot-json">{JSON.stringify(snapshot, null, 2)}</pre>
+                <CalculationBreakdown snapshot={snapshot as Entity} />
               )}
             </section>
           )}
@@ -1015,6 +1023,14 @@ export function RequestCalculations({
   launchQuoteItemIds?: string[];
   onLaunchConsumed?: () => void;
 }) {
+  const auth = useAuth();
+  const waves = useApi<Page>('/waves');
+  const waveCommand = useCommand();
+  const [waveId, setWaveId] = useState(String(request.wave_id || ''));
+  const [assignedWaveId, setAssignedWaveId] = useState(String(request.wave_id || ''));
+  const [requestVersion, setRequestVersion] = useState(Number(request.version));
+  const openWaves = (waves.data?.items || []).filter((wave) =>
+    ['planned', 'assembling'].includes(String(wave.status)) || wave.id === assignedWaveId);
   const [editing, setEditing] = useState(launchQuoteItemIds.length > 0);
   const [initialIds, setInitialIds] = useState(launchQuoteItemIds);
   const [selected, setSelected] = useState<Entity>();
@@ -1027,6 +1043,29 @@ export function RequestCalculations({
   }
   return (
     <>
+      <section className="calculation-section">
+        <div className="section-heading"><div>
+          <h3>Волна поставки</h3>
+          <p>Руководитель назначает волну поставщика до расчёта. Подтверждённые количества в ней учитываются автоматически.</p>
+        </div></div>
+        <ErrorBox error={waveCommand.error || waves.error} />
+        <div className="inline-actions">
+          <select aria-label="Волна поставки" value={waveId} disabled={!auth.can('waves.write') || editing}
+            onChange={(event) => setWaveId(event.target.value)}>
+            <option value="">Выберите волну</option>
+            {openWaves.map((wave) => <option key={wave.id} value={wave.id}>
+              {String(wave.number)} · {String(wave.supplier_name || 'Поставщик не указан')} · {date(wave.departure_date)}
+            </option>)}
+          </select>
+          {auth.can('waves.write') && <Button type="button" variant="secondary" busy={waveCommand.busy}
+            disabled={waveId === assignedWaveId || editing}
+            onClick={() => void waveCommand.run<Entity>('/requests/' + request.id + '/wave',
+              { request_version: requestVersion, wave_id: waveId || null }, 'PUT', true)
+              .then((result) => { if (result) { setRequestVersion(Number(result.version)); setAssignedWaveId(String(result.wave_id || '')); } })}>
+            Сохранить волну
+          </Button>}
+        </div>
+      </section>
       <div className="tab-actions">
         <Button
           onClick={() => {
@@ -1106,13 +1145,13 @@ export function RequestCalculations({
             >
               Создать новую версию
             </Button>
-            <pre className="snapshot-json">{JSON.stringify(selected.snapshot, null, 2)}</pre>
+            <CalculationBreakdown snapshot={selected.snapshot as Entity} />
           </div>
         </Modal>
       )}
       {editing && (
         <CalculationEditor
-          request={request}
+          request={{ ...request, version: requestVersion, wave_id: assignedWaveId }}
           previous={previous}
           initialIds={initialIds}
           onClose={closeEditor}

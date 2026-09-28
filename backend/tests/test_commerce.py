@@ -280,6 +280,7 @@ def wave(env, number):
         "/waves",
         {
             "number": number,
+            "supplier_id": env["supplier_id"],
             "route": "Тестовый маршрут",
             "origin_country": "Условная страна",
             "owner_id": env["owner_id"],

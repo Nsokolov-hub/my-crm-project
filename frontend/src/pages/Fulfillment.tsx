@@ -271,7 +271,8 @@ export function ApprovalDecision({
   );
 }
 const waveFields: Field[] = [
-  { name: 'number', label: 'Номер волны', required: true },
+  { name: 'number', label: 'Номер волны', help: 'Оставьте пустым для номера «Поставщик 1», «Поставщик 2»…' },
+  { name: 'supplier_id', label: 'Поставщик', type: 'select', source: '/counterparties?kind=supplier', required: true },
   { name: 'route', label: 'Маршрут', required: true },
   { name: 'origin_country', label: 'Страна отправления', required: true },
   { name: 'owner_id', label: 'Ответственный', type: 'select', source: '/users', required: true },
@@ -308,6 +309,7 @@ export function Waves() {
         onSelect={setSelected}
         columns={[
           { key: 'number', label: 'Волна' },
+          { key: 'supplier_name', label: 'Поставщик' },
           { key: 'route', label: 'Маршрут' },
           { key: 'status', label: 'Состояние', render: (r) => <Badge value={r.status} /> },
           { key: 'close_date', label: 'Приём до', render: (r) => date(r.close_date) },
@@ -320,6 +322,7 @@ export function Waves() {
           <div className="form-body">
             <DetailPairs
               values={{
+                Поставщик: selected.supplier_name,
                 Маршрут: selected.route,
                 Статус: selected.status,
                 'Приём до': date(selected.close_date),

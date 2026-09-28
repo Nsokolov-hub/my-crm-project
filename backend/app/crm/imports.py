@@ -19,7 +19,7 @@ from app.core.db import get_db
 from app.core.errors import DomainError
 from app.core.models import OutboxEvent, User
 from app.core.routes import Input
-from app.core.security import check_client, client_predicate, current_user, require_permission
+from app.core.security import can, check_client, client_predicate, current_user, require_permission
 from app.core.service import advisory, audit, idem, lock, serialize
 from app.core.service import page as paginate
 from app.crm.models import Contact, Counterparty, ImportBatch, ImportRow
@@ -39,6 +39,24 @@ COLUMNS = {
     "comment": "Комментарий",
     "owner_id": "Ответственный",
 }
+CALLS_COLUMNS = {
+    "name": "Название",
+    "tax_id": "ИНН",
+    "profile": "ПРОФИЛЬ",
+    "category": "Тип/категория",
+    "federal_district": "Федеральный округ",
+    "city": "Регион/город",
+    "registration_number": "ОГРН",
+    "business_profile": "Основной профиль",
+    "okved": "ОКВЭД",
+    "revenue": "Выручка (посл. изв. год)",
+    "website": "Сайт",
+    "email": "E-mail",
+    "phone": "Телефон",
+    "comment": "Примечание",
+    "procurement_phone": "Телефон отдела закупок/снабжения",
+    "procurement_email": "E-mail отдела закупок/снабжения",
+}
 FIELD_LIMITS = {
     "external_id": 250,
     "name": 250,
@@ -52,6 +70,17 @@ FIELD_LIMITS = {
     "source": 250,
     "comment": 2000,
     "owner_id": 36,
+    "profile": 250,
+    "category": 250,
+    "federal_district": 100,
+    "registration_number": 100,
+    "business_profile": 1000,
+    "okved": 100,
+    "revenue": 250,
+    "website": 500,
+    "procurement_phone": 250,
+    "procurement_email": 500,
+    "raw_email": 500,
 }
 KIND_ALIASES = {
     "клиент": "client",
@@ -86,8 +115,12 @@ def xlsx(rows: list[list[Any]]) -> bytes:
 def string_value(cell: Any) -> str:
     if cell.value is None:
         return ""
-    if isinstance(cell.value, int) and re.fullmatch(r"0+", cell.number_format or ""):
-        return str(cell.value).zfill(len(cell.number_format))
+    if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+        if isinstance(cell.value, int) or cell.value.is_integer():
+            result = str(int(cell.value))
+            if re.fullmatch(r"0+", cell.number_format or ""):
+                return result.zfill(len(cell.number_format))
+            return result
     return str(cell.value).strip()
 
 
@@ -95,7 +128,7 @@ def literal_like(value: str) -> str:
     return value.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
 
 
-def parse_rows(data: bytes, mapping: dict[str, str]) -> list[dict[str, Any]]:
+def parse_rows(data: bytes, mapping: dict[str, str], mode: str = "general") -> list[dict[str, Any]]:
     try:
         archive = ZipFile(io.BytesIO(data))
         infos = archive.infolist()
@@ -111,19 +144,24 @@ def parse_rows(data: bytes, mapping: dict[str, str]) -> list[dict[str, Any]]:
             "IMPORT_INVALID_XLSX", "Не удалось прочитать XLSX. Используйте шаблон импорта."
         ) from None
     try:
-        sheet = workbook.active
+        sheet = workbook["Данные"] if mode == "calls" and "Данные" in workbook else workbook.active
         if sheet.max_row and sheet.max_row > 10001:
             raise DomainError("IMPORT_ROW_LIMIT", "В одной партии допускается до 10 000 строк")
         raw = iter(sheet.iter_rows())
         headers = [string_value(c) for c in next(raw, [])]
         if len(headers) > 100:
             raise DomainError("IMPORT_COLUMN_LIMIT", "В файле слишком много колонок")
+        labels = CALLS_COLUMNS if mode == "calls" else COLUMNS
         index = {
             key: headers.index(mapping.get(key, label))
-            for key, label in COLUMNS.items()
+            for key, label in labels.items()
             if mapping.get(key, label) in headers
         }
-        if "name" not in index and "contact" not in index:
+        if mode == "calls" and ("name" not in index or "tax_id" not in index):
+            raise DomainError(
+                "IMPORT_MAPPING_REQUIRED", "Сопоставьте столбцы «Название» и «ИНН»", field="mapping"
+            )
+        if mode != "calls" and "name" not in index and "contact" not in index:
             raise DomainError(
                 "IMPORT_MAPPING_REQUIRED", "Сопоставьте колонку организации или контакта", field="mapping"
             )
@@ -134,18 +172,32 @@ def parse_rows(data: bytes, mapping: dict[str, str]) -> list[dict[str, Any]]:
             if not any(c.value is not None for c in cells):
                 continue
             row = {key: string_value(cells[i]) if i < len(cells) else "" for key, i in index.items()}
+            if mode == "calls":
+                row = {
+                    key: "" if value.casefold() in {"не найдено", "нет данных", "—", "-"} else value
+                    for key, value in row.items()
+                }
+                row["source"] = "База обзвона"
             errors = []
             if any(c.data_type == "f" for c in cells):
                 errors.append({"field": "row", "message": "Формулы не допускаются: вставьте значения"})
-            if not row.get("name") and not row.get("contact"):
+            if mode == "calls" and not row.get("name"):
+                errors.append({"field": "name", "message": "Укажите название организации"})
+            if mode == "calls" and not row.get("tax_id"):
+                errors.append({"field": "tax_id", "message": "Укажите ИНН"})
+            if mode != "calls" and not row.get("name") and not row.get("contact"):
                 errors.append({"field": "name", "message": "Укажите организацию или контакт"})
             kind = row.get("kind", "").strip().casefold()
             if kind and kind not in KIND_ALIASES:
                 errors.append({"field": "kind", "message": "Тип: клиент, поставщик или клиент и поставщик"})
             row["kind"] = KIND_ALIASES.get(kind, "")
             row["email"] = row.get("email", "").strip().lower()
-            row["phone"] = re.sub(r"[^\d+]", "", row.get("phone", ""))
-            if row["email"] and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", row["email"]):
+            if mode == "calls" and row["email"] and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", row["email"]):
+                row["raw_email"] = row["email"]
+                row["email"] = ""
+            if mode != "calls":
+                row["phone"] = re.sub(r"[^\d+]", "", row.get("phone", ""))
+            if mode != "calls" and row["email"] and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", row["email"]):
                 errors.append({"field": "email", "message": "Некорректная электронная почта"})
             for field, value in row.items():
                 if len(value) > FIELD_LIMITS[field]:
@@ -168,14 +220,28 @@ def template(user: User = Depends(current_user), db: Session = Depends(get_db)) 
     )
 
 
+@router.get("/imports/template-calls.xlsx")
+def calls_template(user: User = Depends(current_user), db: Session = Depends(get_db)) -> Response:
+    require_permission(db, user, "calls.write")
+    require_permission(db, user, "clients.write")
+    return Response(
+        xlsx([list(CALLS_COLUMNS.values())]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="calls-template.xlsx"'},
+    )
+
+
 @router.post("/imports/preview")
 def preview(
     file: UploadFile = File(),
     mapping: str = Form("{}"),
+    mode: str = Form("general"),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    require_permission(db, user, "imports.write")
+    if mode not in ("general", "calls"):
+        raise DomainError("IMPORT_MODE_INVALID", "Неизвестный режим импорта")
+    require_permission(db, user, "calls.write" if mode == "calls" else "imports.write")
     require_permission(db, user, "clients.write")
     if not (file.filename or "").lower().endswith(".xlsx"):
         raise DomainError("IMPORT_TYPE_INVALID", "Загрузите файл XLSX без макросов")
@@ -185,7 +251,8 @@ def preview(
     try:
         columns = json.loads(mapping)
         if not isinstance(columns, dict) or any(
-            k not in COLUMNS or not isinstance(v, str) for k, v in columns.items()
+            k not in (CALLS_COLUMNS if mode == "calls" else COLUMNS) or not isinstance(v, str)
+            for k, v in columns.items()
         ):
             raise ValueError
     except (ValueError, TypeError):
@@ -193,7 +260,7 @@ def preview(
             "MAPPING_INVALID", "Сопоставление колонок должно быть JSON-объектом", field="mapping"
         ) from None
     
-    parsed = parse_rows(data, columns)
+    parsed = parse_rows(data, columns, mode)
     key = f"imports/{uuid4().hex}.xlsx"
     path = settings.storage_dir / key
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -203,7 +270,7 @@ def preview(
         source_name=Path(file.filename or "import.xlsx").name[:250],
         file_key=key,
         file_hash=hashlib.sha256(data).hexdigest(),
-        mapping=columns,
+        mapping={**columns, "__mode__": mode},
     )
     db.add(batch)
     db.flush()
@@ -256,7 +323,7 @@ def preview(
                 )
             )
             if row.candidate_ids:
-                row.action = "conflict"
+                row.action = "skip" if mode == "calls" else "conflict"
         owner_id = values.get("owner_id")
         if owner_id:
             target = db.get(User, owner_id)
@@ -291,10 +358,10 @@ def summary(db: Session, batch_id: str) -> dict[str, int]:
 
 
 def owned_batch(db: Session, user: User, entity_id: str) -> ImportBatch:
-    require_permission(db, user, "imports.write")
     row = db.get(ImportBatch, entity_id)
     if row is None or row.author_id != user.id:
         raise DomainError("NOT_FOUND", "Партия импорта недоступна", 404)
+    require_permission(db, user, "calls.write" if row.mapping.get("__mode__") == "calls" else "imports.write")
     return row
 
 
@@ -302,7 +369,8 @@ def owned_batch(db: Session, user: User, entity_id: str) -> ImportBatch:
 def batches(
     page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
-    require_permission(db, user, "imports.write")
+    if not can(db, user, "imports.write") and not can(db, user, "calls.write"):
+        require_permission(db, user, "imports.write")
     return paginate(
         db,
         select(ImportBatch).where(ImportBatch.author_id == user.id).order_by(ImportBatch.created_at.desc()),
@@ -393,9 +461,9 @@ def process_import(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
     user = db.get(User, payload["user_id"])
     if user is None or not user.active:
         raise DomainError("IMPORT_ACCESS_REVOKED", "Доступ инициатора импорта отозван")
-    require_permission(db, user, "imports.write")
-    require_permission(db, user, "clients.write")
     batch = lock(db, ImportBatch, payload["batch_id"])
+    require_permission(db, user, "calls.write" if batch.mapping.get("__mode__") == "calls" else "imports.write")
+    require_permission(db, user, "clients.write")
     if batch.status == "completed":
         return serialize(batch)
     advisory(db, "import.counterparties")
@@ -455,7 +523,11 @@ def process_import(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
         if external:
             client.external_id = external
         details = dict(client.details or {})
-        for field in ("city", "comment"):
+        for field in (
+            "city", "comment", "profile", "category", "federal_district", "registration_number",
+            "business_profile", "okved", "revenue", "website", "procurement_phone",
+            "procurement_email", "raw_email",
+        ):
             if data.get(field):
                 details[field] = data[field]
         client.details = details

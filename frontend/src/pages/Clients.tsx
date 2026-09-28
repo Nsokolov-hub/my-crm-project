@@ -9,6 +9,12 @@ import { Badge, Button, DetailPairs, Modal, PageHeading } from '../components/ui
 import { callFields, clientFields, contactFields } from '../lib/fields';
 import { date } from '../lib/format';
 import type { Entity, Field } from '../lib/types';
+const callProspectFields: Field[] = [
+  { name: 'name', label: 'Название', required: true, wide: true },
+  { name: 'tax_id', label: 'ИНН', required: true },
+  { name: 'phone', label: 'Телефон' },
+  { name: 'email', label: 'E-mail', type: 'email' },
+];
 export function Clients() {
   const auth = useAuth();
   const [selected, setSelected] = useState<Entity>();
@@ -147,11 +153,38 @@ export function Clients() {
 export function Calls() {
   const auth = useAuth();
   const [selected, setSelected] = useState<Entity>();
+  const [prospect, setProspect] = useState<Entity>();
+  const [recording, setRecording] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [revision, setRevision] = useState(0);
   return (
     <>
       <PageHeading
         title="База обзвона"
-        description="Зафиксируйте разговор и назначьте следующее действие."
+        description="Клиенты для обзвона, история разговоров и следующие действия."
+        actions={auth.can('calls.write') && auth.can('clients.write') && (
+          <Button variant="secondary" onClick={() => setImporting(true)}>
+            <Upload size={17} /> Загрузить XLSX
+          </Button>
+        )}
+      />
+      <Collection
+        title="Клиенты для обзвона"
+        endpoint="/counterparties"
+        query="&kind=client"
+        fields={callProspectFields}
+        createLabel="Добавить клиента"
+        canCreate={auth.can('clients.write')}
+        refreshKey={revision}
+        onSelect={setProspect}
+        columns={[
+          { key: 'name', label: 'Название' },
+          { key: 'tax_id', label: 'ИНН' },
+          { key: 'profile', label: 'Профиль', render: (row) => String((row.details as Entity | undefined)?.profile || '—') },
+          { key: 'city', label: 'Регион/город', render: (row) => String((row.details as Entity | undefined)?.city || '—') },
+          { key: 'phone', label: 'Телефон' },
+          { key: 'email', label: 'E-mail' },
+        ]}
       />
       <Collection
         title="Журнал звонков"
@@ -159,6 +192,7 @@ export function Calls() {
         fields={callFields}
         createLabel="Записать звонок"
         canCreate={auth.can('calls.write') && auth.can('clients.write')}
+        refreshKey={revision}
         onSelect={setSelected}
         columns={[
           {
@@ -172,6 +206,45 @@ export function Calls() {
           { key: 'next_at', label: 'Следующий контакт', render: (r) => date(r.next_at, true) },
         ]}
       />
+      {prospect && !recording && (
+        <Modal title={String(prospect.name)} onClose={() => setProspect(undefined)}>
+          <div className="form-body">
+            <DetailPairs values={{
+              ИНН: prospect.tax_id,
+              Профиль: (prospect.details as Entity | undefined)?.profile,
+              Категория: (prospect.details as Entity | undefined)?.category,
+              'Регион/город': (prospect.details as Entity | undefined)?.city,
+              ОГРН: (prospect.details as Entity | undefined)?.registration_number,
+              ОКВЭД: (prospect.details as Entity | undefined)?.okved,
+              Сайт: (prospect.details as Entity | undefined)?.website,
+              Телефон: prospect.phone,
+              'E-mail': prospect.email || (prospect.details as Entity | undefined)?.raw_email,
+              'Телефон закупок': (prospect.details as Entity | undefined)?.procurement_phone,
+              'E-mail закупок': (prospect.details as Entity | undefined)?.procurement_email,
+              Примечание: (prospect.details as Entity | undefined)?.comment,
+            }} />
+            {auth.can('calls.write') && (
+              <Button onClick={() => setRecording(true)}><Phone size={15} /> Записать звонок</Button>
+            )}
+          </div>
+        </Modal>
+      )}
+      {prospect && recording && (
+        <RecordForm
+          title="Записать звонок"
+          endpoint="/calls"
+          fields={callFields}
+          initial={{ client_id: prospect.id }}
+          onClose={() => setRecording(false)}
+          onSuccess={() => {
+            setRecording(false);
+            setProspect(undefined);
+            setRevision((value) => value + 1);
+          }}
+        />
+      )}
+      <ImportDialog open={importing} mode="calls" onClose={() => setImporting(false)}
+        onSuccess={() => setRevision((value) => value + 1)} />
       {selected && (
         <Modal title="Запись звонка" onClose={() => setSelected(undefined)}>
           <div className="form-body">

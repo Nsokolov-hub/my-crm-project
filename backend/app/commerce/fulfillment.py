@@ -10,8 +10,8 @@ from app.core.errors import error
 from app.core.models import User
 from app.core.security import check_request, request_predicate, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
-from app.crm.models import QuoteItem, Request as CRMRequest, RequestItem
-from app.crm.models import Task
+from app.crm.models import Counterparty, QuoteItem, RequestItem, Task
+from app.crm.models import Request as CRMRequest
 
 from .calculator import convert, dec, digest
 from .models import (
@@ -581,7 +581,9 @@ def wave_view(db, user, wave: Wave) -> dict:
         .join(Execution, Execution.id == WaveAllocation.execution_id)
         .where(WaveAllocation.wave_id == wave.id, Execution.request_id.in_(accessible))
     ).all()
-    return {**serialize(wave), "allocations": [allocation_view(db, row) for row in allocations]}
+    supplier = db.get(Counterparty, wave.supplier_id) if wave.supplier_id else None
+    return {**serialize(wave), "supplier_name": supplier.name if supplier else None,
+            "allocations": [allocation_view(db, row) for row in allocations]}
 
 
 @router.get("/waves")
@@ -600,15 +602,26 @@ def create_wave(data: WaveIn, db: DB, user: Actor):
     require_permission(db, user, "waves.write")
 
     def operation():
+        supplier = db.get(Counterparty, data.supplier_id)
+        if not supplier or supplier.archived or supplier.kind not in ("supplier", "both"):
+            error("SUPPLIER_REQUIRED", "Поставщик волны не найден", field="supplier_id")
         if not data.close_date <= data.departure_date <= data.arrival_date:
             error("WAVE_DATES", "Даты закрытия, отправления и прибытия должны идти по порядку")
         owner = db.get(User, data.owner_id)
         if not owner or not owner.active:
             error("OWNER_REQUIRED", "Выберите действующего ответственного")
-        advisory(db, f"wave-number:{data.number}")
-        if db.scalar(select(Wave.id).where(Wave.number == data.number)):
+        advisory(db, f"wave-supplier:{supplier.id}")
+        number = data.number.strip()
+        if not number:
+            prefix = supplier.name[:65].strip()
+            existing = db.scalars(select(Wave.number).where(Wave.supplier_id == supplier.id)).all()
+            sequence = max((int(value[len(prefix) + 1:]) for value in existing
+                            if value.startswith(prefix + " ") and value[len(prefix) + 1:].isdigit()), default=0) + 1
+            number = f"{prefix} {sequence}"
+        advisory(db, f"wave-number:{number}")
+        if db.scalar(select(Wave.id).where(Wave.number == number)):
             error("WAVE_NUMBER", "Номер волны уже существует", 409)
-        obj = Wave(**data.model_dump(exclude={"idempotency_key"}))
+        obj = Wave(**{**data.model_dump(exclude={"idempotency_key"}), "number": number})
         db.add(obj)
         db.flush()
         audit(db, user, "wave", obj.id, "create", after=serialize(obj))
@@ -701,6 +714,11 @@ def allocate_wave(wave_id: str, data: AllocateWaveIn, db: DB, user: Actor):
         if wave.status not in OPEN_WAVES:
             error("WAVE_CLOSED", "Добавлять позиции можно только в открытую волну")
         execution = lock(db, Execution, initial.id)
+        if wave.supplier_id:
+            supplier_id = (db.get(QuoteItem, execution.quote_item_id).supplier_id
+                           if execution.quote_item_id else db.get(Quote, execution.quote_id).supplier_id)
+            if supplier_id != wave.supplier_id:
+                error("WAVE_SUPPLIER", "Позиция относится к другому поставщику")
         approval = db.get(Approval, data.approval_id)
         if not approval:
             error("APPROVAL_REQUIRED", "Согласование не найдено")

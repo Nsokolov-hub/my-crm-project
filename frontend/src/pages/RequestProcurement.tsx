@@ -284,10 +284,11 @@ function QuoteSheetEditor({
         !row.packing_id ||
         !row.quantity ||
         !row.currency_id ||
-        !row.unit_price
+        !row.unit_price ||
+        row.delivery_days === ''
       )
         errors[row.key] =
-          'Выберите структурированную позицию заявки, товар, фасовку, количество, цену и валюту.';
+          'Выберите позицию заявки, товар, фасовку, количество, цену, валюту и срок поставки.';
       else if (
         !Number.isInteger(Number(row.quantity)) ||
         Number(row.quantity) <= 0 ||
