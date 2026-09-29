@@ -13,7 +13,7 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-it('applies call-base column filters and search only after Enter', async () => {
+it('searches one second after the last change to a call-base filter', async () => {
   vi.mocked(api).mockImplementation(async () => ({
     items: [{ id: 'client-1', name: 'Альфа' }],
     total: 1,
@@ -32,19 +32,30 @@ it('applies call-base column filters and search only after Enter', async () => {
   const search = screen.getByRole('textbox', { name: 'Поиск: Клиенты для обзвона' });
   const initialCalls = vi.mocked(api).mock.calls.length;
 
-  fireEvent.change(column, { target: { value: 'Клиент' } });
-  fireEvent.change(search, { target: { value: 'Москва' } });
+  fireEvent.change(column, { target: { value: 'Кл' } });
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 350));
+    await new Promise((resolve) => setTimeout(resolve, 600));
   });
   expect(api).toHaveBeenCalledTimes(initialCalls);
 
+  fireEvent.change(search, { target: { value: 'Мос' } });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+  });
+  expect(api).toHaveBeenCalledTimes(initialCalls);
+
+  fireEvent.change(search, { target: { value: 'Москва' } });
   fireEvent.keyDown(column, { key: 'Enter' });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+  });
+  expect(api).toHaveBeenCalledTimes(initialCalls);
+
   await waitFor(() => expect(vi.mocked(api).mock.calls.length).toBe(initialCalls + 1));
   const submitted = new URLSearchParams(
     String(vi.mocked(api).mock.calls.at(-1)?.[0]).split('?')[1],
   );
-  expect(submitted.get('filter_name')).toBe('Клиент');
+  expect(submitted.get('filter_name')).toBe('Кл');
   expect(submitted.get('q')).toBe('Москва');
 
   await screen.findByText('Альфа');
@@ -52,10 +63,9 @@ it('applies call-base column filters and search only after Enter', async () => {
     target: { value: '' },
   });
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 350));
+    await new Promise((resolve) => setTimeout(resolve, 600));
   });
   expect(api).toHaveBeenCalledTimes(initialCalls + 1);
-  fireEvent.keyDown(search, { key: 'Enter' });
   await waitFor(() => expect(vi.mocked(api).mock.calls.length).toBe(initialCalls + 2));
   const cleared = new URLSearchParams(String(vi.mocked(api).mock.calls.at(-1)?.[0]).split('?')[1]);
   expect(cleared.get('filter_name')).toBe('');
