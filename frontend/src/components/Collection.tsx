@@ -55,14 +55,24 @@ export function Collection({
   const [direction, setDirection] = useState('desc');
   const [creating, setCreating] = useState(false);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [submittedQ, setSubmittedQ] = useState('');
+  const [submittedFilters, setSubmittedFilters] = useState<Record<string, string>>({});
+  const submitOnEnter = filterKeys.length > 0;
   const debounced = useDebounced(q);
   const debouncedFilters = useDebounced(columnFilters);
+  const effectiveQ = submitOnEnter ? submittedQ : debounced;
+  const effectiveFilters = submitOnEnter ? submittedFilters : debouncedFilters;
   const filterQuery = filterKeys
-    .map((key) => `&filter_${key}=${encodeURIComponent(debouncedFilters[key] || '')}`)
+    .map((key) => `&filter_${key}=${encodeURIComponent(effectiveFilters[key] || '')}`)
     .join('');
   const data = useApi<Page>(
-    `${endpoint}${endpoint.includes('?') ? '&' : '?'}page=${page}&page_size=${pageSize}&q=${encodeURIComponent(debounced)}&sort=${sort}&direction=${direction}&ui_revision=${refreshKey}${query}${filterQuery}`,
+    `${endpoint}${endpoint.includes('?') ? '&' : '?'}page=${page}&page_size=${pageSize}&q=${encodeURIComponent(effectiveQ)}&sort=${sort}&direction=${direction}&ui_revision=${refreshKey}${query}${filterQuery}`,
   );
+  function submitFilters() {
+    setSubmittedQ(q);
+    setSubmittedFilters({ ...columnFilters });
+    setPage(1);
+  }
   const rows = data.data?.items || [];
   const visibleIds = rows.map((row) => row.id);
   const selectedOnPage = visibleIds.filter((id) => selection?.selectedIds.has(id)).length;
@@ -131,11 +141,19 @@ export function Collection({
           <Search size={17} />
           <input
             aria-label={`Поиск: ${title}`}
-            placeholder="Найти по названию или номеру…"
+            placeholder={
+              submitOnEnter ? 'Введите запрос и нажмите Enter…' : 'Найти по названию или номеру…'
+            }
             value={q}
+            onKeyDown={(event) => {
+              if (submitOnEnter && event.key === 'Enter') {
+                event.preventDefault();
+                submitFilters();
+              }
+            }}
             onChange={(e) => {
               setQ(e.target.value);
-              setPage(1);
+              if (!submitOnEnter) setPage(1);
             }}
           />
         </div>
@@ -155,7 +173,7 @@ export function Collection({
             value=""
             onChange={(e) => {
               setQ(e.target.value);
-              setPage(1);
+              if (!submitOnEnter) setPage(1);
             }}
           >
             <option value="">Сохранённые фильтры</option>
@@ -178,9 +196,10 @@ export function Collection({
           sort={sort}
           columnFilters={columnFilters}
           filterKeys={filterKeys}
+          onFilterSubmit={submitFilters}
           onFilter={(key, value) => {
             setColumnFilters((current) => ({ ...current, [key]: value }));
-            setPage(1);
+            if (!submitOnEnter) setPage(1);
           }}
           onSort={(key) => {
             setSort(key);
