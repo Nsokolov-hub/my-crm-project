@@ -188,6 +188,7 @@ export function DataTable<T extends Entity>({
   columnFilters,
   filterKeys,
   onFilter,
+  onFilterSubmit,
 }: {
   rows: T[];
   columns: Column<NoInfer<T>>[];
@@ -199,6 +200,7 @@ export function DataTable<T extends Entity>({
   columnFilters?: Record<string, string>;
   filterKeys?: string[];
   onFilter?: (key: string, value: string) => void;
+  onFilterSubmit?: () => void;
 }) {
   if (rows.length === 0 && !filterKeys?.length) return empty || <Empty />;
   const linkIndex = columns.findIndex((column) => column.key !== '__selection');
@@ -227,9 +229,15 @@ export function DataTable<T extends Entity>({
                   {filterKeys.includes(col.key) && (
                     <input
                       aria-label={`Фильтр: ${typeof col.label === 'string' ? col.label : col.key}`}
-                      placeholder="Фильтр…"
+                      placeholder="Фильтр; Enter"
                       value={columnFilters?.[col.key] || ''}
                       onChange={(event) => onFilter?.(col.key, event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          onFilterSubmit?.();
+                        }
+                      }}
                     />
                   )}
                 </th>
