@@ -401,6 +401,29 @@ def test_bulk_call_assignment_filters_history_and_leader_notifications(crm):
                for item in notifications.json()['items'])
 
 
+def test_call_base_search_matches_partial_words_and_formatted_values(crm):
+    login(crm)
+    client = post(crm, '/counterparties', {
+        'name': 'АО «НПО МИКРОГЕН»', 'tax_id': '7722422237',
+        'phone': '+7 (495) 900-77-73', 'email': 'sales@microgen.example',
+        'details': {'profile': 'Производитель фармпрепаратов', 'city': 'Москва'},
+    })
+    post(crm, '/counterparties', {'name': 'ООО Другая компания'})
+    for params in (
+        {'q': 'микро'}, {'q': 'МИКРО ген моск'}, {'q': 'фарм'},
+        {'filter_name': 'микро ген'}, {'filter_tax_id': '2242'},
+        {'filter_city': 'МОСК'}, {'filter_phone': '495900'},
+        {'filter_email': 'MICROGEN'},
+    ):
+        response = crm['client'].get('/api/v1/counterparties', params={'kind': 'client', **params})
+        assert response.status_code == 200, response.text
+        assert response.json()['total'] == 1, params
+        assert response.json()['items'][0]['id'] == client['id'], params
+    empty = crm['client'].get('/api/v1/counterparties', params={'q': 'неттакогоклиента'})
+    assert empty.status_code == 200
+    assert empty.json()['total'] == 0
+
+
 def test_auth_csrf_live_revocation_idor_and_version_conflict(crm):
     assert crm["client"].get("/api/v1/requests").status_code == 401
     session = login(crm)
