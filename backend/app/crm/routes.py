@@ -450,25 +450,12 @@ def edit_packing(entity_id: str, body: PackingPatch, user: User = Depends(curren
 def clients(q: str = '', kind: str | None = None, page: int = 1, page_size: int = 25, sort: str = 'name', direction: str = 'asc', archived: bool = False, filter_name: str = '', filter_tax_id: str = '', filter_profile: str = '', filter_city: str = '', filter_phone: str = '', filter_email: str = '', user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     require_permission(db, user, 'clients.read')
     stmt = select(Counterparty).where(client_predicate(db, user), Counterparty.archived == archived)
-    if q:
-        stmt = stmt.where(or_(Counterparty.name.ilike(f'%{q}%'), Counterparty.email.ilike(f'%{q}%'), Counterparty.phone.ilike(f'%{q}%'), Counterparty.tax_id.ilike(f'%{q}%')))
     if kind:
         stmt = stmt.where(Counterparty.kind.in_([kind, 'both']))
     filters = {
         'name': filter_name, 'tax_id': filter_tax_id, 'profile': filter_profile,
         'city': filter_city, 'phone': filter_phone, 'email': filter_email,
     }
-    if db.bind is not None and db.bind.dialect.name == 'sqlite' and any(value.strip() for value in filters.values()):
-        # SQLite's LIKE lowercases ASCII only; match Cyrillic filters with Python casefold.
-        matched_ids = [row.id for row in db.scalars(stmt) if all(
-            value.strip().casefold() in str((row.details or {}).get(key, '') if key in ('profile', 'city') else getattr(row, key) or '').casefold()
-            for key, value in filters.items() if value.strip()
-        )]
-        stmt = stmt.where(Counterparty.id.in_(matched_ids))
-    else:
-        for column, value in ((Counterparty.name, filter_name), (Counterparty.tax_id, filter_tax_id), (Counterparty.details['profile'].as_string(), filter_profile), (Counterparty.details['city'].as_string(), filter_city), (Counterparty.phone, filter_phone), (Counterparty.email, filter_email)):
-            if value.strip():
-                stmt = stmt.where(column.ilike(f'%{value.strip()}%'))
     col = {
         'name': Counterparty.name, 'tax_id': Counterparty.tax_id,
         'profile': Counterparty.details['profile'].as_string(),
@@ -476,7 +463,40 @@ def clients(q: str = '', kind: str | None = None, page: int = 1, page_size: int 
         'phone': Counterparty.phone, 'email': Counterparty.email,
         'created_at': Counterparty.created_at,
     }.get(sort, Counterparty.name)
-    return paginate(db, stmt.order_by(col.desc() if direction == 'desc' else col, Counterparty.id), page, page_size)
+    stmt = stmt.order_by(col.desc() if direction == 'desc' else col, Counterparty.id)
+    query_parts = search_parts(q)
+    filter_parts = {key: search_parts(value) for key, value in filters.items()}
+    if not query_parts and not any(filter_parts.values()):
+        return paginate(db, stmt, page, page_size)
+    if page < 1 or not 1 <= page_size <= 100:
+        raise DomainError('PAGINATION_INVALID', 'Размер страницы от 1 до 100; номер от 1', 422)
+    start = (page - 1) * page_size
+    items = []
+    total = 0
+    for row in db.scalars(stmt).yield_per(500):
+        details = row.details if isinstance(row.details, dict) else {}
+        values = {
+            'name': row.name, 'tax_id': row.tax_id, 'phone': row.phone, 'email': row.email,
+            'profile': details.get('profile'), 'city': details.get('city'),
+        }
+        if query_parts and not search_match(' '.join(str(value or '') for value in values.values()), query_parts):
+            continue
+        if any(parts and not search_match(values[key], parts) for key, parts in filter_parts.items()):
+            continue
+        if start <= total < start + page_size:
+            items.append(serialize(row))
+        total += 1
+    return {'items': items, 'total': total, 'page': page, 'page_size': page_size}
+
+
+def search_parts(value: str) -> list[str]:
+    return [part for part in (''.join(char for char in word.casefold().replace('ё', 'е') if char.isalnum())
+                              for word in value.split()) if part]
+
+
+def search_match(value: Any, parts: list[str]) -> bool:
+    normalized = ''.join(char for char in str(value or '').casefold().replace('ё', 'е') if char.isalnum())
+    return all(part in normalized for part in parts)
 
 
 @router.post('/counterparties', status_code=201)
