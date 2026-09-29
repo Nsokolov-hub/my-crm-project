@@ -57,6 +57,14 @@ class TaskInput(Input):
     priority: Literal['low', 'normal', 'high', 'urgent'] = 'normal'
 
 
+class BulkCallTaskInput(Input):
+    client_ids: list[str] = Field(min_length=1, max_length=500)
+    assignee_id: str
+    due_at: AwareDatetime
+    title: str = Field(default='Обзвонить клиента', min_length=1, max_length=250)
+    priority: Literal['low', 'normal', 'high', 'urgent'] = 'normal'
+
+
 class TaskPatch(Input):
     version: int
     title: str = Field(default=None, min_length=1, max_length=250)

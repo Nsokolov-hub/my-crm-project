@@ -43,6 +43,7 @@ from app.crm.models import (
     Task,
 )
 from app.crm.schemas import (
+    BulkCallTaskInput,
     CallInput,
     CallPatch,
     ClientInput,
@@ -69,10 +70,14 @@ from app.crm.schemas import (
 
 router = APIRouter(tags=['CRM'])
 
-DEFAULT_CALL_RESULTS = (
-    'interested', 'not_interested', 'callback', 'no_answer', 'wrong_number',
-    'meeting_scheduled', 'request_received', 'rejected', 'invalid_contact',
+CALL_RESULTS = (
+    ('not_interested', 'Не интересны'),
+    ('presentation_sent', 'Отправлена презентация'),
+    ('awaiting_request', 'Ждём запрос'),
+    ('request_received', 'Получен запрос'),
+    ('invalid_contact', 'Неактуальный контакт'),
 )
+CALL_RESULT_LABELS = dict(CALL_RESULTS)
 
 
 @router.get('/dictionaries/{key}')
@@ -85,8 +90,11 @@ def dictionary(key: str, user: User = Depends(current_user), db: Session = Depen
         raise DomainError('NOT_FOUND', 'Справочник не найден', 404)
     value_key, permission = dictionaries[key]
     require_permission(db, user, permission)
+    if key == 'call_results':
+        items = [{'id': value, 'name': label} for value, label in CALL_RESULTS]
+        return {'items': items, 'total': len(items)}
     setting = db.scalar(select(AppSetting).where(AppSetting.key == key, AppSetting.status == 'published'))
-    if not setting and key != 'call_results':
+    if not setting:
         raise DomainError('SETUP_REQUIRED', 'Справочник не настроен. Обратитесь к администратору.', 409)
     labels = {
         'no_answer': 'Не дозвонились', 'callback': 'Перезвонить', 'interested': 'Есть интерес',
@@ -96,7 +104,7 @@ def dictionary(key: str, user: User = Depends(current_user), db: Session = Depen
         'went_to_competitor': 'Выбран конкурент', 'no_budget': 'Нет бюджета',
         'timing': 'Не подходят сроки', 'other': 'Другая причина',
     }
-    values = setting.value.get(value_key, []) if setting else DEFAULT_CALL_RESULTS
+    values = setting.value.get(value_key, [])
     items = [{'id': value, 'name': labels.get(value, value)} for value in values if isinstance(value, str)]
     return {'items': items, 'total': len(items)}
 
@@ -439,14 +447,35 @@ def edit_packing(entity_id: str, body: PackingPatch, user: User = Depends(curren
 
 
 @router.get('/counterparties')
-def clients(q: str = '', kind: str | None = None, page: int = 1, page_size: int = 25, sort: str = 'name', direction: str = 'asc', archived: bool = False, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def clients(q: str = '', kind: str | None = None, page: int = 1, page_size: int = 25, sort: str = 'name', direction: str = 'asc', archived: bool = False, filter_name: str = '', filter_tax_id: str = '', filter_profile: str = '', filter_city: str = '', filter_phone: str = '', filter_email: str = '', user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     require_permission(db, user, 'clients.read')
     stmt = select(Counterparty).where(client_predicate(db, user), Counterparty.archived == archived)
     if q:
         stmt = stmt.where(or_(Counterparty.name.ilike(f'%{q}%'), Counterparty.email.ilike(f'%{q}%'), Counterparty.phone.ilike(f'%{q}%'), Counterparty.tax_id.ilike(f'%{q}%')))
     if kind:
         stmt = stmt.where(Counterparty.kind.in_([kind, 'both']))
-    col = {'name': Counterparty.name, 'created_at': Counterparty.created_at}.get(sort, Counterparty.name)
+    filters = {
+        'name': filter_name, 'tax_id': filter_tax_id, 'profile': filter_profile,
+        'city': filter_city, 'phone': filter_phone, 'email': filter_email,
+    }
+    if db.bind is not None and db.bind.dialect.name == 'sqlite' and any(value.strip() for value in filters.values()):
+        # SQLite's LIKE lowercases ASCII only; match Cyrillic filters with Python casefold.
+        matched_ids = [row.id for row in db.scalars(stmt) if all(
+            value.strip().casefold() in str((row.details or {}).get(key, '') if key in ('profile', 'city') else getattr(row, key) or '').casefold()
+            for key, value in filters.items() if value.strip()
+        )]
+        stmt = stmt.where(Counterparty.id.in_(matched_ids))
+    else:
+        for column, value in ((Counterparty.name, filter_name), (Counterparty.tax_id, filter_tax_id), (Counterparty.details['profile'].as_string(), filter_profile), (Counterparty.details['city'].as_string(), filter_city), (Counterparty.phone, filter_phone), (Counterparty.email, filter_email)):
+            if value.strip():
+                stmt = stmt.where(column.ilike(f'%{value.strip()}%'))
+    col = {
+        'name': Counterparty.name, 'tax_id': Counterparty.tax_id,
+        'profile': Counterparty.details['profile'].as_string(),
+        'city': Counterparty.details['city'].as_string(),
+        'phone': Counterparty.phone, 'email': Counterparty.email,
+        'created_at': Counterparty.created_at,
+    }.get(sort, Counterparty.name)
     return paginate(db, stmt.order_by(col.desc() if direction == 'desc' else col, Counterparty.id), page, page_size)
 
 
@@ -543,7 +572,15 @@ def tasks(status: str | None = None, q: str = '', entity_id: str | None = None, 
         stmt = stmt.where(Task.entity_id == entity_id)
     if overdue:
         stmt = stmt.where(Task.due_at < utcnow(), Task.status.in_(['assigned', 'in_progress']))
-    return paginate(db, stmt.order_by(Task.due_at, Task.id), page, page_size)
+    result = paginate(db, stmt.order_by(Task.due_at, Task.id), page, page_size)
+    client_ids = {item['entity_id'] for item in result['items'] if item['entity_type'] == 'counterparty'}
+    client_names = {row.id: row.name for row in db.scalars(select(Counterparty).where(Counterparty.id.in_(client_ids)))}
+    assignee_ids = {item['assignee_id'] for item in result['items']}
+    assignee_names = {row.id: row.name for row in db.scalars(select(User).where(User.id.in_(assignee_ids)))}
+    for item in result['items']:
+        item['client_name'] = client_names.get(item['entity_id']) if item['entity_type'] == 'counterparty' else None
+        item['assignee_name'] = assignee_names.get(item['assignee_id'])
+    return result
 
 
 @router.post('/tasks', status_code=201)
@@ -556,6 +593,38 @@ def create_task(body: TaskInput, user: User = Depends(current_user), db: Session
     result = save(db, user, row, 'task')
     notify(db, assignee.id, f'task:{row.id}', 'Вам назначена задача', 'task', row.id)
     return result
+
+
+@router.post('/tasks/bulk-calls', status_code=201)
+def create_bulk_call_tasks(body: BulkCallTaskInput, idempotency_key: str | None = Header(default=None), user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_permission(db, user, 'tasks.write')
+    require_permission(db, user, 'requests.assign')
+    if len(set(body.client_ids)) != len(body.client_ids):
+        raise DomainError('CLIENT_DUPLICATE', 'Уберите повторяющихся клиентов', 422, 'client_ids')
+    assignee = active_user(db, body.assignee_id)
+    if not can(db, assignee, 'clients.read') or not can(db, assignee, 'tasks.read'):
+        raise DomainError('ASSIGNEE_ACCESS_REQUIRED', 'У сотрудника должны быть права просмотра клиентов и задач', 422, 'assignee_id')
+    clients_to_assign = [check_client(db, user, client_id, 'clients.write') for client_id in body.client_ids]
+    if any(client.archived or client.kind == 'supplier' for client in clients_to_assign):
+        raise DomainError('CLIENT_INVALID', 'Выберите действующих клиентов для обзвона', 422, 'client_ids')
+
+    def operation() -> dict[str, Any]:
+        task_ids = []
+        for client in clients_to_assign:
+            if client.owner_id != assignee.id:
+                before = serialize(client)
+                client.owner_id = assignee.id
+                client.version += 1
+                audit(db, user, 'counterparty', client.id, 'assigned', before, serialize(client))
+            task = Task(title=body.title, entity_type='counterparty', entity_id=client.id,
+                        assignee_id=assignee.id, author_id=user.id, due_at=body.due_at,
+                        priority=body.priority)
+            save(db, user, task, 'task')
+            notify(db, assignee.id, f'task:{task.id}', f'Вам назначен обзвон: {client.name}'[:250], 'task', task.id)
+            task_ids.append(task.id)
+        return {'count': len(task_ids), 'task_ids': task_ids}
+
+    return idem(db, user, idempotency_key, 'tasks.bulk_calls', body.model_dump(mode='json'), operation)
 
 
 @router.patch('/tasks/{entity_id}')
@@ -584,14 +653,8 @@ def edit_task(entity_id: str, body: TaskPatch, user: User = Depends(current_user
 
 
 def valid_call(db: Session, result: str, next_at: Any, reason: str | None) -> None:
-    setting = db.scalar(select(AppSetting).where(AppSetting.key == 'call_results', AppSetting.status == 'published'))
-    allowed = setting.value.get('results', []) if setting else DEFAULT_CALL_RESULTS
-    if result not in allowed:
+    if result not in CALL_RESULT_LABELS:
         raise DomainError('CALL_RESULT_INVALID', 'Выберите результат из справочника', 422, 'result')
-    if result == 'callback' and not next_at:
-        raise DomainError('NEXT_ACTION_REQUIRED', 'Для перезвона укажите дату следующего действия', 422, 'next_at')
-    if result == 'rejected' and not reason:
-        raise DomainError('REASON_REQUIRED', 'Для отказа укажите причину', 422, 'reason')
     if next_at and next_at.tzinfo is None:
         raise DomainError('TIMEZONE_REQUIRED', 'Укажите часовой пояс даты', 422, 'next_at')
 
@@ -603,7 +666,25 @@ def calls(client_id: str | None = None, page: int = 1, page_size: int = 25, user
     if client_id:
         check_client(db, user, client_id)
         stmt = stmt.where(Call.client_id == client_id)
-    return paginate(db, stmt.order_by(Call.occurred_at.desc()), page, page_size)
+    result = paginate(db, stmt.order_by(Call.occurred_at.desc(), Call.id.desc()), page, page_size)
+    author_ids = {item['author_id'] for item in result['items']}
+    client_ids = {item['client_id'] for item in result['items']}
+    authors = {row.id: row.name for row in db.scalars(select(User).where(User.id.in_(author_ids)))}
+    clients = {row.id: row.name for row in db.scalars(select(Counterparty).where(Counterparty.id.in_(client_ids)))}
+    for item in result['items']:
+        item['author_name'] = authors.get(item['author_id'], 'Сотрудник удалён')
+        item['client_name'] = clients.get(item['client_id'], 'Клиент удалён')
+    return result
+
+
+def notify_call_result(db: Session, row: Call, version: int | None = None) -> None:
+    client = db.get(Counterparty, row.client_id)
+    author = db.get(User, row.author_id)
+    title = f'{author.name if author else "Сотрудник"}: {client.name if client else "Клиент"} — {CALL_RESULT_LABELS.get(row.result, row.result)}'[:250]
+    for leader in db.scalars(select(User).where(User.active.is_(True))):
+        if can(db, leader, 'approvals.decide'):
+            key = f'call:{row.id}' if version is None else f'call:{row.id}:v{version}'
+            notify(db, leader.id, key, title, 'counterparty', row.client_id)
 
 
 @router.post('/calls', status_code=201)
@@ -636,7 +717,9 @@ def create_call(body: CallInput, idempotency_key: str | None = Header(default=No
                 db.flush()
                 row.task_id = task.id
                 notify(db, assignee.id, f'task:{task.id}', 'Запланирован следующий контакт', 'task', task.id)
-        return save(db, user, row, 'call')
+        result = save(db, user, row, 'call')
+        notify_call_result(db, row)
+        return result
     return idem(db, user, idempotency_key, 'calls.create', body.model_dump(mode='json'), operation)
 
 
@@ -652,6 +735,7 @@ def edit_call(entity_id: str, body: CallPatch, user: User = Depends(current_user
         setattr(row, k, v)
     row.version += 1
     audit(db, user, 'call', row.id, 'corrected', before, serialize(row), body.reason)
+    notify_call_result(db, row, row.version)
     return serialize(row)
 
 

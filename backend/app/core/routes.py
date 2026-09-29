@@ -637,12 +637,11 @@ def setup_wizard(
         "call_results",
         {
             "results": [
-                "interested",
                 "not_interested",
-                "callback",
-                "wrong_number",
-                "meeting_scheduled",
+                "presentation_sent",
+                "awaiting_request",
                 "request_received",
+                "invalid_contact",
             ]
         },
     )

@@ -52,14 +52,16 @@ def test_manager_selects_configured_loss_reason_and_closes_own_request(crm):
     assert saved.json()["closed_at"]
 
 
-def test_manager_call_form_uses_configured_results_and_cannot_read_other_settings(crm):
+def test_manager_call_form_uses_limited_results_and_cannot_read_other_settings(crm):
     login(crm, "manager@example.com")
     options = crm["client"].get("/api/v1/dictionaries/call_results")
     assert options.status_code == 200, options.text
-    assert {"id": "meeting_scheduled", "name": "Назначена встреча"} in options.json()["items"]
+    assert [item["id"] for item in options.json()["items"]] == [
+        "not_interested", "presentation_sent", "awaiting_request", "request_received", "invalid_contact"
+    ]
     client = post(crm, "/counterparties", {"name": "Клиент для встречи"})
-    saved = post(crm, "/calls", {"client_id": client["id"], "result": "meeting_scheduled"})
-    assert saved["result"] == "meeting_scheduled"
+    saved = post(crm, "/calls", {"client_id": client["id"], "result": "presentation_sent"})
+    assert saved["result"] == "presentation_sent"
     assert crm["client"].get("/api/v1/dictionaries/file_policy").status_code == 404
     login(crm, "owner@example.com")
     permissions = crm["client"].patch("/api/v1/admin/users/" + crm["manager"].id, json={
@@ -82,8 +84,8 @@ def test_calls_work_before_call_results_are_published(crm):
 
     options = crm["client"].get("/api/v1/dictionaries/call_results")
     assert options.status_code == 200, options.text
-    assert {"id": "interested", "name": "Есть интерес"} in options.json()["items"]
+    assert {"id": "not_interested", "name": "Не интересны"} in options.json()["items"]
 
     client = post(crm, "/counterparties", {"name": "Клиент без настроек звонков"})
-    call = post(crm, "/calls", {"client_id": client["id"], "result": "interested"})
-    assert call["result"] == "interested"
+    call = post(crm, "/calls", {"client_id": client["id"], "result": "not_interested"})
+    assert call["result"] == "not_interested"

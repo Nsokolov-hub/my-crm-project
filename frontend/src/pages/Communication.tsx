@@ -326,7 +326,8 @@ export function ChatRoom({ chat, onBack }: { chat: Entity; onBack?: () => void }
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
-              if (!operation.busy && (text.trim() || attached.length)) e.currentTarget.form?.requestSubmit();
+              if (!operation.busy && (text.trim() || attached.length))
+                e.currentTarget.form?.requestSubmit();
             }
           }}
         />
@@ -360,7 +361,9 @@ export function ChatRoom({ chat, onBack }: { chat: Entity; onBack?: () => void }
             </select>
           </div>
           <div className="message-compose-submit">
-            <span className="message-compose-hint">Enter — отправить · Shift + Enter — новая строка</span>
+            <span className="message-compose-hint">
+              Enter — отправить · Shift + Enter — новая строка
+            </span>
             <Button type="submit" disabled={!text.trim() && !attached.length} busy={operation.busy}>
               <Send size={17} />
               Отправить
@@ -483,10 +486,15 @@ export function Chats({
                 <span className="chat-card-content">
                   <strong>{String(chat.title)}</strong>
                   <small className="chat-card-description">
-                    {String(chat.description || (chat.kind === 'direct' ? 'Личный диалог' : 'Обсуждение команды'))}
+                    {String(
+                      chat.description ||
+                        (chat.kind === 'direct' ? 'Личный диалог' : 'Обсуждение команды'),
+                    )}
                   </small>
                   <small className="chat-card-members">
-                    {((chat.members || []) as Entity[]).map((member) => String(member.name)).join(', ')}
+                    {((chat.members || []) as Entity[])
+                      .map((member) => String(member.name))
+                      .join(', ')}
                   </small>
                 </span>
                 {Boolean(chat.unread) && <b className="chat-unread">{String(chat.unread)}</b>}
@@ -536,11 +544,13 @@ export function Notifications() {
   function target(row: Entity) {
     return row.entity_type === 'request'
       ? `/requests/${row.entity_id}`
-      : row.entity_type === 'chat'
-        ? `/chats?chat=${row.entity_id}`
-        : row.entity_type === 'wave'
-          ? '/waves'
-          : '/tasks';
+      : row.entity_type === 'counterparty'
+        ? `/calls?client_id=${row.entity_id}`
+        : row.entity_type === 'chat'
+          ? `/chats?chat=${row.entity_id}`
+          : row.entity_type === 'wave'
+            ? '/waves'
+            : '/tasks';
   }
   return (
     <>

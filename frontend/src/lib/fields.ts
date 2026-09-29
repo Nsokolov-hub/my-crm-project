@@ -47,7 +47,13 @@ export const requestFields: Field[] = [
       endpoint: '/counterparties',
       fields: [
         { name: 'name', label: 'Название организации', required: true },
-        { name: 'kind', label: 'Тип', type: 'select', value: 'client', options: [{ value: 'client', label: 'Клиент' }] },
+        {
+          name: 'kind',
+          label: 'Тип',
+          type: 'select',
+          value: 'client',
+          options: [{ value: 'client', label: 'Клиент' }],
+        },
         { name: 'country', label: 'Страна' },
         { name: 'tax_id', label: 'ИНН' },
       ],
@@ -131,7 +137,13 @@ export const callFields: Field[] = [
       endpoint: '/counterparties',
       fields: [
         { name: 'name', label: 'Название организации', required: true },
-        { name: 'kind', label: 'Тип', type: 'select', value: 'client', options: [{ value: 'client', label: 'Клиент' }] },
+        {
+          name: 'kind',
+          label: 'Тип',
+          type: 'select',
+          value: 'client',
+          options: [{ value: 'client', label: 'Клиент' }],
+        },
         { name: 'country', label: 'Страна' },
         { name: 'tax_id', label: 'ИНН' },
       ],
@@ -149,19 +161,13 @@ export const callFields: Field[] = [
     name: 'next_at',
     label: 'Следующее действие',
     type: 'datetime-local',
-    help: 'Для результата «Перезвонить» срок обязателен.',
+    help: 'Укажите дату, если нужен следующий контакт.',
   },
   {
     name: 'next_assignee_id',
     label: 'Исполнитель следующего действия',
     type: 'select',
     source: '/users',
-  },
-  {
-    name: 'reason',
-    label: 'Причина отказа',
-    type: 'textarea',
-    help: 'Заполните при отказе клиента.',
   },
 ];
 export const paymentFields: Field[] = [

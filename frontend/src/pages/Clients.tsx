@@ -1,20 +1,70 @@
-import { Pencil, Phone, Plus, Upload } from 'lucide-react';
-import { useCallback, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { History, Pencil, Phone, Plus, Upload } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
 import { RecordForm } from '../components/Form';
 import { ImportDialog } from '../components/ImportDialog';
-import { Badge, Button, DetailPairs, Modal, PageHeading } from '../components/ui';
+import {
+  Badge,
+  Button,
+  DataTable,
+  DetailPairs,
+  Empty,
+  ErrorBox,
+  Loading,
+  Modal,
+  PageHeading,
+  Pagination,
+} from '../components/ui';
 import { callFields, clientFields, contactFields } from '../lib/fields';
 import { date } from '../lib/format';
-import type { Entity, Field } from '../lib/types';
+import { useApi, useCommand } from '../lib/hooks';
+import type { Entity, Field, Page, User } from '../lib/types';
 const callProspectFields: Field[] = [
   { name: 'name', label: 'Название', required: true, wide: true },
   { name: 'tax_id', label: 'ИНН', required: true },
   { name: 'phone', label: 'Телефон' },
   { name: 'email', label: 'E-mail', type: 'email' },
 ];
+
+function CallHistory({ clientId }: { clientId: string }) {
+  const [page, setPage] = useState(1);
+  const client = useApi<Entity>(`/counterparties/${clientId}`);
+  const calls = useApi<Page>(`/calls?client_id=${clientId}&page=${page}&page_size=25`);
+  return (
+    <div className="form-body">
+      <p>{String(client.data?.name || '')}</p>
+      {calls.loading ? (
+        <Loading />
+      ) : calls.error ? (
+        <ErrorBox error={calls.error} retry={calls.refresh} />
+      ) : calls.data?.items.length ? (
+        <DataTable
+          rows={calls.data.items}
+          columns={[
+            {
+              key: 'occurred_at',
+              label: 'Дата и время',
+              render: (row) => date(row.occurred_at, true),
+            },
+            { key: 'author_name', label: 'Кто звонил' },
+            { key: 'result', label: 'Результат', render: (row) => <Badge value={row.result} /> },
+            { key: 'comment', label: 'Комментарий' },
+            {
+              key: 'next_at',
+              label: 'Следующий контакт',
+              render: (row) => date(row.next_at, true),
+            },
+          ]}
+        />
+      ) : (
+        <Empty title="Звонков ещё нет" />
+      )}
+      <Pagination page={page} total={calls.data?.total || 0} pageSize={25} onChange={setPage} />
+    </div>
+  );
+}
 export function Clients() {
   const auth = useAuth();
   const [selected, setSelected] = useState<Entity>();
@@ -152,22 +202,85 @@ export function Clients() {
 }
 export function Calls() {
   const auth = useAuth();
+  const [searchParams] = useSearchParams();
   const [selected, setSelected] = useState<Entity>();
   const [prospect, setProspect] = useState<Entity>();
+  const [historyClientId, setHistoryClientId] = useState<string | undefined>(
+    () => searchParams.get('client_id') || undefined,
+  );
+  useEffect(() => {
+    if (searchParams.get('client_id'))
+      setHistoryClientId(searchParams.get('client_id') || undefined);
+  }, [searchParams]);
   const [recording, setRecording] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkAssignee, setBulkAssignee] = useState('');
+  const [bulkDueAt, setBulkDueAt] = useState('');
+  const [bulkTitle, setBulkTitle] = useState('Обзвонить клиента');
+  const [bulkNotice, setBulkNotice] = useState('');
+  const users = useApi<Page<User>>(bulkOpen ? '/users' : null);
+  const bulkCommand = useCommand();
   const [revision, setRevision] = useState(0);
+  const canBulkAssign = auth.can('requests.assign') && auth.can('tasks.write');
+  function toggleClient(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function selectPage(ids: string[], checked: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      ids.forEach((id) => {
+        if (checked) next.add(id);
+        else next.delete(id);
+      });
+      return next;
+    });
+  }
+  async function assignSelected(event: React.FormEvent) {
+    event.preventDefault();
+    if (!bulkAssignee || !bulkDueAt || !selectedIds.size) return;
+    try {
+      const result = await bulkCommand.run<{ count: number }>('/tasks/bulk-calls', {
+        client_ids: [...selectedIds],
+        assignee_id: bulkAssignee,
+        due_at: new Date(bulkDueAt).toISOString(),
+        title: bulkTitle,
+      });
+      if (result) {
+        setBulkNotice(`Создано задач: ${result.count}. Клиенты назначены сотруднику.`);
+        setSelectedIds(new Set());
+        setBulkOpen(false);
+        setRevision((value) => value + 1);
+      }
+    } catch {
+      /* ErrorBox shows the API error. */
+    }
+  }
   return (
     <>
       <PageHeading
         title="База обзвона"
         description="Клиенты для обзвона, история разговоров и следующие действия."
-        actions={auth.can('calls.write') && auth.can('clients.write') && (
-          <Button variant="secondary" onClick={() => setImporting(true)}>
-            <Upload size={17} /> Загрузить XLSX
-          </Button>
-        )}
+        actions={
+          auth.can('calls.write') &&
+          auth.can('clients.write') && (
+            <Button variant="secondary" onClick={() => setImporting(true)}>
+              <Upload size={17} /> Загрузить XLSX
+            </Button>
+          )
+        }
       />
+      {bulkNotice && (
+        <p role="status" className="info-note">
+          {bulkNotice}
+        </p>
+      )}
       <Collection
         title="Клиенты для обзвона"
         endpoint="/counterparties"
@@ -177,15 +290,111 @@ export function Calls() {
         canCreate={auth.can('clients.write')}
         refreshKey={revision}
         onSelect={setProspect}
+        filterKeys={['name', 'tax_id', 'profile', 'city', 'phone', 'email']}
+        selection={
+          canBulkAssign
+            ? { selectedIds, onToggle: toggleClient, onSelectPage: selectPage }
+            : undefined
+        }
+        action={
+          canBulkAssign && (
+            <Button
+              variant="secondary"
+              disabled={!selectedIds.size}
+              onClick={() => setBulkOpen(true)}
+            >
+              Назначить выбранных ({selectedIds.size})
+            </Button>
+          )
+        }
         columns={[
           { key: 'name', label: 'Название' },
           { key: 'tax_id', label: 'ИНН' },
-          { key: 'profile', label: 'Профиль', render: (row) => String((row.details as Entity | undefined)?.profile || '—') },
-          { key: 'city', label: 'Регион/город', render: (row) => String((row.details as Entity | undefined)?.city || '—') },
+          {
+            key: 'profile',
+            label: 'Профиль',
+            render: (row) => String((row.details as Entity | undefined)?.profile || '—'),
+          },
+          {
+            key: 'city',
+            label: 'Регион/город',
+            render: (row) => String((row.details as Entity | undefined)?.city || '—'),
+          },
           { key: 'phone', label: 'Телефон' },
           { key: 'email', label: 'E-mail' },
+          {
+            key: 'history',
+            label: 'История',
+            sortable: false,
+            render: (row) => (
+              <Button variant="secondary" onClick={() => setHistoryClientId(row.id)}>
+                <History size={15} /> История
+              </Button>
+            ),
+          },
         ]}
       />
+      {bulkOpen && (
+        <Modal
+          title={`Назначить обзвон: ${selectedIds.size} клиентов`}
+          onClose={() => setBulkOpen(false)}
+        >
+          <form className="form-body" onSubmit={(event) => void assignSelected(event)}>
+            <p>
+              Для каждого выбранного клиента создаётся задача одному сотруднику. Клиенты будут
+              закреплены за ним.
+            </p>
+            <label className="field">
+              Исполнитель
+              <select
+                required
+                value={bulkAssignee}
+                onChange={(event) => setBulkAssignee(event.target.value)}
+              >
+                <option value="">Выберите сотрудника</option>
+                {users.data?.items.map((employee) => (
+                  <option key={employee.id} value={employee.id}>
+                    {employee.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {users.loading && <Loading />}
+            <ErrorBox error={users.error || bulkCommand.error} />
+            <label className="field">
+              Название задачи
+              <input
+                required
+                maxLength={250}
+                value={bulkTitle}
+                onChange={(event) => setBulkTitle(event.target.value)}
+              />
+            </label>
+            <label className="field">
+              Срок
+              <input
+                type="datetime-local"
+                required
+                value={bulkDueAt}
+                onChange={(event) => setBulkDueAt(event.target.value)}
+              />
+            </label>
+            <div className="inline-actions">
+              <Button type="submit" busy={bulkCommand.busy} disabled={!users.data}>
+                Назначить {selectedIds.size} задач
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setBulkOpen(false)}>
+                Отмена
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+      {historyClientId && (
+        <Modal title="История взаимодействия" wide onClose={() => setHistoryClientId(undefined)}>
+          <CallHistory clientId={historyClientId} />
+        </Modal>
+      )}
       <Collection
         title="Журнал звонков"
         endpoint="/calls"
@@ -209,22 +418,26 @@ export function Calls() {
       {prospect && !recording && (
         <Modal title={String(prospect.name)} onClose={() => setProspect(undefined)}>
           <div className="form-body">
-            <DetailPairs values={{
-              ИНН: prospect.tax_id,
-              Профиль: (prospect.details as Entity | undefined)?.profile,
-              Категория: (prospect.details as Entity | undefined)?.category,
-              'Регион/город': (prospect.details as Entity | undefined)?.city,
-              ОГРН: (prospect.details as Entity | undefined)?.registration_number,
-              ОКВЭД: (prospect.details as Entity | undefined)?.okved,
-              Сайт: (prospect.details as Entity | undefined)?.website,
-              Телефон: prospect.phone,
-              'E-mail': prospect.email || (prospect.details as Entity | undefined)?.raw_email,
-              'Телефон закупок': (prospect.details as Entity | undefined)?.procurement_phone,
-              'E-mail закупок': (prospect.details as Entity | undefined)?.procurement_email,
-              Примечание: (prospect.details as Entity | undefined)?.comment,
-            }} />
+            <DetailPairs
+              values={{
+                ИНН: prospect.tax_id,
+                Профиль: (prospect.details as Entity | undefined)?.profile,
+                Категория: (prospect.details as Entity | undefined)?.category,
+                'Регион/город': (prospect.details as Entity | undefined)?.city,
+                ОГРН: (prospect.details as Entity | undefined)?.registration_number,
+                ОКВЭД: (prospect.details as Entity | undefined)?.okved,
+                Сайт: (prospect.details as Entity | undefined)?.website,
+                Телефон: prospect.phone,
+                'E-mail': prospect.email || (prospect.details as Entity | undefined)?.raw_email,
+                'Телефон закупок': (prospect.details as Entity | undefined)?.procurement_phone,
+                'E-mail закупок': (prospect.details as Entity | undefined)?.procurement_email,
+                Примечание: (prospect.details as Entity | undefined)?.comment,
+              }}
+            />
             {auth.can('calls.write') && (
-              <Button onClick={() => setRecording(true)}><Phone size={15} /> Записать звонок</Button>
+              <Button onClick={() => setRecording(true)}>
+                <Phone size={15} /> Записать звонок
+              </Button>
             )}
           </div>
         </Modal>
@@ -243,8 +456,12 @@ export function Calls() {
           }}
         />
       )}
-      <ImportDialog open={importing} mode="calls" onClose={() => setImporting(false)}
-        onSuccess={() => setRevision((value) => value + 1)} />
+      <ImportDialog
+        open={importing}
+        mode="calls"
+        onClose={() => setImporting(false)}
+        onSuccess={() => setRevision((value) => value + 1)}
+      />
       {selected && (
         <Modal title="Запись звонка" onClose={() => setSelected(undefined)}>
           <div className="form-body">
@@ -315,6 +532,16 @@ export function Tasks() {
         refreshKey={revision}
         columns={[
           { key: 'title', label: 'Задача' },
+          {
+            key: 'client_name',
+            label: 'Клиент',
+            render: (r) =>
+              r.client_name ? (
+                <Link to={`/calls?client_id=${r.entity_id}`}>{String(r.client_name)}</Link>
+              ) : (
+                '—'
+              ),
+          },
           { key: 'status', label: 'Состояние', render: (r) => <Badge value={r.status} /> },
           { key: 'priority', label: 'Приоритет', render: (r) => <Badge value={r.priority} /> },
           {
