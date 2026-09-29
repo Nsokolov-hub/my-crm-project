@@ -185,6 +185,9 @@ export function DataTable<T extends Entity>({
   sort,
   onSort,
   rowClassName,
+  columnFilters,
+  filterKeys,
+  onFilter,
 }: {
   rows: T[];
   columns: Column<NoInfer<T>>[];
@@ -193,8 +196,11 @@ export function DataTable<T extends Entity>({
   sort?: string;
   onSort?: (key: string) => void;
   rowClassName?: (row: T) => string;
+  columnFilters?: Record<string, string>;
+  filterKeys?: string[];
+  onFilter?: (key: string, value: string) => void;
 }) {
-  if (rows.length === 0) return empty || <Empty />;
+  if (rows.length === 0 && !filterKeys?.length) return empty || <Empty />;
   const linkIndex = columns.findIndex((column) => column.key !== '__selection');
   return (
     <div className="table-scroll">
@@ -214,15 +220,47 @@ export function DataTable<T extends Entity>({
               </th>
             ))}
           </tr>
+          {filterKeys && filterKeys.length > 0 && (
+            <tr className="column-filter-row">
+              {columns.map((col) => (
+                <th key={col.key}>
+                  {filterKeys.includes(col.key) && (
+                    <input
+                      aria-label={`Фильтр: ${typeof col.label === 'string' ? col.label : col.key}`}
+                      placeholder="Фильтр…"
+                      value={columnFilters?.[col.key] || ''}
+                      onChange={(event) => onFilter?.(col.key, event.target.value)}
+                    />
+                  )}
+                </th>
+              ))}
+            </tr>
+          )}
         </thead>
         <tbody>
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={columns.length}>{empty || <Empty />}</td>
+            </tr>
+          )}
           {rows.map((row) => (
             <tr
               key={row.id}
-              className={[rowClassName?.(row), onRow ? 'clickable-row' : ''].filter(Boolean).join(' ')}
-              onClick={onRow ? (event) => {
-                if (!(event.target as HTMLElement).closest('button, a, input, select, textarea, [role="button"]')) onRow(row);
-              } : undefined}
+              className={[rowClassName?.(row), onRow ? 'clickable-row' : '']
+                .filter(Boolean)
+                .join(' ')}
+              onClick={
+                onRow
+                  ? (event) => {
+                      if (
+                        !(event.target as HTMLElement).closest(
+                          'button, a, input, select, textarea, [role="button"]',
+                        )
+                      )
+                        onRow(row);
+                    }
+                  : undefined
+              }
             >
               {columns.map((col, index) => (
                 <td key={col.key}>

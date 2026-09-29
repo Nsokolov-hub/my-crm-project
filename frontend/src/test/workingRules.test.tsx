@@ -12,7 +12,7 @@ vi.mock('../app/Auth', () => ({
 }));
 
 const metadata = {
-  call_results: { is_supported: true },
+  call_results: { is_supported: false },
   loss_reasons: { is_supported: true },
   commercial_rules: { is_supported: false },
 };
@@ -38,7 +38,7 @@ function ruleSection(name: string) {
 }
 
 describe('Правила работы', () => {
-  it('shows only applied settings with readable values and saves the current version', async () => {
+  it('shows fixed call results while keeping editable loss reasons', async () => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === '/settings/meta') return metadata;
       if (path === '/settings') return { items: rows, total: rows.length };
@@ -47,22 +47,25 @@ describe('Правила работы', () => {
 
     render(<WorkingRulesEditor />);
     expect(await screen.findByRole('heading', { name: 'Результаты звонка' })).toBeInTheDocument();
-    expect(ruleSection('Результаты звонка').getByText('Перезвонить')).toBeInTheDocument();
+    expect(
+      ruleSection('Результаты звонка').getByText('Отправлена презентация'),
+    ).toBeInTheDocument();
+    expect(
+      ruleSection('Результаты звонка').queryByRole('button', { name: 'Изменить список' }),
+    ).not.toBeInTheDocument();
     expect(ruleSection('Причины отказа').getByText('Нет бюджета')).toBeInTheDocument();
     expect(screen.queryByText('commercial_rules')).not.toBeInTheDocument();
     expect(screen.queryByText('{}')).not.toBeInTheDocument();
 
-    fireEvent.click(
-      ruleSection('Результаты звонка').getByRole('button', { name: 'Изменить список' }),
-    );
-    fireEvent.change(ruleSection('Результаты звонка').getByLabelText('Готовый вариант'), {
-      target: { value: 'rejected' },
+    fireEvent.click(ruleSection('Причины отказа').getByRole('button', { name: 'Изменить список' }));
+    fireEvent.change(ruleSection('Причины отказа').getByLabelText('Готовый вариант'), {
+      target: { value: 'price_too_high' },
     });
     fireEvent.click(
-      ruleSection('Результаты звонка').getByRole('button', { name: 'Добавить вариант' }),
+      ruleSection('Причины отказа').getByRole('button', { name: 'Добавить вариант' }),
     );
     fireEvent.click(
-      ruleSection('Результаты звонка').getByRole('button', { name: 'Сохранить список' }),
+      ruleSection('Причины отказа').getByRole('button', { name: 'Сохранить список' }),
     );
 
     await waitFor(() =>
@@ -71,9 +74,9 @@ describe('Правила работы', () => {
         expect.objectContaining({
           method: 'POST',
           body: {
-            key: 'call_results',
-            value: { results: ['callback', 'interested', 'rejected'] },
-            version: 4,
+            key: 'loss_reasons',
+            value: { reasons: ['no_budget', 'price_too_high'] },
+            version: 2,
           },
         }),
       ),

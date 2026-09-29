@@ -72,7 +72,7 @@ class CommercialRulesSetting(BaseModel):
 
 # Реестр всех настроек (ключ -> Метаданные)
 SETTING_META: dict[str, SettingMeta] = {
-    "call_results": SettingMeta(CallResultSetting, "settings.dictionaries.write", "UI: Форма звонка", "Определяет список исходов звонка в CRM", True),
+    "call_results": SettingMeta(CallResultSetting, "settings.dictionaries.write", "UI: Форма звонка", "Результаты звонка ограничены фиксированным списком", False),
     "loss_reasons": SettingMeta(LossReasonSetting, "settings.dictionaries.write", "UI: Закрытие сделки", "Список причин отказа", True),
     "chemical_categories": SettingMeta(ChemicalCategorySetting, "settings.dictionaries.write", "UI: Каталог", "Химические категории", True),
     "required_documents": SettingMeta(RequiredDocumentsSetting, "settings.dictionaries.write", "UI: Комплаенс", "Типы обязательных документов", True),

@@ -334,13 +334,13 @@ def test_call_user_can_import_call_base_without_general_import_permission(crm):
     assert denied.status_code == 403
 
 
-def test_a02_callback_then_request_preserves_client_and_history(crm):
+def test_a02_follow_up_then_request_preserves_client_and_history(crm):
     login(crm, "manager@example.com")
     client = post(crm, "/counterparties", {"name": "Клиент обзвона"})
     next_at = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
     post(crm, "/calls", {"client_id": client["id"], "result": "callback"}, 422)
     key = str(uuid4())
-    body = {"client_id": client["id"], "result": "callback", "next_at": next_at}
+    body = {"client_id": client["id"], "result": "awaiting_request", "next_at": next_at}
     first = post(crm, "/calls", body, key=key)
     assert post(crm, "/calls", body, key=key)["id"] == first["id"]
     successful = post(crm, "/calls", {"client_id": client["id"], "result": "request_received"})
@@ -357,6 +357,48 @@ def test_a02_callback_then_request_preserves_client_and_history(crm):
         assert db.scalar(select(func.count()).select_from(Call)) == 2
         assert db.scalar(select(func.count()).select_from(Counterparty)) == 1
         assert db.scalar(select(func.count()).select_from(Request)) == 1
+
+
+def test_bulk_call_assignment_filters_history_and_leader_notifications(crm):
+    login(crm)
+    clients = [post(crm, '/counterparties', {
+        'name': f'Клиент {index}', 'tax_id': f'77000000{index:02d}',
+        'details': {'profile': 'Больница', 'city': 'Москва' if index < 5 else 'Тверь'},
+    }) for index in range(10)]
+    due_at = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    payload = {'client_ids': [client['id'] for client in clients],
+               'assignee_id': crm['manager'].id, 'due_at': due_at}
+    key = str(uuid4())
+    created = post(crm, '/tasks/bulk-calls', payload, key=key)
+    assert created['count'] == 10
+    assert post(crm, '/tasks/bulk-calls', payload, key=key) == created
+    filtered = crm['client'].get('/api/v1/counterparties', params={
+        'kind': 'client', 'filter_profile': 'боль', 'filter_city': 'моск',
+    })
+    assert filtered.status_code == 200, filtered.text
+    assert filtered.json()['total'] == 5
+    with crm['sessions']() as db:
+        assert db.scalar(select(func.count()).select_from(Task)) == 10
+        assert all(db.get(Counterparty, client['id']).owner_id == crm['manager'].id for client in clients)
+
+    login(crm, 'manager@example.com')
+    tasks = crm['client'].get('/api/v1/tasks')
+    assert tasks.status_code == 200, tasks.text
+    assert tasks.json()['total'] == 10
+    assert {item['client_name'] for item in tasks.json()['items']} == {client['name'] for client in clients}
+    post(crm, '/tasks/bulk-calls', payload, 403)
+    post(crm, '/calls', {'client_id': clients[0]['id'], 'result': 'meeting_scheduled'}, 422)
+    call = post(crm, '/calls', {'client_id': clients[0]['id'], 'result': 'presentation_sent'})
+    history = crm['client'].get('/api/v1/calls', params={'client_id': clients[0]['id']})
+    assert history.status_code == 200, history.text
+    assert history.json()['items'][0]['id'] == call['id']
+    assert history.json()['items'][0]['author_name'] == crm['manager'].name
+
+    login(crm)
+    notifications = crm['client'].get('/api/v1/notifications', params={'read': False})
+    assert notifications.status_code == 200, notifications.text
+    assert any(item['entity_id'] == clients[0]['id'] and 'Отправлена презентация' in item['title']
+               for item in notifications.json()['items'])
 
 
 def test_auth_csrf_live_revocation_idor_and_version_conflict(crm):

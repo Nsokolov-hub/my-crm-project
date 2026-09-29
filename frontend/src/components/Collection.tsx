@@ -22,6 +22,7 @@ export type CollectionProps = {
   onChanged?: () => void;
   transform?: (values: Record<string, unknown>) => Record<string, unknown>;
   pageSize?: number;
+  filterKeys?: string[];
   selection?: {
     selectedIds: Set<string>;
     onToggle: (id: string) => void;
@@ -45,6 +46,7 @@ export function Collection({
   transform,
   onChanged,
   pageSize = 25,
+  filterKeys = [],
   selection,
 }: CollectionProps) {
   const [q, setQ] = useState('');
@@ -52,9 +54,14 @@ export function Collection({
   const [sort, setSort] = useState('created_at');
   const [direction, setDirection] = useState('desc');
   const [creating, setCreating] = useState(false);
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const debounced = useDebounced(q);
+  const debouncedFilters = useDebounced(columnFilters);
+  const filterQuery = filterKeys
+    .map((key) => `&filter_${key}=${encodeURIComponent(debouncedFilters[key] || '')}`)
+    .join('');
   const data = useApi<Page>(
-    `${endpoint}${endpoint.includes('?') ? '&' : '?'}page=${page}&page_size=${pageSize}&q=${encodeURIComponent(debounced)}&sort=${sort}&direction=${direction}&ui_revision=${refreshKey}${query}`,
+    `${endpoint}${endpoint.includes('?') ? '&' : '?'}page=${page}&page_size=${pageSize}&q=${encodeURIComponent(debounced)}&sort=${sort}&direction=${direction}&ui_revision=${refreshKey}${query}${filterQuery}`,
   );
   const rows = data.data?.items || [];
   const visibleIds = rows.map((row) => row.id);
@@ -79,7 +86,7 @@ export function Collection({
           render: (row) => (
             <input
               type="checkbox"
-              aria-label={`Выбрать позицию ${String(row.nomenclature_name || row.description || row.id)}`}
+              aria-label={`Выбрать позицию ${String(row.name || row.nomenclature_name || row.description || row.id)}`}
               checked={selection.selectedIds.has(row.id)}
               onChange={() => selection.onToggle(row.id)}
             />
@@ -107,12 +114,16 @@ export function Collection({
       title={title}
       description={description}
       action={
-        action || (fields && canCreate ? (
-          <Button onClick={() => setCreating(true)}>
-            <Plus size={16} />
-            {createLabel}
-          </Button>
-        ) : undefined)
+        action || (fields && canCreate) ? (
+          <div className="inline-actions">
+            {action}
+            {fields && canCreate && (
+              <Button onClick={() => setCreating(true)}>
+                <Plus size={16} /> {createLabel}
+              </Button>
+            )}
+          </div>
+        ) : undefined
       }
     >
       <div className="collection-toolbar">
@@ -165,6 +176,12 @@ export function Collection({
           onRow={onSelect}
           rowClassName={(row) => (selection?.selectedIds.has(row.id) ? 'selected-table-row' : '')}
           sort={sort}
+          columnFilters={columnFilters}
+          filterKeys={filterKeys}
+          onFilter={(key, value) => {
+            setColumnFilters((current) => ({ ...current, [key]: value }));
+            setPage(1);
+          }}
           onSort={(key) => {
             setSort(key);
             setDirection((v) => (v === 'asc' ? 'desc' : 'asc'));

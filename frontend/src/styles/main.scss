@@ -714,6 +714,18 @@ th .sorted {
   color: $purple;
 }
 
+.column-filter-row th {
+  padding: 7px 10px;
+}
+
+.column-filter-row input {
+  width: 100%;
+  min-width: 95px;
+  box-sizing: border-box;
+  font-size: 10px;
+  padding: 6px 8px;
+}
+
 td {
   padding: 15px 23px;
   border-bottom: 1px solid #f2f2f6;
@@ -730,7 +742,9 @@ tr:hover td {
   background: #fcfbff;
 }
 
-tr.clickable-row { cursor: pointer; }
+tr.clickable-row {
+  cursor: pointer;
+}
 
 .row-link {
   background: none;

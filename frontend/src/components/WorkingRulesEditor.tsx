@@ -20,28 +20,8 @@ type Rule = {
   choices: { value: string; label: string }[];
 };
 
-// These two dictionaries are read by the call and request workflows. Other
-// settings in the server registry do not currently change CRM behaviour.
+// Loss reasons remain configurable; call results are fixed for the call base.
 const rules: Rule[] = [
-  {
-    key: 'call_results',
-    field: 'results',
-    title: 'Результаты звонка',
-    description: 'Что сотрудник может выбрать после разговора с клиентом.',
-    detail:
-      'Для результата «Перезвонить» CRM попросит дату следующего действия, для «Отказ» — причину.',
-    choices: [
-      { value: 'interested', label: 'Есть интерес' },
-      { value: 'not_interested', label: 'Нет интереса' },
-      { value: 'callback', label: 'Перезвонить' },
-      { value: 'no_answer', label: 'Не дозвонились' },
-      { value: 'wrong_number', label: 'Неверный номер' },
-      { value: 'meeting_scheduled', label: 'Назначена встреча' },
-      { value: 'request_received', label: 'Получен запрос' },
-      { value: 'rejected', label: 'Отказ' },
-      { value: 'invalid_contact', label: 'Неверный контакт' },
-    ],
-  },
   {
     key: 'loss_reasons',
     field: 'reasons',
@@ -275,9 +255,21 @@ export function WorkingRulesEditor({ refreshKey = 0 }: { refreshKey?: number }) 
   return (
     <>
       <div className="info-note">
-        Здесь показаны правила, которые уже применяются в работе CRM. Сохранённые изменения сразу
-        доступны сотрудникам в соответствующих формах.
+        Здесь показаны правила, которые применяются в работе CRM. Причины отказа можно изменить.
       </div>
+      <Section title="Результаты звонка" description="Доступные сотрудникам результаты обзвона">
+        <ul className="guide-list">
+          {[
+            'Не интересны',
+            'Отправлена презентация',
+            'Ждём запрос',
+            'Получен запрос',
+            'Неактуальный контакт',
+          ].map((label) => (
+            <li key={label}>{label}</li>
+          ))}
+        </ul>
+      </Section>
       {available.map((rule) => {
         const row = settings.data?.items.find((item) => item.key === rule.key);
         return (

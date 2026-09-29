@@ -26,6 +26,7 @@ from app.core.errors import DomainError
 from app.core.models import AppSetting, Notification, OutboxEvent, User
 from app.core.security import (
     can,
+    client_predicate,
     current_user,
     request_predicate,
     require_permission,
@@ -369,11 +370,16 @@ def notifications(read: bool | None = None, page: int = 1, page_size: int = 25,
                   user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
     statement = select(Notification).where(Notification.user_id == user.id)
     
-    from app.crm.models import Task
+    from app.crm.models import Counterparty, Task
+    visible_clients = select(Counterparty.id).where(client_predicate(db, user))
     statement = statement.where(
         or_(
             Notification.entity_type != 'task',
             Notification.entity_id.in_(select(Task.id).where(task_predicate(db, user)))
+        ),
+        or_(
+            Notification.entity_type != 'counterparty',
+            Notification.entity_id.in_(visible_clients)
         )
     )
     
@@ -386,6 +392,10 @@ def notifications(read: bool | None = None, page: int = 1, page_size: int = 25,
         or_(
             Notification.entity_type != 'task',
             Notification.entity_id.in_(select(Task.id).where(task_predicate(db, user)))
+        ),
+        or_(
+            Notification.entity_type != 'counterparty',
+            Notification.entity_id.in_(visible_clients)
         )
     )) or 0
     return result
