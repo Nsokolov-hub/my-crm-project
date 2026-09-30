@@ -9,7 +9,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../app/Auth';
 import { RecordForm } from '../components/Form';
@@ -33,60 +33,97 @@ export function FilesPanel({
   entityType,
   entityId,
   onAttach,
+  initialFile,
 }: {
   entityType: string;
   entityId: string;
   onAttach?: (file: Entity) => void;
+  initialFile?: File;
 }) {
   const [error, setError] = useState<unknown>();
   const [busy, setBusy] = useState(false);
+  const [autoAttachId, setAutoAttachId] = useState<string>();
   const files = useApi<Page>(`/files?entity_type=${entityType}&entity_id=${entityId}`);
+  const refreshFiles = files.refresh;
   const [classification, setClassification] = useState('general');
-  const key = useRef<string | undefined>(undefined);
+  const pendingUpload = useRef<{ signature: string; key: string } | undefined>(undefined);
+  const receivedFile = useRef<File | undefined>(undefined);
+  const fileInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!files.data?.items.some((f) => f.status === 'quarantined' || f.status === 'pending'))
       return;
     const timer = setInterval(files.refresh, 5000);
     return () => clearInterval(timer);
   }, [files.data, files.refresh]);
-  async function upload(file: File) {
+  const upload = useCallback(async (file: File) => {
     setBusy(true);
+    setError(undefined);
     try {
-      key.current ||= createRequestKey();
+      const signature = [file.name, file.size, file.lastModified, classification, entityType, entityId].join(':');
+      if (pendingUpload.current?.signature !== signature)
+        pendingUpload.current = { signature, key: createRequestKey() };
       const form = new FormData();
       form.set('file', file);
       form.set('entity_type', entityType);
       form.set('entity_id', entityId);
       form.set('classification', classification);
-      await api('/files', { method: 'POST', body: form, key: key.current });
-      key.current = undefined;
-      files.refresh();
+      const result = await api<Entity>('/files', { method: 'POST', body: form, key: pendingUpload.current.key });
+      pendingUpload.current = undefined;
+      if (onAttach && file === initialFile) setAutoAttachId(result.id);
+      refreshFiles();
     } catch (e) {
       setError(e);
     } finally {
       setBusy(false);
     }
-  }
+  }, [classification, entityType, entityId, refreshFiles, initialFile, onAttach]);
+  useEffect(() => {
+    const ready = files.data?.items.find((row) => row.id === autoAttachId && row.status === 'clean');
+    if (!ready || !onAttach) return;
+    setAutoAttachId(undefined);
+    onAttach(ready);
+  }, [autoAttachId, files.data, onAttach]);
+  useEffect(() => {
+    if (!initialFile || receivedFile.current === initialFile) return;
+    receivedFile.current = initialFile;
+    void upload(initialFile);
+  }, [initialFile, upload]);
+  useEffect(() => {
+    const paste = (event: ClipboardEvent) => {
+      const item = Array.from(event.clipboardData?.items || []).find((entry) => entry.type.startsWith('image/'));
+      const source = item?.getAsFile();
+      if (!source || busy) return;
+      event.preventDefault();
+      const extension = source.type === 'image/jpeg' ? 'jpg' : source.type === 'image/gif' ? 'gif' : 'png';
+      void upload(new File([source], `Снимок-${Date.now()}.${extension}`, { type: source.type }));
+    };
+    document.addEventListener('paste', paste);
+    return () => document.removeEventListener('paste', paste);
+  }, [upload, busy]);
   return (
     <Section
       title="Вложения"
-      description="Файлы доступны после проверки содержимого. Исходные финансовые документы имеют отдельные права."
+      description="Прикрепите PNG или вставьте снимок через Ctrl+V / ⌘V. Файл станет доступен после проверки."
     >
       <ErrorBox error={error || files.error} />
+      {autoAttachId && <p>Снимок проверяется и будет приложен к сообщению автоматически.</p>}
       <div className="inline-actions">
-        <label className="button secondary">
+        <Button type="button" variant="secondary" disabled={busy} onClick={() => fileInput.current?.click()}>
           <Paperclip size={16} />
           {busy ? 'Загружается…' : 'Прикрепить файл'}
-          <input
-            hidden
-            type="file"
-            disabled={busy}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void upload(file);
-            }}
-          />
-        </label>
+        </Button>
+        <input
+          ref={fileInput}
+          hidden
+          type="file"
+          accept=".pdf,.png,.jpg,.jpeg,.gif,.txt,.csv,.xlsx,.docx"
+          disabled={busy}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.currentTarget.value = '';
+            if (file) void upload(file);
+          }}
+        />
         <select
           aria-label="Класс доступа к файлу"
           value={classification}
@@ -111,7 +148,10 @@ export function FilesPanel({
               label: 'Размер',
               render: (r) => `${Math.ceil(Number(r.size) / 1024)} КБ`,
             },
-            { key: 'status', label: 'Проверка', render: (r) => <Badge value={r.status} /> },
+            { key: 'status', label: 'Проверка', render: (r) =>
+              r.status === 'quarantined' || r.status === 'pending'
+                ? 'Проверяется…' : r.status === 'scan_failed'
+                  ? 'Не удалось проверить файл' : <Badge value={r.status} /> },
             {
               key: 'actions',
               label: 'Действия',
@@ -163,6 +203,7 @@ export function ChatRoom({ chat, onBack }: { chat: Entity; onBack?: () => void }
   const [text, setText] = useState('');
   const [error, setError] = useState<unknown>();
   const [filesOpen, setFilesOpen] = useState(false);
+  const [pastedFile, setPastedFile] = useState<File>();
   const [membersOpen, setMembersOpen] = useState(false);
   const [attached, setAttached] = useState<Entity[]>([]);
   const [mentionIds, setMentionIds] = useState<string[]>([]);
@@ -323,6 +364,15 @@ export function ChatRoom({ chat, onBack }: { chat: Entity; onBack?: () => void }
           value={text}
           maxLength={20000}
           onChange={(e) => setText(e.target.value)}
+          onPaste={(event) => {
+            const item = Array.from(event.clipboardData.items).find((entry) => entry.type.startsWith('image/'));
+            const source = item?.getAsFile();
+            if (!source) return;
+            event.preventDefault();
+            const extension = source.type === 'image/jpeg' ? 'jpg' : source.type === 'image/gif' ? 'gif' : 'png';
+            setPastedFile(new File([source], `Снимок-${Date.now()}.${extension}`, { type: source.type }));
+            setFilesOpen(true);
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
@@ -372,14 +422,19 @@ export function ChatRoom({ chat, onBack }: { chat: Entity; onBack?: () => void }
         </div>
       </form>
       {filesOpen && (
-        <Modal title="Вложения обсуждения" wide onClose={() => setFilesOpen(false)}>
+        <Modal title="Вложения обсуждения" wide onClose={() => {
+          setFilesOpen(false);
+          setPastedFile(undefined);
+        }}>
           <div className="form-body">
             <FilesPanel
               entityType="chat"
               entityId={chat.id}
+              initialFile={pastedFile}
               onAttach={(file) => {
                 setAttached((v) => (v.some((f) => f.id === file.id) ? v : [...v, file]));
                 setFilesOpen(false);
+                setPastedFile(undefined);
               }}
             />
           </div>

@@ -9,6 +9,7 @@ from app.commerce.itemized import itemized_profile
 from app.commerce.models import CalculationProfile, Execution, WaveAllocation
 from app.core.models import PermissionGrant
 from app.crm.models import (
+    Counterparty,
     Country,
     Currency,
     Nomenclature,
@@ -38,7 +39,8 @@ def test_profile_rates_wave_quantity_and_proposal(commerce):  # noqa: F811
         group = ProductGroup(name="Стандартные образцы", slug="reference_standards")
         country = Country(name="Индия", iso2="IN")
         currency = Currency(name="Доллар", code="USD")
-        db.add_all([group, country, currency])
+        rupee = Currency(name="Индийская рупия", code="INR")
+        db.add_all([group, country, currency, rupee])
         db.flush()
         nomenclature = Nomenclature(name="Образец", product_group_id=group.id)
         db.add(nomenclature)
@@ -61,7 +63,12 @@ def test_profile_rates_wave_quantity_and_proposal(commerce):  # noqa: F811
         profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "4997"}]
         profile["exchange_rates"] = [{"currency": "USD", "management_per_unit": "100",
                                        "quoted_units": "1", "date": date.today().isoformat(),
+                                       "source": "Финансовый профиль"},
+                                      {"currency": "INR", "management_per_unit": "1",
+                                       "quoted_units": "1", "date": date.today().isoformat(),
                                        "source": "Финансовый профиль"}]
+        supplier = db.get(Counterparty, env["supplier_id"])
+        supplier.details = {"Логистика по умолчанию": "50000", "Валюта логистики": "INR"}
         profile["default_expenses"] = [{"name": "Декларант", "amount": "25000",
                                         "currency": "RUB", "method": "BY_QUANTITY",
                                         "stage": "GENERAL", "calculation_type": "FIXED"}]
@@ -87,10 +94,32 @@ def test_profile_rates_wave_quantity_and_proposal(commerce):  # noqa: F811
                "selections": [{"quote_item_id": quote.id, "markup_coefficient": "1.5"}]}
     preview = command(env, f"/requests/{env['request_id']}/calculations/preview", payload)
     assert preview["snapshot"]["wave_distribution"]["total_quantity"] == "6.000000"
-    assert preview["snapshot"]["expense_allocations"][0]["existing_wave_share"] == "16666.67"
+    assert {row["name"]: row["existing_wave_share"] for row in preview["snapshot"]["expense_allocations"]} == {
+        "Международная логистика": "33333.33", "Декларант": "16666.67",
+    }
     assert preview["snapshot"]["rates"][0]["source"] == "Финансовый профиль"
     calculation = command(env, f"/requests/{env['request_id']}/calculations", payload)
     assert calculation["snapshot"]["lines"][0]["expense_details"]["Декларант"] == "8333.33"
+    assert calculation["snapshot"]["lines"][0]["expense_details"]["Международная логистика"] == "16666.67"
+    inherited = env["client"].get(f"/api/v1/requests/{env['request_id']}/wave-expenses")
+    assert inherited.status_code == 200
+    assert {row["name"]: row["amount"] for row in inherited.json()["expenses"]} == {
+        "Международная логистика": "50000", "Декларант": "25000",
+    }
+    assert inherited.json()["source_calculation_id"] == calculation["id"]
+    override = command(env, f"/requests/{env['request_id']}/calculations", {
+        **payload, "previous_id": calculation["id"],
+        "expenses": [{"name": "Международная логистика", "amount": "80000", "currency": "INR",
+                      "method": "BY_QUANTITY", "stage": "INTERNATIONAL_LOGISTICS", "scope": "WAVE"},
+                     {"name": "Декларант", "amount": "30000", "currency": "RUB",
+                      "method": "BY_QUANTITY", "stage": "GENERAL", "scope": "WAVE"}],
+    })
+    next_preview = command(env, f"/requests/{env['request_id']}/calculations/preview", {
+        **payload, "previous_id": override["id"],
+    })
+    assert {row["name"]: row["amount"] for row in next_preview["snapshot"]["expense_allocations"]} == {
+        "Международная логистика": "80000.00", "Декларант": "30000.00",
+    }
     proposal = command(env, f"/requests/{env['request_id']}/proposals", {
         "calculation_id": calculation["id"],
         "valid_until": (date.today() + timedelta(days=15)).isoformat(),

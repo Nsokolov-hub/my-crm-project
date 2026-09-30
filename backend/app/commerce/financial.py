@@ -10,6 +10,7 @@ from app.core.security import can, check_request, has_request_permission, requir
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.core.service import page as paginate
 from app.crm.models import (
+    Counterparty,
     Country,
     Currency,
     Nomenclature,
@@ -138,6 +139,7 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
         snapshot.pop("rates", None)
         snapshot.pop("payment_terms", None)
         snapshot.pop("wave_distribution", None)
+        snapshot.pop("resolved_expenses", None)
     if not can_reward:
         snapshot.pop("internal_adjustment", None)
 
@@ -166,6 +168,60 @@ def latest_calculation(db, request_id: str) -> Calculation | None:
         .order_by(Calculation.created_at.desc(), Calculation.id.desc())
         .limit(1)
     )
+
+
+def latest_wave_expenses(db, wave_id: str) -> tuple[list[dict] | None, str | None]:
+    """Use the latest saved budget for the wave, never a preview or a different wave."""
+    calculations = db.scalars(
+        select(Calculation)
+        .where(Calculation.snapshot["wave"]["id"].as_string() == wave_id)
+        .order_by(Calculation.created_at.desc(), Calculation.id.desc())
+    )
+    for calculation in calculations:
+        snapshot = calculation.snapshot
+        if snapshot.get("algorithm_version") != "itemized-v2":
+            continue
+        expenses = snapshot.get("resolved_expenses")
+        if expenses is None:
+            # Older saved calculations did not persist resolved profile defaults.
+            expenses = (snapshot.get("input") or {}).get("expenses")
+            if not expenses:
+                continue
+        return [dict(row) for row in expenses if row.get("scope", "WAVE") == "WAVE"], calculation.id
+    return None, None
+
+
+def supplier_logistics(db, supplier_id: str) -> dict | None:
+    supplier = db.get(Counterparty, supplier_id)
+    details = supplier.details if supplier and isinstance(supplier.details, dict) else {}
+    amount = details.get("Логистика по умолчанию")
+    if not amount:
+        return None
+    currency = str(details.get("Валюта логистики") or "RUB").strip().upper()
+    try:
+        return Expense.model_validate({
+            "name": "Международная логистика", "amount": str(amount).replace(",", "."),
+            "currency": currency, "method": "BY_QUANTITY", "scope": "WAVE",
+            "stage": "INTERNATIONAL_LOGISTICS", "basis": f"Тариф поставщика {supplier.name}",
+        }).model_dump(mode="json")
+    except ValidationError:
+        error("SUPPLIER_LOGISTICS_INVALID", "Проверьте сумму и валюту логистики в карточке поставщика")
+
+
+@router.get("/requests/{request_id}/wave-expenses")
+def request_wave_expenses(request_id: str, db: DB, user: Actor):
+    check_request(db, user, request_id, "finance.calculations.read")
+    require_permission(db, user, "finance.purchase.read", request_id)
+    request = db.get(CRMRequest, request_id)
+    if not request.wave_id:
+        return {"expenses": None, "source_calculation_id": None}
+    expenses, source_id = latest_wave_expenses(db, request.wave_id)
+    if expenses is None:
+        wave = db.get(Wave, request.wave_id)
+        default_logistics = supplier_logistics(db, wave.supplier_id) if wave else None
+        if default_logistics:
+            expenses = [default_logistics]
+    return {"expenses": expenses, "source_calculation_id": source_id}
 
 
 def expense_type_view(db, row: ExpenseType) -> dict:
@@ -339,18 +395,32 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             .where(WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True),
                    or_(Execution.quote_item_id.is_(None), Execution.quote_item_id.not_in(selected_quote_ids)))
         )
+        wave_expenses, wave_expense_source = latest_wave_expenses(db, wave.id)
+        if data.expenses is not None:
+            effective_expenses = [expense.model_dump(mode="json") for expense in data.expenses]
+        elif wave_expenses is not None:
+            request_defaults = [row for row in profile.definition.get("default_expenses", [])
+                                if row.get("scope") == "REQUEST"]
+            effective_expenses = wave_expenses + request_defaults
+        else:
+            effective_expenses = list(profile.definition.get("default_expenses", []))
+            default_logistics = supplier_logistics(db, wave.supplier_id)
+            if default_logistics:
+                effective_expenses = [row for row in effective_expenses
+                                      if row.get("stage") != "INTERNATIONAL_LOGISTICS"] + [default_logistics]
         snapshot = calculate_itemized(
             profile.definition,
             selections,
-            ([expense.model_dump(mode="json") for expense in data.expenses]
-             if data.expenses is not None else profile.definition.get("default_expenses", [])),
+            effective_expenses,
             [{**rate, "author_id": user.id} for rate in rates],
             data.internal_adjustment,
             data.payment_terms,
             wave_existing_quantity=existing_quantity,
         )
         snapshot["wave"] = {"id": wave.id, "number": wave.number, "supplier_id": wave.supplier_id,
-                            "existing_quantity": str(existing_quantity)}
+                            "existing_quantity": str(existing_quantity),
+                            "expense_source_calculation_id": wave_expense_source}
+        snapshot["resolved_expenses"] = effective_expenses
         snapshot["request_number"] = req.number
         snapshot["source_type"] = "QUOTE" if len({row["quote_item"]["quote_id"] for row in selections}) == 1 else "REQUEST"
         snapshot["source_id"] = selections[0]["quote_item"]["quote_id"] if snapshot["source_type"] == "QUOTE" else request_id
@@ -359,7 +429,7 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             snapshot["source_label"] = f"Квота №{sheet.number}"
         else:
             snapshot["source_label"] = f"Заявка №{req.number}"
-        snapshot["input"] = data.model_dump(mode="json")
+        snapshot["input"] = {**data.model_dump(mode="json"), "expenses": effective_expenses}
         snapshot["request_version"] = req.version
         snapshot["profile_id"] = profile.id
         snapshot["profile_created_at"] = profile.created_at.isoformat()

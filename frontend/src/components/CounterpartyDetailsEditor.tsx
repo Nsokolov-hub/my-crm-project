@@ -7,6 +7,8 @@ const detailFields: { key: string; label: string; multiline?: boolean }[] = [
   { key: 'Расчётный счёт', label: 'Расчётный счёт' },
   { key: 'Корреспондентский счёт', label: 'Корреспондентский счёт' },
   { key: 'Дополнительные сведения', label: 'Дополнительные сведения', multiline: true },
+  { key: 'Логистика по умолчанию', label: 'Международная логистика поставщика, сумма' },
+  { key: 'Валюта логистики', label: 'Валюта логистики поставщика (например, INR)' },
 ];
 
 const knownKeys = new Set<string>(detailFields.map((field) => field.key));

@@ -210,6 +210,9 @@ class Expense(Input):
     percent_base: Literal["PURCHASE", "CUSTOMS_BASE", "DUTY", "COST"] | None = None
     brackets: list[ExpenseBracket] = Field(default_factory=list)
     stage: Literal["INTERNATIONAL_LOGISTICS", "GENERAL"] = "GENERAL"
+    scope: Literal["WAVE", "REQUEST"] = "WAVE"
+    minimum_amount: Nonnegative = Decimal("0")
+    minimum_currency: Currency = "RUB"
     manual: dict[str, str] = Field(default_factory=dict)
     include_in_cost: bool = True
     include_in_cash: bool = True

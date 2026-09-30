@@ -242,6 +242,12 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         elif kind == "PERCENTAGE":
             basis = expense_basis(expense.get("percent_base"))
             amount = _money(basis * dec(expense.get("amount", "0")) / 100, rounding)
+            minimum = dec(expense.get("minimum_amount", "0"))
+            minimum_currency = expense.get("minimum_currency", "RUB")
+            if minimum and minimum_currency not in fx:
+                error("RATE_REQUIRED", f"Для минимума расхода {name} отсутствует курс {minimum_currency} к RUB", field="rates")
+            if minimum:
+                amount = max(amount, _money(minimum * fx[minimum_currency], rounding))
         elif kind == "BRACKET":
             basis = expense_basis(expense.get("percent_base"))
             amount = _money(_bracket_amount(expense.get("brackets") or [], basis, field="expenses") * fx[currency], rounding)
@@ -250,7 +256,8 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         if amount < 0:
             error("EXPENSE_AMOUNT", f"Расход {name} не может быть отрицательным", field="expenses")
         method = expense.get("method", "BY_QUANTITY")
-        if method == "BY_QUANTITY" and kind in ("FIXED", "BRACKET", "MANUAL"):
+        if (method == "BY_QUANTITY" and expense.get("scope", "WAVE") == "WAVE"
+                and kind in ("FIXED", "BRACKET", "MANUAL")):
             parts, existing_share = shared_by_quantity(amount)
         else:
             parts = _allocation(amount, rows, method, expense.get("manual") or {}, rounding)
@@ -266,7 +273,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
                 row[key] += part
         allocations.append({
             "name": name, "calculation_type": kind, "method": method,
-            "stage": stage, "amount": _string(amount),
+            "stage": stage, "scope": expense.get("scope", "WAVE"), "amount": _string(amount),
             "currency": currency, "parts": {key: _string(value) for key, value in parts.items()},
             "existing_wave_share": _string(existing_share),
             "wave_total_quantity": _string(wave_total_quantity),
