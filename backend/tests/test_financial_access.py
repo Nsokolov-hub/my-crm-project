@@ -3,9 +3,11 @@
 from copy import deepcopy
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
 from uuid import uuid4
 
 import pytest
+from PIL import Image
 from sqlalchemy import func, select
 from test_commerce import command, get, prepare
 from test_commerce import commerce as commerce
@@ -217,3 +219,16 @@ def test_attachment_export_scope_uses_owning_request(commerce, entity_type, clas
     set_scope(env, "exports.download", "all")
     allowed = env["client"].get(f"/api/v1/files/{file_id}/download")
     assert allowed.status_code == 200 and allowed.content == content
+
+
+def test_png_screenshot_can_be_uploaded_to_request(commerce):
+    env = commerce
+    env["client"].app.include_router(communication_router, prefix="/api/v1")
+    image = BytesIO()
+    Image.new("RGB", (2, 2), "white").save(image, format="PNG")
+    response = env["client"].post("/api/v1/files", data={
+        "entity_type": "request", "entity_id": env["request_id"], "classification": "general",
+    }, files={"file": ("screenshot.png", image.getvalue(), "image/png")},
+        headers={"Idempotency-Key": str(uuid4())})
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "quarantined"

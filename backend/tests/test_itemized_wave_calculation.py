@@ -81,6 +81,45 @@ def test_fixed_group_duty_is_split_between_column_rows():
     assert second["detail"]["fixed_group_quantity"] == "3"
 
 
+def test_wave_logistics_and_transfer_fees_include_ruble_minimum():
+    profile = itemized_profile()
+    profile["import_country_id"] = "country-1"
+    profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "0"}]
+    selection = _selection("sample", "reference_standards", "2", "1000", "1")
+    selection["currency_code"] = "INR"
+    expenses = [
+        {"name": name, "amount": amount, "currency": currency,
+         "stage": stage, "scope": scope, "method": "BY_QUANTITY",
+         "calculation_type": kind, **extra}
+        for name, amount, currency, stage, scope, kind, extra in (
+            ("Международная логистика", "80000", "INR", "INTERNATIONAL_LOGISTICS", "WAVE", "FIXED", {}),
+            ("Декларант", "25000", "RUB", "GENERAL", "WAVE", "FIXED", {}),
+            ("Терминальная обработка", "10000", "RUB", "GENERAL", "WAVE", "FIXED", {}),
+            ("Доставка клиенту в Москве", "5000", "RUB", "GENERAL", "REQUEST", "FIXED", {}),
+            ("Валютный контроль", "0.18", "RUB", "GENERAL", "WAVE", "PERCENTAGE",
+             {"percent_base": "CUSTOMS_BASE", "minimum_amount": "30", "minimum_currency": "USD"}),
+            ("Комиссия за платёж", "0.29", "RUB", "GENERAL", "WAVE", "PERCENTAGE",
+             {"percent_base": "CUSTOMS_BASE"}),
+        )
+    ]
+    result = calculate_itemized(profile, [selection], expenses, [
+        {"currency": "INR", "management_per_unit": "1", "quoted_units": "1",
+         "date": "2026-09-28", "source": "Профиль"},
+        {"currency": "USD", "management_per_unit": "100", "quoted_units": "1",
+         "date": "2026-09-28", "source": "Профиль"},
+    ], wave_existing_quantity=Decimal("2"))
+    row = result["lines"][0]
+    assert row["expense_details"] == {
+        "Международная логистика": "40000.00",
+        "Декларант": "12500.00",
+        "Терминальная обработка": "5000.00",
+        "Доставка клиенту в Москве": "5000.00",
+        "Валютный контроль": "3000.00",
+        "Комиссия за платёж": "121.80",
+    }
+    assert Decimal(row["total"]) > Decimal(row["detail"]["cost"])
+
+
 def test_excel_purine_rows_match_cached_gross_unit_prices():
     # Считалка 94: Вход-Выход!D14:H16, Колонки!AG6:AL7, AE6:AE7, AS6:AS7.
     profile = itemized_profile()

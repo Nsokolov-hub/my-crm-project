@@ -24,7 +24,10 @@ type Expense = {
   method: string;
   basis: string;
   stage: string;
+  scope: string;
   calculation_type: string;
+  minimum_amount: string;
+  minimum_currency: string;
   percent_base?: string;
   brackets?: Record<string, unknown>[];
   include_in_cost: boolean;
@@ -71,9 +74,8 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
     <DataTable<Entity> rows={rows} columns={[
       { key: 'description', label: 'Товар' },
       { key: 'quantity', label: 'Кол-во', render: (row) => decimal(row.quantity) },
-      ...(['purchase_rub', 'international_logistics', 'customs_base', 'duty', 'customs_fee',
-        'general_expenses', 'import_vat', 'cost', 'internal_bonus', 'markup_coefficient',
-        'sale_net', 'sale_tax', 'sale_total', 'profit'] as const).map((key) => ({
+      ...(['purchase_rub', 'international_logistics', 'duty', 'general_expenses',
+        'cost', 'sale_total', 'profit'] as const).map((key) => ({
         key, label: detailLabels[key], render: (row: Entity) =>
           (row.detail as Entity | undefined)?.[key] == null ? '—' : decimal((row.detail as Entity)[key]),
       })),
@@ -112,10 +114,9 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
     </>}
     {rates.length > 0 && <p>Зафиксированные курсы: {rates.map((rate) =>
       `${rate.currency}: ${decimal(rate.management_per_unit)} ₽ за ${decimal(rate.quoted_units)} (${date(rate.date)}, ${rate.source})`).join('; ')}.</p>}
-    <details><summary>Полный снимок расчёта</summary><pre className="snapshot-json">{JSON.stringify(snapshot, null, 2)}</pre></details>
   </div>;
 }
-function expenseFromReference(row: Entity): Expense {
+function expenseFromReference(row: Record<string, unknown>): Expense {
   return {
     name: String(row.name || ''),
     amount: String(row.amount ?? row.default_value ?? '0'),
@@ -123,13 +124,28 @@ function expenseFromReference(row: Entity): Expense {
     method: String(row.method || row.distribution_method || 'BY_QUANTITY'),
     basis: String(row.basis || row.name || 'Расход сделки'),
     stage: String(row.stage || 'GENERAL'),
+    scope: String(row.scope || 'WAVE'),
     calculation_type: String(row.calculation_type || 'FIXED'),
+    minimum_amount: String(row.minimum_amount ?? '0'),
+    minimum_currency: String(row.minimum_currency || 'RUB'),
     percent_base: row.percent_base ? String(row.percent_base) : undefined,
     brackets: Array.isArray(row.brackets) ? (row.brackets as Record<string, unknown>[]) : [],
     include_in_cost: row.include_in_cost !== false,
     include_in_cash: row.include_in_cash !== false,
   };
 }
+
+const standardExpenses: Expense[] = [
+  expenseFromReference({ name: 'Декларант', amount: '25000', currency: 'RUB' }),
+  expenseFromReference({ name: 'Терминальная обработка', amount: '10000', currency: 'RUB' }),
+  expenseFromReference({ name: 'Валютный контроль', amount: '0.18', currency: 'RUB',
+    calculation_type: 'PERCENTAGE', percent_base: 'CUSTOMS_BASE',
+    minimum_amount: '30', minimum_currency: 'USD' }),
+  expenseFromReference({ name: 'Комиссия за платёж', amount: '0.29', currency: 'RUB',
+    calculation_type: 'PERCENTAGE', percent_base: 'CUSTOMS_BASE' }),
+];
+const moscowDelivery = expenseFromReference({ name: 'Доставка клиенту в Москве', amount: '5000',
+  currency: 'RUB', scope: 'REQUEST' });
 
 function CalculationEditor({
   request,
@@ -156,6 +172,9 @@ function CalculationEditor({
     : null);
   const profiles = useApi<Page>('/profiles?page_size=100');
   const expenseTypes = useApi<Page>('/expense-types?active=true');
+  const waveExpenses = useApi<{ expenses: Entity[] | null; source_calculation_id: string | null }>(
+    request.wave_id ? `/requests/${request.id}/wave-expenses` : null,
+  );
   const command = useCommand();
   const [profileId, setProfileId] = useState(String(previousInput.profile_id || previousSnapshot.profile_id || previous?.profile_id || ''));
   const [selections, setSelections] = useState<Record<string, Selection>>(() =>
@@ -170,6 +189,9 @@ function CalculationEditor({
   const [bulkMarkup, setBulkMarkup] = useState('1.5');
   const [expenses, setExpenses] = useState<Expense[]>(() => Array.isArray(previousInput.expenses)
     ? (previousInput.expenses as Entity[]).map(expenseFromReference) : []);
+  const [hydratedProfileId, setHydratedProfileId] = useState(
+    Array.isArray(previousInput.expenses) ? String(previousInput.profile_id || previous?.profile_id || '') : '',
+  );
   const [expenseTypeId, setExpenseTypeId] = useState('');
   const [prepayment, setPrepayment] = useState(String(previousTerms.prepayment_percent || '100'));
   const [deferred, setDeferred] = useState(String(previousTerms.deferred_percent || '0'));
@@ -200,7 +222,10 @@ function CalculationEditor({
   const selectedRows = rows.filter((row) => selections[row.id]);
   const neededCurrencies = [
     ...new Set(
-      [...selectedRows.map(currencyOf), ...expenses.map((expense) => expense.currency)].filter(
+      [...selectedRows.map(currencyOf), ...expenses.flatMap((expense) => [
+        expense.calculation_type === 'PERCENTAGE' ? '' : expense.currency,
+        Number(expense.minimum_amount) > 0 ? expense.minimum_currency : '',
+      ])].filter(
         (code) => code && code !== 'RUB',
       ),
     ),
@@ -212,6 +237,18 @@ function CalculationEditor({
         (profile.definition as Entity | undefined)?.methodology === 'itemized_v2',
     ) || [];
   const selectedProfile = profileOptions.find((profile) => profile.id === profileId);
+  useEffect(() => {
+    if (!selectedProfile || hydratedProfileId === profileId || waveExpenses.loading) return;
+    const defaults = ((selectedProfile.definition as Entity).default_expenses || []) as Entity[];
+    const shared = waveExpenses.data?.expenses;
+    setExpenses((shared === null || shared === undefined
+      ? defaults
+      : waveExpenses.data?.source_calculation_id
+        ? [...shared, ...defaults.filter((row) => row.scope === 'REQUEST')]
+        : [...defaults.filter((row) => row.stage !== 'INTERNATIONAL_LOGISTICS'), ...shared]
+    ).map(expenseFromReference));
+    setHydratedProfileId(profileId);
+  }, [selectedProfile, profileId, hydratedProfileId, waveExpenses.loading, waveExpenses.data]);
   const profileRates = ((selectedProfile?.definition as Entity | undefined)?.exchange_rates || []) as Rate[];
   const serverError = command.error instanceof ApiError ? command.error : undefined;
   const serverSelectionIndex = Number(serverError?.field?.match(/^selections\.(\d+)/)?.[1]);
@@ -220,7 +257,10 @@ function CalculationEditor({
     : undefined;
   const errors: string[] = [];
   if (!request.wave_id) errors.push('Руководитель должен назначить волну поставки в заявке.');
+  if (waveExpenses.loading) errors.push('Загружаются расходы волны.');
+  if (waveExpenses.error) errors.push('Не удалось загрузить расходы волны. Проверьте тариф поставщика и повторно откройте расчёт.');
   if (!profileId) errors.push('Не выбран профиль расчёта.');
+  if (profileId && hydratedProfileId !== profileId) errors.push('Загружаются расходы профиля.');
   if (!Object.keys(selections).length) errors.push('Выберите хотя бы одну позицию квоты.');
   if (Object.keys(selections).length > selectedRows.length)
     errors.push('Часть выбранных квот не загружена. Откройте их в списке и повторите выбор.');
@@ -253,10 +293,12 @@ function CalculationEditor({
   });
   expenses.forEach((expense, index) => {
     const amountInvalid = !Number.isFinite(Number(expense.amount)) || Number(expense.amount) < 0;
+    const minimumInvalid = !Number.isFinite(Number(expense.minimum_amount)) || Number(expense.minimum_amount) < 0;
     if (
       !expense.name.trim() ||
       !expense.basis.trim() ||
       (expense.calculation_type !== 'BRACKET' && amountInvalid) ||
+      (expense.calculation_type === 'PERCENTAGE' && minimumInvalid) ||
       (['PERCENTAGE', 'BRACKET'].includes(expense.calculation_type) && !expense.percent_base) ||
       (expense.calculation_type === 'BRACKET' && !expense.brackets?.length)
     )
@@ -590,10 +632,23 @@ function CalculationEditor({
               <div>
                 <h3>Расходы сделки</h3>
                 <p>
-                  Расходы профиля можно изменить, удалить или дополнить статьями из справочника.
+                  Общие расходы волны переходят в следующие расчёты и заново делятся на всё подтверждённое количество.
+                  Расход «Только эта заявка» подходит для доставки клиенту.
                 </p>
+                {waveExpenses.data?.source_calculation_id &&
+                  <p>Расходы волны загружены из последнего сохранённого расчёта.</p>}
               </div>
               <div className="calculation-expense-actions">
+                <Button type="button" variant="secondary" onClick={() => {
+                  setExpenses((current) => [...current, ...standardExpenses.filter((preset) =>
+                    !current.some((entry) => entry.name === preset.name))]);
+                  invalidate();
+                }}>Добавить типовые расходы и комиссии</Button>
+                <Button type="button" variant="secondary" onClick={() => {
+                  setExpenses((current) => current.some((entry) => entry.name === moscowDelivery.name)
+                    ? current : [...current, moscowDelivery]);
+                  invalidate();
+                }}>Доставка клиенту в Москве</Button>
                 <select
                   aria-label="Статья расхода из справочника"
                   value={expenseTypeId}
@@ -634,7 +689,10 @@ function CalculationEditor({
                         method: 'BY_QUANTITY',
                         basis: '',
                         stage: 'GENERAL',
+                        scope: 'WAVE',
                         calculation_type: 'FIXED',
+                        minimum_amount: '0',
+                        minimum_currency: 'RUB',
                         include_in_cost: true,
                         include_in_cash: true,
                       },
@@ -686,6 +744,17 @@ function CalculationEditor({
                     }}
                   />
                 </label>
+                {expense.calculation_type !== 'PERCENTAGE' && <label>
+                  Валюта суммы{' '}
+                  <select value={expense.currency} onChange={(event) => {
+                    setExpenses((current) => current.map((entry, i) =>
+                      i === index ? { ...entry, currency: event.target.value } : entry));
+                    invalidate();
+                  }}>
+                    {[...new Set(['RUB', ...profileRates.map((rate) => rate.currency), expense.currency])]
+                      .map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+                  </select>
+                </label>}
                 <label>
                   Тип{' '}
                   <select
@@ -746,6 +815,39 @@ function CalculationEditor({
                     <option value="INTERNATIONAL_LOGISTICS">Международная логистика</option>
                   </select>
                 </label>
+                <label>
+                  Относится к{' '}
+                  <select value={expense.scope} onChange={(event) => {
+                    setExpenses((current) => current.map((entry, i) =>
+                      i === index ? { ...entry, scope: event.target.value } : entry));
+                    invalidate();
+                  }}>
+                    <option value="WAVE">Всей волне</option>
+                    <option value="REQUEST">Только этой заявке</option>
+                  </select>
+                </label>
+                {expense.calculation_type === 'PERCENTAGE' && <>
+                  <label>
+                    Минимум комиссии{' '}
+                    <input inputMode="decimal" value={expense.minimum_amount}
+                      onChange={(event) => {
+                        setExpenses((current) => current.map((entry, i) =>
+                          i === index ? { ...entry, minimum_amount: event.target.value.replace(',', '.') } : entry));
+                        invalidate();
+                      }} />
+                  </label>
+                  <label>
+                    Валюта минимума{' '}
+                    <select value={expense.minimum_currency} onChange={(event) => {
+                      setExpenses((current) => current.map((entry, i) =>
+                        i === index ? { ...entry, minimum_currency: event.target.value } : entry));
+                      invalidate();
+                    }}>
+                      {[...new Set(['RUB', ...profileRates.map((rate) => rate.currency), expense.minimum_currency])]
+                        .map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+                    </select>
+                  </label>
+                </>}
                 <label>
                   Распределение{' '}
                   <select
