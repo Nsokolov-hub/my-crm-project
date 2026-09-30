@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter
 from pydantic import ValidationError
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 
 from app.core.errors import error
 from app.core.security import can, check_request, has_request_permission, require_permission
@@ -23,11 +23,12 @@ from app.crm.models import (
     Request as CRMRequest,
 )
 
-from .calculator import calculate, digest, example_profile, validate_profile
+from .calculator import calculate, dec, digest, example_profile, validate_profile
 from .itemized import calculate_itemized, itemized_profile
 from .models import (
     Calculation,
     CalculationProfile,
+    CommercialDocument,
     Execution,
     ExpenseType,
     Product,
@@ -189,6 +190,36 @@ def latest_wave_expenses(db, wave_id: str) -> tuple[list[dict] | None, str | Non
                 continue
         return [dict(row) for row in expenses if row.get("scope", "WAVE") == "WAVE"], calculation.id
     return None, None
+
+
+def existing_wave_components(db, wave_id: str, selected_quote_ids: list[str]) -> tuple:
+    """Use accepted document snapshots as the basis of a wave-wide percentage."""
+    quantity = dec("0")
+    missing_basis_quantity = dec("0")
+    components = {"purchase_rub": dec("0"), "duty": dec("0")}
+    allocations = db.scalars(select(WaveAllocation).where(
+        WaveAllocation.wave_id == wave_id, WaveAllocation.active.is_(True)
+    )).all()
+    for allocation in allocations:
+        execution = db.get(Execution, allocation.execution_id)
+        if not execution or execution.quote_item_id in selected_quote_ids:
+            continue
+        quantity += allocation.quantity
+        proposal = db.get(CommercialDocument, execution.proposal_id)
+        calculation = db.get(Calculation, proposal.calculation_id) if proposal else None
+        if not calculation:
+            missing_basis_quantity += allocation.quantity
+            continue
+        line = next((row for row in calculation.snapshot.get("lines", [])
+                     if row.get("line_id") == execution.line_id), None)
+        if not line or not dec(line.get("quantity", "0")) or "purchase_rub" not in (line.get("detail") or {}):
+            missing_basis_quantity += allocation.quantity
+            continue
+        factor = allocation.quantity / dec(line["quantity"])
+        detail = line.get("detail") or {}
+        for key in components:
+            components[key] += dec(detail.get(key, "0")) * factor
+    return quantity, components, missing_basis_quantity
 
 
 def supplier_logistics(db, supplier_id: str) -> dict | None:
@@ -389,11 +420,8 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         if wave.status not in ("planned", "assembling"):
             error("WAVE_CLOSED", "Для расчёта выберите открытую волну поставки", field="wave_id")
         selected_quote_ids = [row["quote_item"]["id"] for row in selections]
-        existing_quantity = db.scalar(
-            select(func.coalesce(func.sum(WaveAllocation.quantity), 0))
-            .join(Execution, Execution.id == WaveAllocation.execution_id)
-            .where(WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True),
-                   or_(Execution.quote_item_id.is_(None), Execution.quote_item_id.not_in(selected_quote_ids)))
+        existing_quantity, existing_components, missing_basis = existing_wave_components(
+            db, wave.id, selected_quote_ids
         )
         wave_expenses, wave_expense_source = latest_wave_expenses(db, wave.id)
         if data.expenses is not None:
@@ -408,6 +436,15 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             if default_logistics:
                 effective_expenses = [row for row in effective_expenses
                                       if row.get("stage") != "INTERNATIONAL_LOGISTICS"] + [default_logistics]
+        if missing_basis and any(
+            row.get("scope", "WAVE") == "WAVE"
+            and row.get("method", "BY_QUANTITY") == "BY_QUANTITY"
+            and row.get("calculation_type") in ("PERCENTAGE", "BRACKET")
+            for row in effective_expenses
+        ):
+            error("WAVE_PERCENT_BASIS_UNAVAILABLE",
+                  "Для общего процентного расхода нет сохранённой базы ранее принятых позиций волны", 409,
+                  field="expenses")
         snapshot = calculate_itemized(
             profile.definition,
             selections,
@@ -416,6 +453,7 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             data.internal_adjustment,
             data.payment_terms,
             wave_existing_quantity=existing_quantity,
+            wave_existing_components=existing_components,
         )
         snapshot["wave"] = {"id": wave.id, "number": wave.number, "supplier_id": wave.supplier_id,
                             "existing_quantity": str(existing_quantity),

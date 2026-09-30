@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from test_commerce import command, commerce  # noqa: F401
 
+from app.commerce.financial import existing_wave_components
 from app.commerce.itemized import itemized_profile
 from app.commerce.models import CalculationProfile, Execution, WaveAllocation
 from app.core.models import PermissionGrant
@@ -92,6 +93,12 @@ def test_profile_rates_wave_quantity_and_proposal(commerce):  # noqa: F811
 
     payload = {"request_version": 2, "profile_id": saved_profile.id,
                "selections": [{"quote_item_id": quote.id, "markup_coefficient": "1.5"}]}
+    unavailable = command(env, f"/requests/{env['request_id']}/calculations/preview", {
+        **payload, "expenses": [{"name": "Комиссия", "amount": "0.29", "currency": "RUB",
+                                "method": "BY_QUANTITY", "scope": "WAVE", "stage": "GENERAL",
+                                "calculation_type": "PERCENTAGE", "percent_base": "PURCHASE"}],
+    }, expected=409)
+    assert unavailable["code"] == "WAVE_PERCENT_BASIS_UNAVAILABLE"
     preview = command(env, f"/requests/{env['request_id']}/calculations/preview", payload)
     assert preview["snapshot"]["wave_distribution"]["total_quantity"] == "6.000000"
     assert {row["name"]: row["existing_wave_share"] for row in preview["snapshot"]["expense_allocations"]} == {
@@ -127,6 +134,21 @@ def test_profile_rates_wave_quantity_and_proposal(commerce):  # noqa: F811
     })
     assert proposal["kind"] == "proposal"
     assert proposal["snapshot"]["lines"][0]["quantity"] == "2.000000"
+    with env["sessions"].begin() as db:
+        accepted = Execution(request_id=env["request_id"], item_id=env["item_id"],
+                             proposal_id=proposal["id"], line_id=calculation["snapshot"]["lines"][0]["line_id"],
+                             quote_item_id=quote.id, quantity=Decimal("2"),
+                             cancelled_quantity=Decimal("0"), unit="pcs", snapshot={},
+                             acceptance_reason="Тест исторической базы", accepted_by=env["owner_id"])
+        db.add(accepted)
+        db.flush()
+        db.add(WaveAllocation(wave_id=wave["id"], execution_id=accepted.id,
+                              approval_id="test-approval", quantity=Decimal("1"), active=True))
+    with env["sessions"]() as db:
+        quantity, components, missing = existing_wave_components(db, wave["id"], [])
+    assert quantity == Decimal("5")
+    assert components["purchase_rub"] == Decimal("10000")
+    assert missing == Decimal("4")
     with env["sessions"].begin() as db:
         db.query(PermissionGrant).filter_by(user_id=env["other_id"], code="requests.read").update({"scope": "all"})
     env["user_id"] = env["other_id"]

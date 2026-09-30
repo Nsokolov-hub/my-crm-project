@@ -110,11 +110,18 @@ def test_preview_profile_and_calculation_replay_reproject_after_revocation(comme
     assert not {"constants", "formulas"} & profile["definition"].keys()
     replay = command(env, f"/requests/{env['request_id']}/calculations", payload)
     preview = command(env, f"/requests/{env['request_id']}/calculations/preview", payload)
-    assert replay["snapshot"] == preview["snapshot"]
+    # Replay returns the saved version; preview is the next prospective version.
+    assert replay["snapshot"]["totals"] == preview["snapshot"]["totals"]
+    assert replay["snapshot"]["lines"][0]["total"] == preview["snapshot"]["lines"][0]["total"]
+    assert preview["snapshot"]["base_version_id"] == saved["id"]
+    assert preview["snapshot"]["version_number"] == replay["snapshot"]["version_number"] + 1
     assert replay["id"] == saved["id"]
     assert "input" not in replay["snapshot"]
     assert "commission_factor" not in replay["snapshot"]["lines"][0]["detail"]
     assert not {"constants", "formulas"} & replay["snapshot"]["profile"].keys()
+    assert "input" not in preview["snapshot"]
+    assert "commission_factor" not in preview["snapshot"]["lines"][0]["detail"]
+    assert not {"constants", "formulas"} & preview["snapshot"]["profile"].keys()
     with env["sessions"]() as db:
         assert db.get(CalculationProfile, saved["profile_id"]).definition == original_profile
         assert db.get(Calculation, saved["id"]).snapshot == saved["snapshot"]

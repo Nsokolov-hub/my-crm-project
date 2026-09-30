@@ -378,13 +378,14 @@ def create_rfq(request_id: str, data: RfqIn, db: DB, user: Actor):
             rows.append([
                 nomenclature.name if nomenclature else item.description,
                 packing.display_name if packing else (item.packaging or ""),
+                (nomenclature.cas or item.cas) if nomenclature else (item.cas or ""),
                 str(item.quantity),
                 "",
                 nomenclature.article or "" if nomenclature else "",
                 item.comment or "",
             ])
         content = workbook(
-            ["Name", "Packing", "Quantity", "Cost", "Article", "Comment"],
+            ["Name", "Packing", "CAS", "Quantity", "Cost", "Article", "Comment"],
             rows,
             "Supplier request",
         )

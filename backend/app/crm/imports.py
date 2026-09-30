@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
 from fastapi.responses import Response
 from openpyxl import Workbook, load_workbook
 from pydantic import Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -314,6 +314,10 @@ def preview(
                 Counterparty.name.ilike(literal_like(values["name"]), escape='\\') &
                 Counterparty.country.ilike(literal_like(values["country"]), escape='\\')
             )
+        # E-mail is a possible match, never an automatic merge key: multiple
+        # organisations can share a mailbox and the operator must resolve it.
+        if mode == "general" and values.get("email"):
+            conditions.append(func.lower(Counterparty.email) == values["email"])
         if conditions:
             row.candidate_ids = list(
                 db.scalars(
