@@ -114,10 +114,58 @@ def test_wave_logistics_and_transfer_fees_include_ruble_minimum():
         "Декларант": "12500.00",
         "Терминальная обработка": "5000.00",
         "Доставка клиенту в Москве": "5000.00",
-        "Валютный контроль": "3000.00",
-        "Комиссия за платёж": "121.80",
+        "Валютный контроль": "1500.00",
+        "Комиссия за платёж": "118.90",
     }
+    shares = {entry["name"]: entry["existing_wave_share"] for entry in result["expense_allocations"]}
+    assert shares["Валютный контроль"] == "1500.00"
+    assert shares["Комиссия за платёж"] == "118.90"
     assert Decimal(row["total"]) > Decimal(row["detail"]["cost"])
+
+
+def test_wave_percentage_uses_existing_purchase_and_current_logistics_budget():
+    profile = itemized_profile()
+    profile["import_country_id"] = "country-1"
+    profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "0"}]
+    selection = _selection("sample", "reference_standards", "2", "1000", "1")
+    selection["currency_code"] = "INR"
+    result = calculate_itemized(profile, [selection], [
+        {"name": "Логистика", "amount": "80000", "currency": "INR", "method": "BY_QUANTITY",
+         "stage": "INTERNATIONAL_LOGISTICS", "scope": "WAVE", "calculation_type": "FIXED"},
+        {"name": "Перевод", "amount": "0.29", "currency": "RUB", "method": "BY_QUANTITY",
+         "stage": "GENERAL", "scope": "WAVE", "calculation_type": "PERCENTAGE",
+         "percent_base": "CUSTOMS_BASE"},
+    ], [{"currency": "INR", "management_per_unit": "1", "quoted_units": "1",
+         "date": "2026-09-28", "source": "Профиль"}],
+        wave_existing_quantity=Decimal("2"),
+        wave_existing_components={"purchase_rub": Decimal("100000")})
+    allocation = next(row for row in result["expense_allocations"] if row["name"] == "Перевод")
+    # (2 000 + 100 000 закупка + 80 000 логистика) * 0,29% = 527,80 руб.
+    assert allocation["amount"] == "527.80"
+    assert allocation["calculation_basis"] == "182000.00"
+    assert allocation["parts"] == {"sample": "263.90"}
+    assert allocation["existing_wave_share"] == "263.90"
+
+
+def test_request_percentage_minimum_is_not_shared_with_existing_wave_orders():
+    profile = itemized_profile()
+    profile["import_country_id"] = "country-1"
+    profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "0"}]
+    result = calculate_itemized(profile, [
+        _selection("sample", "reference_standards", "2", "100", "1"),
+    ], [{"name": "Отдельный перевод", "amount": "0.18", "currency": "RUB",
+         "method": "BY_QUANTITY", "scope": "REQUEST", "stage": "GENERAL",
+         "calculation_type": "PERCENTAGE", "percent_base": "PURCHASE",
+         "minimum_amount": "30", "minimum_currency": "USD"}], [
+        {"currency": "USD", "management_per_unit": "100", "quoted_units": "1",
+         "date": "2026-09-28", "source": "Профиль"},
+    ], wave_existing_quantity=Decimal("2"),
+        wave_existing_components={"purchase_rub": Decimal("100000")})
+    allocation = result["expense_allocations"][0]
+    assert allocation["amount"] == "3000.00"
+    assert allocation["calculation_basis"] == "20000.00"
+    assert allocation["parts"] == {"sample": "3000.00"}
+    assert allocation["existing_wave_share"] == "0"
 
 
 def test_excel_purine_rows_match_cached_gross_unit_prices():

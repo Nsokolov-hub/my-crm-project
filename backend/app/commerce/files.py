@@ -3,13 +3,15 @@
 import hashlib
 import io
 import os
+from decimal import Decimal
 from pathlib import Path
 from xml.sax.saxutils import escape
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.enums import TA_RIGHT
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -58,13 +60,46 @@ def safe_cell(value):
 
 def format_details(value: object) -> str:
     if isinstance(value, dict):
+        labels = {
+            "tax_id": "ИНН", "inn": "ИНН", "registration_code": "КПП", "kpp": "КПП",
+            "legal_address": "Юридический адрес", "bank": "Банк",
+            "bank_account": "Расчётный счёт", "account": "Расчётный счёт",
+            "bank_code": "БИК", "bic": "БИК",
+            "registration_number": "ОГРН", "ogrn": "ОГРН",
+        }
         parts = [
-            f"{key}: {item}"
+            f"{labels.get(key, key)}: {item}"
             for key, item in value.items()
             if item is not None and str(item).strip()
         ]
         return " · ".join(parts) or "—"
     return str(value) if value else "—"
+
+
+def party_details(party: dict) -> str:
+    details = party.get("details")
+    tax_id = party.get("tax_id")
+    if isinstance(details, dict) and tax_id and not any(key in details for key in ("tax_id", "inn", "ИНН")):
+        details = {"ИНН": tax_id, **details}
+    elif not details and tax_id:
+        details = {"ИНН": tax_id}
+    return format_details(details)
+
+
+def pdf_decimal(value: object, *, money: bool = False) -> str:
+    """Format a numeric snapshot value for a customer document, without changing it."""
+    number = Decimal(str(value))
+    if money:
+        fraction = format(number, "f").partition(".")[2].rstrip("0")
+        places = max(2, len(fraction))
+        formatted = f"{number:,.{places}f}"
+    else:
+        formatted = f"{number:,f}".rstrip("0").rstrip(".") if "." in f"{number:,f}" else f"{number:,f}"
+    return formatted.replace(",", "\u00a0").replace(".", ",")
+
+
+def pdf_unit(value: str) -> str:
+    return {"pcs": "шт.", "kg": "кг", "g": "г", "l": "л", "ml": "мл"}.get(value, value)
 
 
 def workbook(headers: list[str], rows: list[list], title: str) -> bytes:
@@ -122,8 +157,8 @@ def document_files(snapshot: dict) -> dict:
     xlsx_rows = [
         [snapshot["title"], snapshot["number"], snapshot["date"]],
         ["Заявка", snapshot.get("request_number", "")],
-        ["Продавец", snapshot["seller"]["name"], format_details(snapshot["seller"].get("details"))],
-        ["Клиент", snapshot["client"]["name"], format_details(snapshot["client"].get("details"))],
+        ["Продавец", snapshot["seller"]["name"], party_details(snapshot["seller"])],
+        ["Клиент", snapshot["client"]["name"], party_details(snapshot["client"])],
         ["Валюта", snapshot["currency"]],
         [],
         headers,
@@ -157,9 +192,13 @@ def document_files(snapshot: dict) -> dict:
             error("PDF_FONT_MISSING", "Не установлен шрифт Unicode для печатных форм", 503)
         pdfmetrics.registerFont(TTFont(font_name, font))
     buffer = io.BytesIO()
+    money_values = [pdf_decimal(value, money=True) for row in snapshot["lines"]
+                    for value in (row["unit_price"], row["net"], row["tax"], row["total"])]
+    wide = any(pdfmetrics.stringWidth(value, font_name, 6.5) > 60 for value in money_values)
+    widths = [20, 185, 55, 70, 70, 60, 75] if not wide else [25, 230, 80, 115, 105, 95, 125]
     pdf = SimpleDocTemplate(
         buffer,
-        pagesize=A4,
+        pagesize=landscape(A4) if wide else A4,
         rightMargin=30,
         leftMargin=30,
         topMargin=32,
@@ -168,18 +207,26 @@ def document_files(snapshot: dict) -> dict:
     )
     style = ParagraphStyle("body", fontName=font_name, fontSize=8, leading=11, spaceAfter=8)
     title_style = ParagraphStyle("title", parent=style, fontSize=16, leading=20, spaceAfter=16)
+    number_style = ParagraphStyle("number", parent=style, alignment=TA_RIGHT, splitLongWords=0)
 
     def p(text):
         return Paragraph(escape(str(text)), style)
+
+    def number(value, width, *, money=False):
+        value = pdf_decimal(value, money=money)
+        available = width - 10
+        size = min(8, max(5.5, 8 * available / max(pdfmetrics.stringWidth(value, font_name, 8), 1)))
+        cell_style = ParagraphStyle("number-cell", parent=number_style, fontSize=size, leading=size + 2)
+        return Paragraph(escape(value), cell_style)
 
     content = [
         Paragraph(escape(f"{snapshot['title']} № {snapshot['number']}"), title_style),
         p(f"Дата: {snapshot['date']} · Валюта: {snapshot['currency']}"),
         p(f"Заявка: {snapshot.get('request_number', '')}"),
         p(f"Продавец: {snapshot['seller']['name']}"),
-        p(format_details(snapshot["seller"].get("details"))),
+        p(party_details(snapshot["seller"])),
         p(f"Клиент: {snapshot['client']['name']}"),
-        p(format_details(snapshot["client"].get("details"))),
+        p(party_details(snapshot["client"])),
         Spacer(1, 8),
     ]
     pdf_headers = ["№", "Наименование", "Кол-во / ед.", "Цена/ед.", "Без налога", "Налог", "Итого"]
@@ -190,33 +237,36 @@ def document_files(snapshot: dict) -> dict:
             [
                 p(index),
                 p(title),
-                p(f"{row['quantity']} {row['unit']}"),
-                p(row["unit_price"]),
-                p(row["net"]),
-                p(row["tax"]),
-                p(row["total"]),
+                p(f"{pdf_decimal(row['quantity'])} {pdf_unit(row['unit'])}"),
+                number(row["unit_price"], widths[3], money=True),
+                number(row["net"], widths[4], money=True),
+                number(row["tax"], widths[5], money=True),
+                number(row["total"], widths[6], money=True),
             ]
         )
-    table = Table(table_rows, colWidths=[20, 185, 55, 70, 70, 60, 75], repeatRows=1)
-    table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8F0EB")),
-                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#C6D3CC")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ]
-        )
-    )
-    # Available A4 width is 535pt; explicit widths match exactly.
+    table_rows.append([
+        p(""), p("Итого"), p(""), p(""),
+        number(snapshot["totals"]["net"], widths[4], money=True),
+        number(snapshot["totals"]["tax"], widths[5], money=True),
+        number(snapshot["totals"]["total"], widths[6], money=True),
+    ])
+    table = Table(table_rows, colWidths=widths, repeatRows=1)
+    table_styles = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8F0EB")),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E8F0EB")),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#C6D3CC")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+    ]
+    if len(table_rows) > 10:
+        table_styles.append(("NOSPLIT", (0, len(table_rows) - 7), (-1, -1)))
+    table.setStyle(TableStyle(table_styles))
+    # Widths fit the printable area of A4 in either orientation.
     content.extend(
         [
             table,
             Spacer(1, 14),
-            p(
-                f"Без налога: {snapshot['totals']['net']} · Налог: {snapshot['totals']['tax']} · Итого: {snapshot['totals']['total']} {snapshot['currency']}"
-            ),
             p(f"Условия: {snapshot['terms']}"),
             p(f"Действует / оплатить до: {snapshot['valid_until']}"),
         ]

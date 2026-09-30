@@ -357,7 +357,9 @@ def test_a03_rfq_saved_file_not_sent_and_omits_finances(commerce):
     content = env["client"].get(f"/api/v1/rfqs/{rfq['id']}/file")
     assert content.status_code == 200
     book = load_workbook(io.BytesIO(content.content))
+    assert book.active.cell(1, 3).value == "CAS"
     assert book.active.cell(2, 3).value == "64-17-5"
+    assert book.active.cell(2, 5).value in (None, "")
     assert "цена" not in " ".join(str(cell.value) for cell in book.active[1]).lower()
     assert get(env, f"/requests/{env['request_id']}/rfqs")["items"][0]["sent_at"] is None
     assert env["client"].get(f"/api/v1/rfqs/{rfq['id']}/file").content == content.content

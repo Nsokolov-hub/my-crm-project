@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { z } from 'zod';
 import { ApiError, api } from '../lib/api';
@@ -60,7 +60,7 @@ export function DirectorySelect({
     : null;
   const source = useApi<Page>(sourcePath);
   const selectedId = String(value ?? '');
-  const rows = [...created, ...(source.data?.items || [])];
+  const rows = useMemo(() => [...created, ...(source.data?.items || [])], [created, source.data?.items]);
   const options = rows
     .filter((row, index) => rows.findIndex((candidate) => candidate.id === row.id) === index)
     .map((row) => ({
@@ -87,7 +87,7 @@ export function DirectorySelect({
         if (!controller.signal.aborted) setSelected({ id: selectedId, label: 'Выбрано' });
       });
     return () => controller.abort();
-  }, [selectedId, selected?.id, source.data, source.loading, field.source, field.labelKey, created]);
+  }, [selectedId, selected?.id, source.loading, field.source, field.labelKey, rows]);
 
   function choose(id: string, optionLabel: string) {
     setSelected({ id, label: optionLabel });

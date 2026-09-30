@@ -157,14 +157,17 @@ def calculate_itemized(
     internal_adjustment: dict | None = None,
     payment_terms: dict | None = None,
     wave_existing_quantity: Decimal = Decimal("0"),
+    wave_existing_components: dict[str, Decimal] | None = None,
 ) -> dict:
     with localcontext() as context:
         context.prec = 48
         return _calculate_itemized(profile, selections, expenses, rates, internal_adjustment or {},
-                                   payment_terms or {}, wave_existing_quantity)
+                                   payment_terms or {}, wave_existing_quantity,
+                                   wave_existing_components or {})
 
 
-def _calculate_itemized(profile, selections, expenses, rates, internal_adjustment, payment_terms, wave_existing_quantity):
+def _calculate_itemized(profile, selections, expenses, rates, internal_adjustment, payment_terms,
+                        wave_existing_quantity, wave_existing_components):
     validate_itemized_profile(profile)
     rounding = profile.get("rounding", "half_up")
     if rounding not in ROUNDING:
@@ -211,6 +214,11 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     allocations = []
     selected_quantity = sum(row["quantity"] for row in rows)
     wave_total_quantity = selected_quantity + wave_existing_quantity
+    existing = {key: dec(wave_existing_components.get(key, "0")) for key in (
+        "purchase_rub", "international_logistics", "duty", "customs_fee", "general_expenses"
+    )}
+    if any(value < 0 for value in existing.values()):
+        error("WAVE_BASIS", "Основание расходов ранее принятых позиций не может быть отрицательным")
 
     def shared_by_quantity(amount: Decimal) -> tuple[dict[str, Decimal], Decimal]:
         bases = {row["id"]: row["quantity"] for row in rows}
@@ -220,15 +228,19 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         return ({row["id"]: parts[row["id"]] for row in rows},
                 parts.get("__wave_existing__", Decimal("0")))
 
-    def expense_basis(kind):
+    def expense_basis(kind, include_wave=False):
         if kind == "PURCHASE":
-            return sum(row["purchase_rub"] for row in rows)
+            return sum(row["purchase_rub"] for row in rows) + (existing["purchase_rub"] if include_wave else 0)
         if kind == "CUSTOMS_BASE":
-            return sum(row["purchase_rub"] + row["international_logistics"] for row in rows)
+            return sum(row["purchase_rub"] + row["international_logistics"] for row in rows) + (
+                existing["purchase_rub"] + existing["international_logistics"] if include_wave else 0
+            )
         if kind == "DUTY":
-            return sum(row["duty"] for row in rows)
+            return sum(row["duty"] for row in rows) + (existing["duty"] if include_wave else 0)
         if kind == "COST":
-            return sum(row["purchase_rub"] + row["international_logistics"] + row["duty"] + row["customs_fee"] + row["general_expenses"] for row in rows)
+            return sum(row["purchase_rub"] + row["international_logistics"] + row["duty"] + row["customs_fee"] + row["general_expenses"] for row in rows) + (
+                sum(existing.values()) if include_wave else 0
+            )
         error("PERCENT_BASE_REQUIRED", "Для процентного расхода выберите базу начисления", field="expenses")
 
     def apply_expense(expense):
@@ -237,10 +249,14 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         if currency not in fx:
             error("RATE_REQUIRED", f"Для расхода {name} отсутствует курс {currency} к RUB", field="expenses")
         kind = expense.get("calculation_type", "FIXED")
+        method = expense.get("method", "BY_QUANTITY")
+        shared = method == "BY_QUANTITY" and expense.get("scope", "WAVE") == "WAVE"
+        calculation_basis = None
         if kind in ("FIXED", "MANUAL"):
             amount = _money(dec(expense.get("amount", "0")) * fx[currency], rounding)
         elif kind == "PERCENTAGE":
-            basis = expense_basis(expense.get("percent_base"))
+            basis = expense_basis(expense.get("percent_base"), include_wave=shared)
+            calculation_basis = basis
             amount = _money(basis * dec(expense.get("amount", "0")) / 100, rounding)
             minimum = dec(expense.get("minimum_amount", "0"))
             minimum_currency = expense.get("minimum_currency", "RUB")
@@ -249,15 +265,14 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             if minimum:
                 amount = max(amount, _money(minimum * fx[minimum_currency], rounding))
         elif kind == "BRACKET":
-            basis = expense_basis(expense.get("percent_base"))
+            basis = expense_basis(expense.get("percent_base"), include_wave=shared)
+            calculation_basis = basis
             amount = _money(_bracket_amount(expense.get("brackets") or [], basis, field="expenses") * fx[currency], rounding)
         else:
             error("EXPENSE_TYPE", f"Неизвестный тип расхода {name}", field="expenses")
         if amount < 0:
             error("EXPENSE_AMOUNT", f"Расход {name} не может быть отрицательным", field="expenses")
-        method = expense.get("method", "BY_QUANTITY")
-        if (method == "BY_QUANTITY" and expense.get("scope", "WAVE") == "WAVE"
-                and kind in ("FIXED", "BRACKET", "MANUAL")):
+        if shared:
             parts, existing_share = shared_by_quantity(amount)
         else:
             parts = _allocation(amount, rows, method, expense.get("manual") or {}, rounding)
@@ -271,6 +286,9 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             if expense.get("include_in_cost", True):
                 key = "international_logistics" if stage == "INTERNATIONAL_LOGISTICS" else "general_expenses"
                 row[key] += part
+        if expense.get("include_in_cost", True):
+            key = "international_logistics" if stage == "INTERNATIONAL_LOGISTICS" else "general_expenses"
+            existing[key] += existing_share
         allocations.append({
             "name": name, "calculation_type": kind, "method": method,
             "stage": stage, "scope": expense.get("scope", "WAVE"), "amount": _string(amount),
@@ -278,6 +296,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "existing_wave_share": _string(existing_share),
             "wave_total_quantity": _string(wave_total_quantity),
             "basis": expense.get("basis", ""), "percent_base": expense.get("percent_base"),
+            "calculation_basis": _string(calculation_basis) if calculation_basis is not None else None,
         })
 
     names = [expense["name"].strip() for expense in expenses]
@@ -314,6 +333,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     customs_basis = sum(row["customs_base"] for row in rows)
     fee = _money(_bracket_amount(profile["customs_fee_brackets"], customs_basis, field="customs_fee_brackets"), rounding)
     fee_parts, existing_fee_share = shared_by_quantity(fee)
+    existing["customs_fee"] += existing_fee_share
     for row in rows:
         row["customs_fee"] = fee_parts[row["id"]]
     for expense in expenses:

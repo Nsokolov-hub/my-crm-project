@@ -133,6 +133,7 @@ def test_admin_can_save_seller_and_user_from_allowed_browser_origin(crm, monkeyp
 
 def test_a01_import_90_new_5_updates_5_errors_repeat_and_history(crm):
     login(crm)
+    existing_ids = {}
     with crm["sessions"].begin() as db:
         for i in range(5):
             row = Counterparty(
@@ -144,6 +145,7 @@ def test_a01_import_90_new_5_updates_5_errors_repeat_and_history(crm):
             )
             db.add(row)
             db.flush()
+            existing_ids[row.external_id] = row.id
             db.add(
                 Call(
                     client_id=row.id,
@@ -171,20 +173,27 @@ def test_a01_import_90_new_5_updates_5_errors_repeat_and_history(crm):
     batch = upload.json()
     assert batch["summary"] == {
         "create": 90,
-        "update": 5,
+        "update": 0,
         "error": 5,
-        "conflict": 0,
+        "conflict": 5,
         "skip": 0,
         "created": 0,
         "updated": 0,
         "total": 100,
+        "valid": 95,
     }
     assert batch["rows"][0]["data"]["email"] == "person0@example.com"
     assert batch["rows"][0]["data"]["phone"] == "+79001234567"
     assert batch["rows"][0]["data"]["tax_id"] == "00000"
     key = str(uuid4())
-    post(crm, f"/imports/{batch['id']}/confirm", {"decisions": []}, 200, key)
-    post(crm, f"/imports/{batch['id']}/confirm", {"decisions": []}, 200, key)
+    assert post(crm, f"/imports/{batch['id']}/confirm", {"decisions": []}, 409)["code"] == "IMPORT_CONFLICT_UNRESOLVED"
+    decisions = [
+        {"row_id": row["id"], "action": "update", "match_id": existing_ids[row["data"]["external_id"]]}
+        for row in batch["rows"] if row["action"] == "conflict"
+    ]
+    assert len(decisions) == 5
+    post(crm, f"/imports/{batch['id']}/confirm", {"decisions": decisions}, 200, key)
+    post(crm, f"/imports/{batch['id']}/confirm", {"decisions": decisions}, 200, key)
     payload = {"batch_id": batch["id"], "user_id": crm["admin"].id}
     with crm["sessions"].begin() as db:
         first = process_import(db, payload)
@@ -209,6 +218,8 @@ def test_a01_import_90_new_5_updates_5_errors_repeat_and_history(crm):
 def test_import_conflict_resolution_pages_and_ownership(crm):
     login(crm)
     client = post(crm, "/counterparties", {"name": "Существующий", "email": "shared@example.com"})
+    with crm["sessions"].begin() as db:
+        db.get(Counterparty, client["id"]).email = "SHARED@EXAMPLE.COM"
     data = xlsx(
         [["Организация", "Электронная почта"], *[[f"Строка {i}", "shared@example.com"] for i in range(101)]]
     )
@@ -218,6 +229,7 @@ def test_import_conflict_resolution_pages_and_ownership(crm):
     page2 = crm["client"].get(f"/api/v1/imports/{batch['id']}?page=2&page_size=100").json()
     assert len(page2["rows"]) == 1
     assert page2["rows"][0]["candidate_ids"] == [client["id"]]
+    assert batch["summary"]["conflict"] == 101
     rejected = post(crm, f"/imports/{batch['id']}/confirm", {"decisions": []}, 409)
     assert rejected["code"] == "IMPORT_CONFLICT_UNRESOLVED"
     decisions = [{"row_id": row["id"], "action": "skip"} for row in batch["rows"]]
