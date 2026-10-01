@@ -33,6 +33,7 @@ const quoteFields: Record<string, string> = {
   unit_price: 'Цена',
   currency: 'Валюта',
   delivery_days: 'Срок поставки, дней',
+  product_group: 'Товарная группа',
 };
 const itemFields: Record<string, string> = {
   description: 'Наименование',
@@ -115,6 +116,13 @@ export function TableImportDialog({
             ? 'Поставщик определяется по внутреннему коду, номенклатура — по артикулу. Нули в необязательных характеристиках оставят их пустыми. Если фасовка не указана, используется имеющаяся единственная фасовка или 1 шт.'
             : 'Загрузите XLSX или текст UTF-8 с колонками через табуляцию (TSV). Все исходные столбцы сохранятся и попадут в Excel запроса поставщику.'}
         </p>
+        {kind === 'quotes' && (
+          <p>
+            Для новых товаров укажите название или код действующей товарной группы. Если поле пустое
+            или равно 0, используется группа исходной позиции либо «Прочее». Существующая
+            номенклатура сохраняет свою группу.
+          </p>
+        )}
         {kind === 'quotes' && (
           <Button
             type="button"
@@ -229,6 +237,16 @@ export function TableImportDialog({
                       error: 'Ошибка',
                     })[String(row.action)] || String(row.action),
                 },
+                ...(kind === 'quotes'
+                  ? [
+                      {
+                        key: 'product_group_name',
+                        label: 'Товарная группа',
+                        render: (row: Entity) =>
+                          String((row.data as Record<string, unknown>).product_group_name || '—'),
+                      },
+                    ]
+                  : []),
                 {
                   key: 'errors',
                   label: 'Ошибки',

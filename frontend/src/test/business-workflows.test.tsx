@@ -148,6 +148,62 @@ it('shows the actual imported count after confirmation', async () => {
   expect(saved).toHaveBeenCalledOnce();
 });
 
+it('maps a product group column and previews each item’s actual group before confirming', async () => {
+  const batch = {
+    id: 'batch',
+    columns: ['Артикул', 'Категория'],
+    mapping: { article: 'Артикул' },
+    status: 'preview',
+    rows: [
+      {
+        row_number: 2,
+        action: 'create_nomenclature',
+        data: { name: 'Новый реактив', product_group_name: 'Прочее' },
+        errors: [],
+      },
+      {
+        row_number: 3,
+        action: 'checked',
+        data: { name: 'Известный товар', product_group_name: 'Колонки' },
+        errors: [],
+      },
+    ],
+    summary: { total: 2, checked: 1, create_nomenclature: 1, errors: 0 },
+    result: {},
+  };
+  vi.mocked(api)
+    .mockResolvedValueOnce(batch)
+    .mockResolvedValueOnce({
+      ...batch,
+      mapping: { ...batch.mapping, product_group: 'Категория' },
+      rows: [
+        { ...batch.rows[0], data: { name: 'Новый реактив', product_group_name: 'Реактивы' } },
+        batch.rows[1],
+      ],
+    });
+  render(
+    <TableImportDialog requestId="request" kind="quotes" onClose={vi.fn()} onSuccess={vi.fn()} />,
+  );
+  const input = screen.getByLabelText('Файл таблицы');
+  fireEvent.change(input, { target: { files: [new File(['test'], 'quote.xlsx')] } });
+  fireEvent.submit(input.closest('form')!);
+  expect(await screen.findByRole('columnheader', { name: 'Товарная группа' })).toBeVisible();
+  expect(screen.getByRole('cell', { name: 'Прочее' })).toBeVisible();
+  expect(screen.getByRole('cell', { name: 'Колонки' })).toBeVisible();
+  fireEvent.click(screen.getByText('Сопоставление столбцов'));
+  fireEvent.change(screen.getByLabelText('Товарная группа'), { target: { value: 'Категория' } });
+  expect(screen.getByRole('button', { name: 'Записать позиции: 2' })).toBeDisabled();
+  fireEvent.submit(input.closest('form')!);
+  expect(await screen.findByRole('cell', { name: 'Реактивы' })).toBeVisible();
+  expect(screen.getByRole('cell', { name: 'Колонки' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Записать позиции: 2' })).toBeEnabled();
+  const previewBody = vi.mocked(api).mock.calls[1][1]?.body as FormData;
+  expect(JSON.parse(String(previewBody.get('mapping')))).toEqual({
+    article: 'Артикул',
+    product_group: 'Категория',
+  });
+});
+
 it('saves a client demand row before exact nomenclature is known', async () => {
   vi.mocked(api).mockImplementation(async (_path, options) =>
     options?.method === 'POST' ? { id: 'item' } : { items: [] },

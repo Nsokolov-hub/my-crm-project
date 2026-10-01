@@ -12,6 +12,8 @@ from zipfile import BadZipFile, ZipFile
 from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
 from fastapi.responses import Response
 from openpyxl import load_workbook
+from openpyxl.workbook.defined_name import DefinedName
+from openpyxl.worksheet.datavalidation import DataValidation
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -55,6 +57,7 @@ QUOTE_COLUMNS = {
     "unit_price": "Цена",
     "currency": "Валюта",
     "delivery_days": "Срок поставки, дней",
+    "product_group": "Товарная группа",
 }
 ALIASES = {
     "description": [
@@ -82,6 +85,7 @@ ALIASES = {
     "unit_price": ["цена", "цена за единицу", "unit price", "price"],
     "currency": ["валюта", "currency"],
     "delivery_days": ["срок поставки, дней", "срок поставки", "delivery days"],
+    "product_group": ["товарная группа", "группа товаров", "группа", "product group", "product_group"],
 }
 UNITS = {
     "шт": "pcs",
@@ -100,7 +104,7 @@ UNITS = {
 MAX_ROWS = 10000
 
 
-def read_table(data: bytes, filename: str):
+def read_table(data: bytes, filename: str, *, sheet_name: str | None = None):
     extension = Path(filename).suffix.lower()
     if extension == ".xlsx":
         try:
@@ -116,7 +120,7 @@ def read_table(data: bytes, filename: str):
         except (BadZipFile, ValueError, KeyError, OSError):
             raise DomainError("IMPORT_INVALID_XLSX", "Не удалось прочитать XLSX", 422) from None
         try:
-            sheet = book.active
+            sheet = book[sheet_name] if sheet_name and sheet_name in book.sheetnames else book.active
             if (sheet.max_row or 0) > MAX_ROWS + 1 or (sheet.max_column or 0) > 100:
                 raise DomainError("IMPORT_LIMIT", "Максимум 10 000 строк и 100 столбцов", 422)
             matrix = []
@@ -209,6 +213,10 @@ def optional(value):
     return None if value.strip() in ("", "0", "0.0", "0,0") else value.strip()
 
 
+def group_reference(value):
+    return " ".join(value.split()).casefold()
+
+
 def decimal(value, *, positive=False, whole=False, places=8):
     try:
         number = Decimal(value.replace("\u00a0", "").replace(" ", "").replace(",", "."))
@@ -288,6 +296,23 @@ def quote_plan(db, request_id, columns, rows, mapping):
         )
     }
     currencies = {c.code: c for c in db.scalars(select(Currency).where(Currency.active.is_(True)))}
+    product_groups = {group.id: group for group in db.scalars(select(ProductGroup))}
+    group_names = defaultdict(dict)
+    for group in product_groups.values():
+        for reference in (group.name, group.slug):
+            group_names[group_reference(reference)][group.id] = group
+
+    def resolve_group(reference):
+        matches = list(group_names[group_reference(reference)].values())
+        active = [group for group in matches if group.active]
+        if len(active) > 1:
+            raise ValueError("Товарная группа неоднозначна. Укажите её уникальный код из справочника")
+        if not active:
+            raise ValueError(
+                "Товарная группа неактивна" if matches else "Товарная группа не найдена в справочнике"
+            )
+        return active[0]
+
     seen = set()
     new_definitions = {}
     source_choices = {}
@@ -345,6 +370,20 @@ def quote_plan(db, request_id, columns, rows, mapping):
             seen.add(identity)
             data["source_request_item_id"], data["source_version"] = source.id, source.version
             data["nomenclature_id"] = n.id if n else None
+            selected_group = resolve_group(data["product_group"]) if data.get("product_group") else None
+            if n:
+                group = product_groups.get(n.product_group_id)
+            elif selected_group:
+                group = selected_group
+            elif source.product_group_id:
+                group = product_groups.get(source.product_group_id)
+            else:
+                group = next((group for group in product_groups.values() if group.slug == "other"), None)
+            if (not n or n.product_group_id) and (not group or not group.active):
+                raise ValueError("Выберите действующую товарную группу")
+            data["product_group_id"] = group.id if group else None
+            data["product_group_name"] = group.name if group else None
+            data["product_group_slug"] = group.slug if group else None
             if not n:
                 if not data.get("name"):
                     raise ValueError("Для новой номенклатуры заполните наименование")
@@ -402,7 +441,8 @@ def quote_plan(db, request_id, columns, rows, mapping):
                 )
             if not n:
                 definition = {
-                    key: data.get(key) for key in ("name", "manufacturer", "cas", "linear_formula", "purity")
+                    key: data.get(key)
+                    for key in ("name", "manufacturer", "cas", "linear_formula", "purity", "product_group_id")
                 }
                 old = new_definitions.setdefault(article.casefold(), definition)
                 if old != definition:
@@ -450,7 +490,9 @@ def preview(
         raise DomainError("IMPORT_TYPE", "Квоты загружаются из XLSX", 422)
     try:
         chosen = json.loads(mapping)
-        columns, rows = read_table(content, file.filename or "")
+        columns, rows = read_table(
+            content, file.filename or "", sheet_name="Квоты" if kind == "quotes" else None
+        )
     except (json.JSONDecodeError, csv.Error):
         raise DomainError(
             "IMPORT_INVALID", "Проверьте формат таблицы и сопоставление столбцов", 422
@@ -519,6 +561,8 @@ def quote_template(request_id: str, user: User = Depends(current_user), db: Sess
     for index, item in enumerate(items, 1):
         n = db.get(Nomenclature, item.nomenclature_id) if item.nomenclature_id else None
         p = db.get(Packing, item.packing_id) if item.packing_id else None
+        group_id = n.product_group_id if n else item.product_group_id
+        group = db.get(ProductGroup, group_id) if group_id else None
         values = {
             "source_row": str(index),
             "article": n.article if n else item.article,
@@ -528,10 +572,45 @@ def quote_template(request_id: str, user: User = Depends(current_user), db: Sess
             "packing_value": p.value if p else "0",
             "packing_unit": p.unit if p else "0",
             "quantity": item.quantity,
+            "product_group": group.name if group else "",
         }
         rows.append([values.get(key, "") for key in QUOTE_COLUMNS])
+    book = load_workbook(io.BytesIO(xlsx([list(QUOTE_COLUMNS.values()), *rows])))
+    sheet = book.active
+    sheet.title = "Квоты"
+    directory = book.create_sheet("Товарные группы")
+    directory.append(["Товарная группа", "Код группы"])
+    groups = list(
+        db.scalars(select(ProductGroup).where(ProductGroup.active.is_(True)).order_by(ProductGroup.name))
+    )
+    for group in groups:
+        directory.append([group.name, group.slug])
+    for row in directory:
+        for cell in row:
+            cell.data_type = "s"
+            cell.number_format = "@"
+    directory.column_dimensions["A"].width = 40
+    directory.column_dimensions["B"].width = 28
+    directory.freeze_panes = "A2"
+    if groups:
+        book.defined_names.add(
+            DefinedName("QuoteProductGroups", attr_text=f"'Товарные группы'!$A$2:$A${len(groups) + 1}")
+        )
+        validation = DataValidation(type="list", formula1="QuoteProductGroups", allow_blank=True)
+        validation.showInputMessage = True
+        validation.promptTitle = "Группа новой номенклатуры"
+        validation.prompt = "Выберите группу из списка или укажите её код с листа «Товарные группы»."
+        # Codes and 0 are valid typed inputs too; the import preview validates every value.
+        validation.showErrorMessage = False
+        sheet.add_data_validation(validation)
+        column = sheet.cell(1, len(QUOTE_COLUMNS)).column_letter
+        validation.add(f"{column}2:{column}{MAX_ROWS + 1}")
+        sheet.column_dimensions[column].width = 40
+    stream = io.BytesIO()
+    book.save(stream)
+    book.close()
     return Response(
-        xlsx([list(QUOTE_COLUMNS.values()), *rows]),
+        stream.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
@@ -569,7 +648,8 @@ def confirm(
                 row
                 for row in previous
                 if row.file_metadata["sha256"] == batch.file_metadata["sha256"]
-                and row.mapping == batch.mapping
+                and {key: value for key, value in row.mapping.items() if value}
+                == {key: value for key, value in batch.mapping.items() if value}
             ),
             None,
         )
@@ -607,19 +687,12 @@ def confirm(
                 data = entry["data"]
                 n_id = data["nomenclature_id"] or new_catalogue.get(data["article"].casefold())
                 if not n_id:
-                    group = db.scalar(
-                        select(ProductGroup).where(
-                            ProductGroup.slug == "other", ProductGroup.active.is_(True)
-                        )
-                    )
-                    if not group:
-                        raise DomainError("PRODUCT_GROUP_INVALID", "Добавьте товарную группу «Прочее»", 422)
                     n = Nomenclature(
                         **{
                             key: data.get(key)
                             for key in ("name", "article", "manufacturer", "cas", "linear_formula", "purity")
                         },
-                        product_group_id=group.id,
+                        product_group_id=data["product_group_id"],
                     )
                     db.add(n)
                     db.flush()
