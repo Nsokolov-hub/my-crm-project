@@ -48,6 +48,7 @@ from app.crm.schemas import (
     CallPatch,
     ClientInput,
     ClientPatch,
+    ContactCreateInput,
     ContactInput,
     ContactPatch,
     CountryInput,
@@ -59,11 +60,13 @@ from app.crm.schemas import (
     PackingInput,
     PackingPatch,
     ProductGroupInput,
+    PromoteClientInput,
     QuoteSheetInput,
     RequestInput,
     RequestPatch,
     SellerInput,
     ShareInput,
+    StartItemsInput,
     TaskInput,
     TaskPatch,
 )
@@ -358,6 +361,7 @@ def nomenclatures(
 @router.post('/nomenclatures', status_code=201)
 def create_nomenclature(body: NomenclatureInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     require_catalog_create(db, user)
+    advisory(db, 'catalog.article-import')
     group = require_group(db, body.product_group_id)
     keys = [(item.value, item.unit.strip()) for item in body.packings]
     if len(keys) != len(set(keys)):
@@ -388,6 +392,7 @@ def nomenclature_detail(entity_id: str, user: User = Depends(current_user), db: 
 
 @router.patch('/nomenclatures/{entity_id}')
 def edit_nomenclature(entity_id: str, body: NomenclaturePatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    advisory(db, 'catalog.article-import')
     row = lock(db, Nomenclature, entity_id)
     if not can(db, user, 'catalog.write'):
         require_permission(db, user, 'requests.write')
@@ -418,6 +423,7 @@ def packings(entity_id: str, active: bool = True, user: User = Depends(current_u
 @router.post('/nomenclatures/{entity_id}/packings', status_code=201)
 def create_packing(entity_id: str, body: PackingInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     require_catalog_create(db, user)
+    advisory(db, 'catalog.article-import')
     require_nomenclature(db, entity_id)
     unit = body.unit.strip()
     advisory(db, f'catalog.packing:{entity_id}')
@@ -435,6 +441,7 @@ def create_packing(entity_id: str, body: PackingInput, user: User = Depends(curr
 @router.patch('/packings/{entity_id}')
 def edit_packing(entity_id: str, body: PackingPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     require_permission(db, user, 'catalog.write')
+    advisory(db, 'catalog.article-import')
     row = lock(db, Packing, entity_id)
     check_version(row, body.version)
     before = serialize(row)
@@ -447,11 +454,15 @@ def edit_packing(entity_id: str, body: PackingPatch, user: User = Depends(curren
 
 
 @router.get('/counterparties')
-def clients(q: str = '', kind: str | None = None, page: int = 1, page_size: int = 25, sort: str = 'name', direction: str = 'asc', archived: bool = False, filter_name: str = '', filter_tax_id: str = '', filter_profile: str = '', filter_city: str = '', filter_phone: str = '', filter_email: str = '', user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def clients(q: str = '', kind: str | None = None, client_base: str | None = None, page: int = 1, page_size: int = 25, sort: str = 'name', direction: str = 'asc', archived: bool = False, filter_name: str = '', filter_tax_id: str = '', filter_profile: str = '', filter_city: str = '', filter_phone: str = '', filter_email: str = '', user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     require_permission(db, user, 'clients.read')
     stmt = select(Counterparty).where(client_predicate(db, user), Counterparty.archived == archived)
     if kind:
         stmt = stmt.where(Counterparty.kind.in_([kind, 'both']))
+    if client_base:
+        if client_base not in ('cold', 'working'):
+            raise DomainError('CLIENT_BASE_INVALID', 'Выберите рабочую базу или базу обзвона', 422)
+        stmt = stmt.where(Counterparty.client_base == client_base)
     filters = {
         'name': filter_name, 'tax_id': filter_tax_id, 'profile': filter_profile,
         'city': filter_city, 'phone': filter_phone, 'email': filter_email,
@@ -462,6 +473,7 @@ def clients(q: str = '', kind: str | None = None, page: int = 1, page_size: int 
         'city': Counterparty.details['city'].as_string(),
         'phone': Counterparty.phone, 'email': Counterparty.email,
         'created_at': Counterparty.created_at,
+        'internal_code': Counterparty.internal_code,
     }.get(sort, Counterparty.name)
     stmt = stmt.order_by(col.desc() if direction == 'desc' else col, Counterparty.id)
     query_parts = search_parts(q)
@@ -477,6 +489,7 @@ def clients(q: str = '', kind: str | None = None, page: int = 1, page_size: int 
         details = row.details if isinstance(row.details, dict) else {}
         values = {
             'name': row.name, 'tax_id': row.tax_id, 'phone': row.phone, 'email': row.email,
+            'internal_code': row.internal_code,
             'profile': details.get('profile'), 'city': details.get('city'),
         }
         if query_parts and not search_match(' '.join(str(value or '') for value in values.values()), query_parts):
@@ -515,6 +528,22 @@ def client_detail(entity_id: str, user: User = Depends(current_user), db: Sessio
     return serialize(check_client(db, user, entity_id))
 
 
+@router.post('/counterparties/{entity_id}/promote')
+def promote_client(entity_id: str, body: PromoteClientInput, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    check_client(db, user, entity_id, 'clients.write')
+    row = lock(db, Counterparty, entity_id)
+    if row.archived:
+        raise DomainError('CLIENT_ARCHIVED', 'Сначала восстановите клиента из архива', 409)
+    if row.client_base == 'working':
+        return serialize(row)
+    check_version(row, body.version)
+    before = serialize(row)
+    row.client_base = 'working'
+    row.version += 1
+    audit(db, user, 'counterparty', row.id, 'promoted', before, serialize(row), 'Перенос из базы обзвона в рабочую базу')
+    return serialize(row)
+
+
 @router.patch('/counterparties/{entity_id}')
 def edit_client(entity_id: str, body: ClientPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     check_client(db, user, entity_id, 'clients.write')
@@ -528,6 +557,8 @@ def edit_client(entity_id: str, body: ClientPatch, user: User = Depends(current_
             raise DomainError('REASON_REQUIRED', 'Укажите причину переназначения', 422, 'reason')
     
     archive_cascade = body.archived is True and not row.archived
+    if row.client_base == 'cold' and body.kind in ('supplier', 'both'):
+        raise DomainError('WORKING_CLIENT_REQUIRED', 'Сначала переведите контрагента в рабочую базу', 422, 'kind')
 
     for k, v in body.model_dump(exclude_unset=True, exclude={'version', 'reason'}).items():
         setattr(row, k, v)
@@ -563,8 +594,38 @@ def contacts(entity_id: str, q: str = '', user: User = Depends(current_user), db
 
 @router.post('/counterparties/{entity_id}/contacts', status_code=201)
 def create_contact(entity_id: str, body: ContactInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
-    check_client(db, user, entity_id, 'clients.write')
+    client = check_client(db, user, entity_id, 'clients.write')
+    if client.client_base != 'working' or client.kind not in ('client', 'both'):
+        raise DomainError('WORKING_CLIENT_REQUIRED', 'Контакты привязываются к клиентам рабочей базы', 422)
     return save(db, user, Contact(client_id=entity_id, **body.model_dump()), 'contact')
+
+
+@router.get('/contacts')
+def contact_registry(q: str = '', page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    require_permission(db, user, 'clients.read')
+    accessible = select(Counterparty.id).where(client_predicate(db, user), Counterparty.client_base == 'working', Counterparty.kind.in_(['client', 'both']), Counterparty.archived.is_(False))
+    stmt = select(Contact).where(Contact.client_id.in_(accessible), Contact.archived.is_(False))
+    if q:
+        stmt = stmt.where(or_(Contact.name.ilike(f'%{q}%'), Contact.department.ilike(f'%{q}%'), Contact.purchase_area.ilike(f'%{q}%'), Contact.email.ilike(f'%{q}%')))
+    result = paginate(db, stmt.order_by(Contact.name, Contact.id), page, page_size)
+    names = {row.id: row.name for row in db.scalars(select(Counterparty).where(Counterparty.id.in_({r['client_id'] for r in result['items']})))}
+    for row in result['items']:
+        row['client_name'] = names.get(row['client_id'])
+    return result
+
+
+@router.post('/contacts', status_code=201)
+def create_registry_contact(body: ContactCreateInput, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return create_contact(body.client_id, ContactInput(**body.model_dump(exclude={'client_id'})), user, db)
+
+
+@router.get('/contacts/{entity_id}')
+def contact_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    row = db.get(Contact, entity_id)
+    if not row:
+        raise DomainError('NOT_FOUND', 'Контакт не найден', 404)
+    client = check_client(db, user, row.client_id)
+    return {**serialize(row), 'client_name': client.name}
 
 
 @router.patch('/contacts/{entity_id}')
@@ -782,7 +843,9 @@ def requests(q: str = '', stage: str | None = None, client_id: str | None = None
 @router.post('/requests', status_code=201)
 def create_request(body: RequestInput, idempotency_key: str | None = Header(default=None), user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     require_permission(db, user, 'requests.write')
-    check_client(db, user, body.client_id)
+    client = check_client(db, user, body.client_id)
+    if client.client_base != 'working' or client.kind not in ('client', 'both') or client.archived:
+        raise DomainError('WORKING_CLIENT_REQUIRED', 'Выберите клиента из рабочей базы', 422, 'client_id')
     contact_matches(db, body.contact_id, body.client_id)
     if body.seller_id and not db.get(Seller, body.seller_id):
         raise DomainError('SELLER_INVALID', 'Организация продавца не найдена', 422, 'seller_id')
@@ -807,6 +870,9 @@ def request_detail(entity_id: str, user: User = Depends(current_user), db: Sessi
     result = serialize(row)
     result['client_name'] = db.get(Counterparty, row.client_id).name
     result['owner_name'] = db.get(User, row.owner_id).name
+    result['source_columns'] = list(dict.fromkeys(col for columns in db.scalars(select(RequestItem.source_columns).where(RequestItem.request_id == row.id, RequestItem.archived.is_(False))) for col in (columns or [])))
+    contact = db.get(Contact, row.contact_id) if row.contact_id else None
+    result['contact_name'] = contact.name if contact else None
     result['members'] = list(db.scalars(select(RequestMember.user_id).where(RequestMember.request_id == row.id)))
     result['next_task'] = None
     task = db.scalar(
@@ -891,8 +957,11 @@ def items(entity_id: str, q: str = '', page: int = 1, page_size: int = 100, user
             Nomenclature.name.ilike(f'%{q}%'), Nomenclature.article.ilike(f'%{q}%'),
         ))
         stmt = stmt.where(or_(RequestItem.description.ilike(f'%{q}%'), RequestItem.nomenclature_id.in_(names)))
-    result = paginate(db, stmt.order_by(RequestItem.created_at), page, page_size)
+    result = paginate(db, stmt.order_by(RequestItem.created_at, RequestItem.id), page, page_size)
     result['items'] = [request_item_view(db, user, db.get(RequestItem, item['id'])) for item in result['items']]
+    numbers = {item_id: index for index, item_id in enumerate(db.scalars(select(RequestItem.id).where(RequestItem.request_id == entity_id, RequestItem.archived.is_(False)).order_by(RequestItem.created_at, RequestItem.id)), 1)}
+    for item in result['items']:
+        item['position_number'] = numbers.get(item['id'])
     return result
 
 
@@ -905,6 +974,28 @@ def create_item(entity_id: str, body: ItemInput, user: User = Depends(current_us
     db.add(RequestItemRevision(item_id=row.id, revision=1, snapshot=result, author_id=user.id))
     parent.version += 1
     return request_item_view(db, user, row)
+
+
+@router.post('/requests/{entity_id}/items/start')
+def start_items(entity_id: str, body: StartItemsInput, idempotency_key: str | None = Header(default=None), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    check_request(db, user, entity_id, 'requests.write')
+
+    def operation():
+        parent = lock(db, Request, entity_id)
+        ids = sorted(set(body.item_ids))
+        rows = db.scalars(select(RequestItem).where(RequestItem.request_id == entity_id, RequestItem.id.in_(ids)).order_by(RequestItem.id).with_for_update()).all()
+        if parent.archived or len(rows) != len(ids) or any(row.archived for row in rows):
+            raise DomainError('REQUEST_ITEM_INVALID', 'Выберите действующие позиции этой заявки', 422)
+        for row in rows:
+            if row.work_status != 'in_progress':
+                before = serialize(row)
+                row.work_status = 'in_progress'
+                row.version += 1
+                audit(db, user, 'request_item', row.id, 'started', before, serialize(row), body.reason)
+        parent.version += 1
+        return {'count': len(rows), 'item_ids': ids}
+
+    return idem(db, user, idempotency_key, f'items.start:{entity_id}', body.model_dump(), operation)
 
 
 @router.patch('/request-items/{entity_id}')

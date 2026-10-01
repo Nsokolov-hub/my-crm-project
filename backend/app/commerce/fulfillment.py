@@ -183,8 +183,6 @@ def approval_snapshot(db, executions: list[Execution], reviewer_id: str) -> dict
         calculation = db.get(Calculation, proposal.calculation_id)
         threshold = dec(calculation.snapshot["profile"].get("funding_ratio", "1"))
         funding = funding_for_execution(db, execution)
-        if dec(funding["ratio"]) < threshold:
-            error("FUNDING_REQUIRED", "Подтверждённой оплаты недостаточно для порога настроенного профиля")
         lines.append(
             {
                 "execution_id": execution.id,
@@ -724,8 +722,6 @@ def allocate_wave(wave_id: str, data: AllocateWaveIn, db: DB, user: Actor):
             error("APPROVAL_REQUIRED", "Согласование не найдено")
         line = check_approval(db, approval, execution)
         check_execution_quote(db, execution)
-        if dec(funding_for_execution(db, execution)["ratio"]) < dec(line["funding_ratio"]):
-            error("FUNDING_DEFICIT", "Недостаточно подтверждённого финансирования")
         allocations = db.scalars(
             select(WaveAllocation).where(
                 WaveAllocation.execution_id == execution.id, WaveAllocation.active.is_(True)
@@ -739,7 +735,7 @@ def allocate_wave(wave_id: str, data: AllocateWaveIn, db: DB, user: Actor):
         )
         db.add(obj)
         db.flush()
-        execution.financing_deficit = False
+        execution.financing_deficit = dec(funding_for_execution(db, execution)['ratio']) < dec(line['funding_ratio'])
         audit(db, user, "wave_allocation", obj.id, "allocate", after=serialize(obj))
         return allocation_view(db, obj)
 
@@ -831,10 +827,10 @@ def record_event(allocation_id: str, data: FulfillmentIn, db: DB, user: Actor):
         line = check_approval(db, approval, execution)
         totals = event_totals(db, allocation.id)
         if data.kind in ("ordered", "shipped"):
-            if dec(funding_for_execution(db, execution)["ratio"]) < dec(line["funding_ratio"]):
+            if data.kind == 'shipped' and dec(funding_for_execution(db, execution)["ratio"]) < dec(line["funding_ratio"]):
                 error(
                     "FUNDING_DEFICIT",
-                    "Заказ или отправка требуют достаточного подтверждённого финансирования",
+                    "Отправка требует достаточного подтверждённого финансирования по профилю",
                 )
             if data.kind == "ordered" or totals["ordered"] == 0:
                 check_execution_quote(db, execution)

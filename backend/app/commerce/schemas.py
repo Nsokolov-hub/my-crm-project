@@ -2,11 +2,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 Positive = Annotated[Decimal, Field(gt=0, max_digits=24, decimal_places=6)]
 Nonnegative = Annotated[Decimal, Field(ge=0, max_digits=24, decimal_places=8)]
-Currency = Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
+Currency = Annotated[str, BeforeValidator(lambda value: value.strip().upper() if isinstance(value, str) else value), Field(pattern=r"^[A-Z]{3}$")]
 
 
 class Input(BaseModel):
@@ -78,7 +78,7 @@ class QuoteIn(Command):
 
 class RfqIn(Command):
     supplier_id: str
-    item_ids: list[str] = Field(min_length=1, max_length=100)
+    item_ids: list[str] = Field(min_length=1, max_length=10000)
     parent_id: str | None = None
     response_due: date
     comment: str = ""

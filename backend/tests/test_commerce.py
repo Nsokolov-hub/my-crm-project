@@ -573,21 +573,11 @@ def test_a13_a14_payments_partial_and_unallocated_overpayment(commerce):
 def test_a15_a16_a17_a18_approval_reversal_and_partial_delivery(commerce):
     env = commerce
     state = prepare(env, with_invoice=True)
-    assert (
-        command(
-            env,
-            f"/requests/{env['request_id']}/approvals",
-            {"execution_ids": [state["execution"]["id"]], "reviewer_id": env["owner_id"]},
-            expected=422,
-        )["code"]
-        == "FUNDING_REQUIRED"
-    )
+    unpaid = command(env, f"/requests/{env['request_id']}/approvals",
+        {"execution_ids": [state["execution"]["id"]], "reviewer_id": env["owner_id"]})
+    assert Decimal(unpaid['snapshot']['lines'][0]['funding']['ratio']) == 0
     payment = fund(env, state)
-    first_approval = command(
-        env,
-        f"/requests/{env['request_id']}/approvals",
-        {"execution_ids": [state["execution"]["id"]], "reviewer_id": env["owner_id"]},
-    )
+    first_approval = unpaid
     command(
         env,
         f"/approvals/{first_approval['id']}/decision",

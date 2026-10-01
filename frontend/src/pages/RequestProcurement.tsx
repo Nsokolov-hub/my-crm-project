@@ -1,4 +1,4 @@
-import { Download, Plus, Trash2 } from 'lucide-react';
+import { Download, Plus, Trash2, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Collection } from '../components/Collection';
 import { DirectorySelect, RecordForm } from '../components/Form';
@@ -7,6 +7,8 @@ import { ApiError, api, download } from '../lib/api';
 import { date, decimal, nowLocal } from '../lib/format';
 import { useApi, useCommand, useDebounced, useDirtyProtection } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
+import { useAuth } from '../app/Auth';
+import { TableImportDialog } from '../components/TableImportDialog';
 export function RequestRfqs({
   requestId,
   requestNumber,
@@ -196,9 +198,16 @@ function QuoteSheetEditor({
   const [itemSearch, setItemSearch] = useState('');
   const [knownItems, setKnownItems] = useState<Record<string, Entity>>({});
   const debouncedItemSearch = useDebounced(itemSearch);
-  const requestItems = useApi<Page>(`/requests/${requestId}/items?page_size=100&q=${encodeURIComponent(debouncedItemSearch)}`);
-  const requestItemOptions = [...Object.values(knownItems), ...(requestItems.data?.items || [])]
-    .filter((item, index, all) => !item.archived && all.findIndex((candidate) => candidate.id === item.id) === index);
+  const requestItems = useApi<Page>(
+    `/requests/${requestId}/items?page_size=100&q=${encodeURIComponent(debouncedItemSearch)}`,
+  );
+  const requestItemOptions = [
+    ...Object.values(knownItems),
+    ...(requestItems.data?.items || []),
+  ].filter(
+    (item, index, all) =>
+      !item.archived && all.findIndex((candidate) => candidate.id === item.id) === index,
+  );
   const rfqs = useApi<Page>(`/requests/${requestId}/rfqs?page_size=100`);
   const operation = useCommand();
   const nextKey = useRef(1);
@@ -350,17 +359,21 @@ function QuoteSheetEditor({
             подставляются при выборе фасовки.
           </p>
           <ErrorBox
-            error={
-              operation.error ||
-              localError ||
-              currencies.error ||
-              requestItems.error
-            }
+            error={operation.error || localError || currencies.error || requestItems.error}
           />
           <div className="form-grid quote-sheet-header">
-            <div className="field"><label htmlFor="field-supplier_id">Поставщик</label>
-              <DirectorySelect field={{ name: 'supplier_id', label: 'Поставщик', type: 'select', source: '/counterparties?kind=supplier', required: true }}
-                value={supplierId} onChange={(value) => {
+            <div className="field">
+              <label htmlFor="field-supplier_id">Поставщик</label>
+              <DirectorySelect
+                field={{
+                  name: 'supplier_id',
+                  label: 'Поставщик',
+                  type: 'select',
+                  source: '/counterparties?kind=supplier',
+                  required: true,
+                }}
+                value={supplierId}
+                onChange={(value) => {
                   const nextSupplier = String(value);
                   setSupplierId(nextSupplier);
                   setRfqId('');
@@ -388,7 +401,8 @@ function QuoteSheetEditor({
                         row.historyHint ? '' : row.currency_id,
                       ),
                   );
-                }} />
+                }}
+              />
             </div>
             <label className="field">
               Запрос поставщику
@@ -404,8 +418,13 @@ function QuoteSheetEditor({
               </select>
             </label>
           </div>
-          <label className="field quote-item-search">Поиск позиции заявки
-            <input value={itemSearch} onChange={(event) => setItemSearch(event.target.value)} placeholder="Название, артикул или описание" />
+          <label className="field quote-item-search">
+            Поиск позиции заявки
+            <input
+              value={itemSearch}
+              onChange={(event) => setItemSearch(event.target.value)}
+              placeholder="Название, артикул или описание"
+            />
           </label>
           <div className="quote-sheet-table-scroll">
             <table className="quote-sheet-table">
@@ -426,7 +445,9 @@ function QuoteSheetEditor({
               </thead>
               <tbody>
                 {rows.map((row, index) => {
-                  const sourceItem = requestItemOptions.find((item) => item.id === row.source_request_item_id);
+                  const sourceItem = requestItemOptions.find(
+                    (item) => item.id === row.source_request_item_id,
+                  );
                   return (
                     <tr key={row.key} className={rowErrors[row.key] ? 'quote-row-error' : ''}>
                       <td>{index + 1}</td>
@@ -581,6 +602,8 @@ export function RequestQuotes({
   requestId: string;
   onCalculate: (quoteItemIds: string[]) => void;
 }) {
+  const auth = useAuth();
+  const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState<Entity>();
   const [creating, setCreating] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -591,15 +614,28 @@ export function RequestQuotes({
         <Button variant="secondary" onClick={() => setCreating(true)}>
           <Plus size={16} /> Новая квота
         </Button>
+        {auth.can('quotes.write') && auth.can('finance.purchase.read') && (
+          <Button variant="secondary" onClick={() => setImporting(true)}>
+            <Upload size={16} /> Загрузить квоты XLSX
+          </Button>
+        )}
         <span className="selection-count">Выбрано позиций: {selectedIds.size}</span>
         <Button
           disabled={!selectedIds.size || selectedIds.size > 100}
-          title={!selectedIds.size ? 'Сначала выберите позиции квот' : selectedIds.size > 100 ? 'Один расчёт содержит до 100 позиций' : undefined}
+          title={
+            !selectedIds.size
+              ? 'Сначала выберите позиции квот'
+              : selectedIds.size > 100
+                ? 'Один расчёт содержит до 100 позиций'
+                : undefined
+          }
           onClick={() => onCalculate([...selectedIds])}
         >
           Сформировать расчёт
         </Button>
-        {selectedIds.size > 100 && <small className="field-error">Один расчёт содержит до 100 позиций.</small>}
+        {selectedIds.size > 100 && (
+          <small className="field-error">Один расчёт содержит до 100 позиций.</small>
+        )}
       </div>
       <Collection
         title="Позиции квот"
@@ -645,6 +681,14 @@ export function RequestQuotes({
             setCreating(false);
             setRevision((value) => value + 1);
           }}
+        />
+      )}
+      {importing && (
+        <TableImportDialog
+          requestId={requestId}
+          kind="quotes"
+          onClose={() => setImporting(false)}
+          onSuccess={() => setRevision((value) => value + 1)}
         />
       )}
       {selected && (

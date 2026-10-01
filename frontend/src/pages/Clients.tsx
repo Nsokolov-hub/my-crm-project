@@ -1,6 +1,6 @@
 import { History, Pencil, Phone, Plus, Upload } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
 import { RecordForm } from '../components/Form';
@@ -19,6 +19,7 @@ import {
 } from '../components/ui';
 import { callFields, clientFields, contactFields } from '../lib/fields';
 import { date } from '../lib/format';
+import { api } from '../lib/api';
 import { useApi, useCommand } from '../lib/hooks';
 import type { Entity, Field, Page, User } from '../lib/types';
 const callProspectFields: Field[] = [
@@ -76,7 +77,7 @@ export function Clients() {
     <>
       <PageHeading
         title="Клиенты и поставщики"
-        description="Контакты, договорённости и история отношений — в одной карточке."
+        description="Рабочая база компаний. Холодные клиенты находятся в разделе «База обзвона»."
         actions={
           <Button variant="secondary" onClick={() => setImporting(true)}>
             <Upload size={17} />
@@ -87,11 +88,13 @@ export function Clients() {
       <Collection
         title="База контрагентов"
         endpoint="/counterparties"
+        query="&client_base=working"
         fields={clientFields}
         createLabel="Добавить контрагента"
         canCreate={auth.can('clients.write')}
         refreshKey={revision}
         columns={[
+          { key: 'internal_code', label: 'Код' },
           {
             key: 'name',
             label: 'Организация',
@@ -137,28 +140,41 @@ export function Clients() {
                 Заявки клиента
               </Link>
             </div>
-            <DetailPairs
-              values={{
-                Тип: selected.kind,
-                ИНН: selected.tax_id,
-                Страна: selected.country,
-                Телефон: selected.phone,
-                Почта: selected.email,
-              }}
-            />
-            <Collection
-              title="Контакты"
-              endpoint={`/counterparties/${selected.id}/contacts`}
-              fields={contactFields}
-              createLabel="Добавить контакт"
-              canCreate={auth.can('clients.write')}
-              columns={[
-                { key: 'name', label: 'Имя' },
-                { key: 'position', label: 'Должность' },
-                { key: 'phone', label: 'Телефон' },
-                { key: 'email', label: 'Почта' },
-              ]}
-            />
+            <div className="client-card-columns">
+              <div>
+                <DetailPairs
+                  values={{
+                    Код: selected.internal_code,
+                    Тип: selected.kind,
+                    ИНН: selected.tax_id,
+                    Страна: selected.country,
+                    Телефон: selected.phone,
+                    Почта: selected.email,
+                  }}
+                />
+              </div>
+              <aside>
+                <Collection
+                  title="Контакты"
+                  endpoint={`/counterparties/${selected.id}/contacts`}
+                  fields={contactFields}
+                  createLabel="Добавить контакт"
+                  canCreate={auth.can('clients.write') && selected.kind !== 'supplier'}
+                  columns={[
+                    {
+                      key: 'name',
+                      label: 'Контакт',
+                      render: (contact) => (
+                        <Link to={`/contacts?contact_id=${contact.id}`}>
+                          {String(contact.name)}
+                        </Link>
+                      ),
+                    },
+                    { key: 'department', label: 'Отдел' },
+                  ]}
+                />
+              </aside>
+            </div>
             <Collection
               title="История звонков"
               endpoint={`/calls?client_id=${selected.id}`}
@@ -202,6 +218,8 @@ export function Clients() {
 }
 export function Calls() {
   const auth = useAuth();
+  const navigate = useNavigate();
+  const promotion = useCommand();
   const [searchParams] = useSearchParams();
   const [selected, setSelected] = useState<Entity>();
   const [prospect, setProspect] = useState<Entity>();
@@ -224,6 +242,19 @@ export function Calls() {
   const bulkCommand = useCommand();
   const [revision, setRevision] = useState(0);
   const canBulkAssign = auth.can('requests.assign') && auth.can('tasks.write');
+  async function promoteClient(clientId: string, createRequestFromCall?: string) {
+    try {
+      const client = await api<Entity>(`/counterparties/${clientId}`);
+      await promotion.run(`/counterparties/${clientId}/promote`, { version: client.version });
+      setProspect(undefined);
+      setRevision((value) => value + 1);
+      setBulkNotice('Клиент перенесён в рабочую базу. Код и история сохранены.');
+      if (createRequestFromCall)
+        navigate(`/requests?new=1&client_id=${clientId}&source_call_id=${createRequestFromCall}`);
+    } catch {
+      /* visible error */
+    }
+  }
   function toggleClient(id: string) {
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -284,7 +315,8 @@ export function Calls() {
       <Collection
         title="Клиенты для обзвона"
         endpoint="/counterparties"
-        query="&kind=client"
+        query="&kind=client&client_base=cold"
+        extra={{ client_base: 'cold' }}
         fields={callProspectFields}
         createLabel="Добавить клиента"
         canCreate={auth.can('clients.write')}
@@ -308,6 +340,7 @@ export function Calls() {
           )
         }
         columns={[
+          { key: 'internal_code', label: 'Код' },
           { key: 'name', label: 'Название' },
           { key: 'tax_id', label: 'ИНН' },
           {
@@ -420,6 +453,7 @@ export function Calls() {
           <div className="form-body">
             <DetailPairs
               values={{
+                Код: prospect.internal_code,
                 ИНН: prospect.tax_id,
                 Профиль: (prospect.details as Entity | undefined)?.profile,
                 Категория: (prospect.details as Entity | undefined)?.category,
@@ -434,6 +468,16 @@ export function Calls() {
                 Примечание: (prospect.details as Entity | undefined)?.comment,
               }}
             />
+            <ErrorBox error={promotion.error} />
+            {auth.can('clients.write') && (
+              <Button
+                variant="secondary"
+                busy={promotion.busy}
+                onClick={() => void promoteClient(prospect.id)}
+              >
+                Перенести в рабочую базу
+              </Button>
+            )}
             {auth.can('calls.write') && (
               <Button onClick={() => setRecording(true)}>
                 <Phone size={15} /> Записать звонок
@@ -474,14 +518,15 @@ export function Calls() {
               }}
             />
             {selected.result === 'request_received' && (
-              <Link
-                to={`/requests?new=1&client_id=${selected.client_id}&source_call_id=${selected.id}`}
-                className="button primary"
+              <Button
+                busy={promotion.busy}
+                onClick={() => void promoteClient(String(selected.client_id), selected.id)}
               >
                 <Plus size={16} />
                 Создать заявку из звонка
-              </Link>
+              </Button>
             )}
+            <ErrorBox error={promotion.error} />
           </div>
         </Modal>
       )}

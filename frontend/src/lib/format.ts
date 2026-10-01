@@ -115,6 +115,7 @@ export function display(value: unknown): string {
   return stageLabels[String(value)] || String(value);
 }
 export function label(row: Entity): string {
+  if (row.internal_code && row.name) return `${row.internal_code} · ${row.name}`;
   return String(
     row.name || row.title || row.number || row.description || row.email || row.id.slice(0, 8),
   );

@@ -513,6 +513,7 @@ def process_import(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
                 owner_id=data.get("owner_id") or user.id,
                 external_id=external,
                 kind=data.get("kind") or "client",
+                client_base='cold' if batch.mapping.get('__mode__') == 'calls' else 'working',
                 details={},
             )
             db.add(client)

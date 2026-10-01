@@ -5,6 +5,7 @@ import { Loading } from '../components/ui';
 import { Login } from '../pages/Login';
 import { Dashboard, Analytics } from '../pages/Dashboard';
 import { Clients, Calls, Tasks } from '../pages/Clients';
+import { Contacts } from '../pages/Contacts';
 import { Requests } from '../pages/Requests';
 import { RequestDetail } from '../pages/RequestDetail';
 import { Catalog } from '../pages/Catalog';
@@ -22,6 +23,7 @@ function AuthenticatedApp() {
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
         <Route path="clients" element={<Clients />} />
+        <Route path="contacts" element={<Contacts />} />
         <Route path="calls" element={<Calls />} />
         <Route path="tasks" element={<Tasks />} />
         <Route path="requests" element={<Requests />} />

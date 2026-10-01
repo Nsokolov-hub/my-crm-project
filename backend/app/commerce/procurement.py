@@ -12,6 +12,7 @@ from app.core.errors import error
 from app.core.models import User
 from app.core.security import check_request, current_user, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
+from app.crm.imports import xlsx as literal_workbook
 from app.crm.models import Counterparty, Nomenclature, Packing, RequestItem
 from app.crm.models import Request as CRMRequest
 
@@ -355,9 +356,9 @@ def create_rfq(request_id: str, data: RfqIn, db: DB, user: Actor):
                 RequestItem.request_id == request_id,
                 RequestItem.archived.is_(False),
             )
-            .order_by(RequestItem.id)
+            .order_by(RequestItem.created_at, RequestItem.id)
         ).all()
-        if len(items) != len(data.item_ids) or any(not row.quantity or not row.unit for row in items):
+        if len(items) != len(data.item_ids) or any(not row.source_columns and (not row.quantity or not row.unit) for row in items):
             error("RFQ_ITEMS", "Укажите количество и единицу всех выбранных позиций")
         previous = db.get(SupplierRequest, data.parent_id) if data.parent_id else None
         if data.parent_id and (
@@ -384,11 +385,23 @@ def create_rfq(request_id: str, data: RfqIn, db: DB, user: Actor):
                 nomenclature.article or "" if nomenclature else "",
                 item.comment or "",
             ])
-        content = workbook(
-            ["Name", "Packing", "CAS", "Quantity", "Cost", "Article", "Comment"],
-            rows,
-            "Supplier request",
-        )
+        if any(item.source_columns for item in items):
+            columns = list(dict.fromkeys(col for item in items for col in item.source_columns))
+            manual_columns = ["Name", "Packing", "CAS", "Quantity", "Cost", "Article", "Comment"]
+            if any(not item.source_columns for item in items):
+                columns = list(dict.fromkeys([*columns, *manual_columns]))
+            exported = []
+            for item, fallback in zip(items, rows, strict=True):
+                original = dict(zip(item.source_columns, item.source_values, strict=True)) if item.source_columns else dict(zip(manual_columns, fallback, strict=True))
+                exported.append([original.get(col, '') for col in columns])
+            content = literal_workbook([columns, *exported])
+            snapshot['source_columns'] = columns
+        else:
+            content = workbook(
+                ["Name", "Packing", "CAS", "Quantity", "Cost", "Article", "Comment"],
+                rows,
+                "Supplier request",
+            )
         metadata = put_file(content, "xlsx")
         obj = SupplierRequest(
             request_id=request_id,

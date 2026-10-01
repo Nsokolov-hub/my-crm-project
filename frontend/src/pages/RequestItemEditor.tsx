@@ -1,11 +1,17 @@
 import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { DirectorySelect } from '../components/Form';
-import { Button, ErrorBox, Modal } from '../components/ui';
+import { Button, DetailPairs, ErrorBox, Modal } from '../components/ui';
 import { useApi, useCommand, useDirtyProtection } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
 
-const nomenclatureField: Field = { name: 'nomenclature_id', label: 'Номенклатура', type: 'select', source: '/nomenclatures', labelKey: 'name', required: true };
+const nomenclatureField: Field = {
+  name: 'nomenclature_id',
+  label: 'Номенклатура',
+  type: 'select',
+  source: '/nomenclatures',
+  labelKey: 'name',
+};
 
 export function RequestItemEditor({
   requestId,
@@ -21,9 +27,13 @@ export function RequestItemEditor({
   const groups = useApi<Page>('/product-groups?page_size=100');
   const command = useCommand();
   const [nomenclatureId, setNomenclatureId] = useState(String(initial?.nomenclature_id || ''));
-  const selectedNomenclature = useApi<Entity>(nomenclatureId ? `/nomenclatures/${nomenclatureId}` : null);
+  const selectedNomenclature = useApi<Entity>(
+    nomenclatureId ? `/nomenclatures/${nomenclatureId}` : null,
+  );
   const [packingId, setPackingId] = useState(String(initial?.packing_id || ''));
-  const [quantity, setQuantity] = useState(String(initial?.quantity || '1'));
+  const [quantity, setQuantity] = useState(String(initial ? (initial.quantity ?? '') : '1'));
+  const [rawUnit, setRawUnit] = useState(String(initial?.unit || 'pcs'));
+  const [rawArticle, setRawArticle] = useState(String(initial?.article || ''));
   const [description, setDescription] = useState(String(initial?.description || ''));
   const [reason, setReason] = useState('');
   const [allowAnalogue, setAllowAnalogue] = useState(Boolean(initial?.allow_analogue));
@@ -38,8 +48,12 @@ export function RequestItemEditor({
   const [localError, setLocalError] = useState<unknown>();
   const [dirty, setDirty] = useState(false);
   useDirtyProtection(dirty);
-  const selectedName = createdName?.id === nomenclatureId ? createdName
-    : selectedNomenclature.data?.id === nomenclatureId ? selectedNomenclature.data : undefined;
+  const selectedName =
+    createdName?.id === nomenclatureId
+      ? createdName
+      : selectedNomenclature.data?.id === nomenclatureId
+        ? selectedNomenclature.data
+        : undefined;
   const packings = [...((selectedName?.packings || []) as Entity[])];
   if (createdPacking && !packings.some((row) => row.id === createdPacking.id))
     packings.push(createdPacking);
@@ -98,12 +112,20 @@ export function RequestItemEditor({
   }
   async function save() {
     if (
-      !nomenclatureId ||
-      !packingId ||
-      !Number.isInteger(Number(quantity)) ||
-      Number(quantity) <= 0
+      nomenclatureId &&
+      (!packingId || !Number.isInteger(Number(quantity)) || Number(quantity) <= 0)
     ) {
       setLocalError(new Error('Выберите номенклатуру, фасовку и целое количество больше нуля.'));
+      return;
+    }
+    if (
+      !nomenclatureId &&
+      (!description.trim() ||
+        (quantity &&
+          (!Number.isFinite(Number(quantity.replace(',', '.'))) ||
+            Number(quantity.replace(',', '.')) <= 0)))
+    ) {
+      setLocalError(new Error('Заполните исходное наименование и проверьте количество.'));
       return;
     }
     if (initial && !reason.trim()) {
@@ -114,10 +136,11 @@ export function RequestItemEditor({
       const result = await command.run<Entity>(
         initial ? '/request-items/' + initial.id : '/requests/' + requestId + '/items',
         {
-          nomenclature_id: nomenclatureId,
-          packing_id: packingId,
-          quantity: quantity.replace(',', '.'),
-          unit: 'pcs',
+          nomenclature_id: nomenclatureId || null,
+          packing_id: packingId || null,
+          quantity: quantity ? quantity.replace(',', '.') : null,
+          unit: nomenclatureId ? 'pcs' : rawUnit,
+          ...(!nomenclatureId ? { article: rawArticle || null } : {}),
           description: description.trim() || String(selectedName?.name || ''),
           allow_analogue: allowAnalogue,
           ...(initial ? { version: initial.version, reason: reason.trim(), archived } : {}),
@@ -143,15 +166,71 @@ export function RequestItemEditor({
         }}
       >
         <div className="form-body request-item-editor">
+          {Array.isArray(initial?.source_columns) && initial.source_columns.length > 0 && (
+            <details>
+              <summary>Исходная строка клиента</summary>
+              <DetailPairs
+                values={Object.fromEntries(
+                  (initial.source_columns as string[]).map((column, index) => [
+                    column,
+                    (initial.source_values as string[])[index],
+                  ]),
+                )}
+              />
+            </details>
+          )}
           <p className="muted">
-            Количество указывается в единицах выбранной фасовки. Например, 3 × 100 mg.
+            {nomenclatureId
+              ? 'Количество указывается в единицах выбранной фасовки. Например, 3 × 100 mg.'
+              : 'Исходную потребность можно сохранить без номенклатуры. Уточните товар после ответа поставщика.'}
           </p>
-          <ErrorBox error={localError || command.error || selectedNomenclature.error || groups.error} />
+          <ErrorBox
+            error={localError || command.error || selectedNomenclature.error || groups.error}
+          />
           <div className="form-grid">
-            <div className="field"><label htmlFor="field-nomenclature_id">Номенклатура</label>
-              <DirectorySelect field={nomenclatureField} value={nomenclatureId} onChange={(value) => {
-                setNomenclatureId(String(value)); setPackingId(''); setCreatedPacking(undefined); setDirty(true);
-              }} />
+            {!nomenclatureId && (
+              <>
+                <label className="field">
+                  Артикул клиента
+                  <input
+                    value={rawArticle}
+                    maxLength={150}
+                    onChange={(event) => {
+                      setRawArticle(event.target.value);
+                      setDirty(true);
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  Единица количества
+                  <select
+                    value={rawUnit}
+                    onChange={(event) => {
+                      setRawUnit(event.target.value);
+                      setDirty(true);
+                    }}
+                  >
+                    {['pcs', 'g', 'kg', 'mg', 'ml', 'l'].map((unit) => (
+                      <option key={unit} value={unit}>
+                        {unit === 'pcs' ? 'шт.' : unit}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
+            <div className="field">
+              <label htmlFor="field-nomenclature_id">Номенклатура</label>
+              <DirectorySelect
+                field={nomenclatureField}
+                value={nomenclatureId}
+                onChange={(value) => {
+                  setNomenclatureId(String(value));
+                  setPackingId('');
+                  setCreatedPacking(undefined);
+                  setDirty(true);
+                }}
+              />
             </div>
             <label className="field">
               Фасовка

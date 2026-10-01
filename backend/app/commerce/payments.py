@@ -6,8 +6,9 @@ from sqlalchemy import select
 from app.commerce.recalculate import recalculate_funding
 from app.core.db import utcnow
 from app.core.errors import error
-from app.core.security import check_request, has_request_permission
+from app.core.security import check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
+from app.crm.models import Currency
 from app.crm.models import Request as CRMRequest
 
 from .calculator import dec
@@ -16,6 +17,15 @@ from .procurement import DB, Actor
 from .schemas import PaymentAllocateIn, PaymentIn, PaymentReverseIn, VersionCommand
 
 router = APIRouter(tags=["Оплаты и распределения"])
+
+
+@router.get('/requests/{request_id}/payment-currencies')
+def payment_currencies(request_id: str, db: DB, user: Actor):
+    check_request(db, user, request_id)
+    require_permission(db, user, 'payments.write', request_id)
+    codes = set(db.scalars(select(Currency.code).where(Currency.active.is_(True))))
+    codes.update(db.scalars(select(CommercialDocument.currency).where(CommercialDocument.request_id == request_id, CommercialDocument.kind == 'invoice')))
+    return {'items': [{'id': code, 'name': code} for code in sorted(codes)]}
 
 
 def allocation_balance(db, allocation: PaymentAllocation) -> Decimal:
@@ -174,7 +184,7 @@ def declare_payment(request_id: str, data: PaymentIn, db: DB, user: Actor):
                 or invoice.currency != data.currency
                 or invoice.status == "cancelled"
             ):
-                error("PAYMENT_INVOICE", "Счёт должен относиться к заявке и валюте платежа")
+                error("PAYMENT_INVOICE", "Выберите счёт этой заявки в валюте платежа", field='invoice_id')
         candidates = db.scalars(
             select(Payment).where(
                 Payment.seller_id == req.seller_id,
