@@ -60,7 +60,10 @@ export function DirectorySelect({
     : null;
   const source = useApi<Page>(sourcePath);
   const selectedId = String(value ?? '');
-  const rows = useMemo(() => [...created, ...(source.data?.items || [])], [created, source.data?.items]);
+  const rows = useMemo(
+    () => [...created, ...(source.data?.items || [])],
+    [created, source.data?.items],
+  );
   const options = rows
     .filter((row, index) => rows.findIndex((candidate) => candidate.id === row.id) === index)
     .map((row) => ({
@@ -73,7 +76,10 @@ export function DirectorySelect({
     if (!selectedId || selected?.id === selectedId) return;
     const found = rows.find((row) => row.id === selectedId);
     if (found) {
-      setSelected({ id: found.id, label: field.labelKey ? String(found[field.labelKey] || label(found)) : label(found) });
+      setSelected({
+        id: found.id,
+        label: field.labelKey ? String(found[field.labelKey] || label(found)) : label(found),
+      });
       return;
     }
     if (source.loading || !field.source) return;
@@ -81,7 +87,10 @@ export function DirectorySelect({
     const base = field.source.split('?')[0];
     void api<Entity>(`${base}/${encodeURIComponent(selectedId)}`, { signal: controller.signal })
       .then((row) => {
-        setSelected({ id: row.id, label: field.labelKey ? String(row[field.labelKey] || label(row)) : label(row) });
+        setSelected({
+          id: row.id,
+          label: field.labelKey ? String(row[field.labelKey] || label(row)) : label(row),
+        });
       })
       .catch(() => {
         if (!controller.signal.aborted) setSelected({ id: selectedId, label: 'Выбрано' });
@@ -162,23 +171,30 @@ export function DirectorySelect({
       )}
       {Boolean(source.error) && (
         <p className="field-error">
-          {source.error instanceof ApiError ? source.error.message : 'Не удалось загрузить справочник.'}
+          {source.error instanceof ApiError
+            ? source.error.message
+            : 'Не удалось загрузить справочник.'}
         </p>
       )}
-      {creating && field.create && createPortal(
-        <RecordForm
-          title={field.create.title}
-          endpoint={field.create.endpoint}
-          fields={field.create.fields}
-          onClose={() => setCreating(false)}
-          onSuccess={(row) => {
-            setCreated((current) => [row, ...current]);
-            choose(row.id, field.labelKey ? String(row[field.labelKey] || label(row)) : label(row));
-            setCreating(false);
-          }}
-        />,
-        document.body,
-      )}
+      {creating &&
+        field.create &&
+        createPortal(
+          <RecordForm
+            title={field.create.title}
+            endpoint={field.create.endpoint}
+            fields={field.create.fields}
+            onClose={() => setCreating(false)}
+            onSuccess={(row) => {
+              setCreated((current) => [row, ...current]);
+              choose(
+                row.id,
+                field.labelKey ? String(row[field.labelKey] || label(row)) : label(row),
+              );
+              setCreating(false);
+            }}
+          />,
+          document.body,
+        )}
     </div>
   );
 }
@@ -313,6 +329,7 @@ export function RecordForm({
   onClose,
   onSuccess,
   transform,
+  deriveValues,
   submitLabel = 'Сохранить',
   note,
 }: {
@@ -326,6 +343,7 @@ export function RecordForm({
   onClose: () => void;
   onSuccess: (result: Entity) => void;
   transform?: (values: Record<string, unknown>) => Record<string, unknown>;
+  deriveValues?: (values: Record<string, unknown>, changedField: string) => Record<string, unknown>;
   submitLabel?: string;
   note?: string;
 }) {
@@ -414,7 +432,10 @@ export function RecordForm({
                 value={values[field.name]}
                 error={errors[field.name]}
                 onChange={(value) => {
-                  setValues((v) => ({ ...v, [field.name]: value }));
+                  setValues((v) => {
+                    const next = { ...v, [field.name]: value };
+                    return deriveValues ? deriveValues(next, field.name) : next;
+                  });
                   setDirty(true);
                   setErrors((e) => ({ ...e, [field.name]: '' }));
                 }}

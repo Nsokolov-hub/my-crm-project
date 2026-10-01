@@ -96,5 +96,5 @@ def metrics(request: Request):
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-for module in ['core.routes', 'crm.routes', 'crm.imports', 'analytics.routes', 'commerce.routes', 'communication.routes']:
+for module in ['core.routes', 'crm.routes', 'crm.imports', 'crm.table_imports', 'analytics.routes', 'commerce.routes', 'communication.routes']:
     app.include_router(import_module(f'app.{module}').router, prefix='/api/v1')

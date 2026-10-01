@@ -9,6 +9,7 @@ from app.core.routes import Input
 class ClientInput(Input):
     name: str = Field(min_length=1, max_length=250)
     kind: Literal['client', 'supplier', 'both'] = 'client'
+    client_base: Literal['cold', 'working'] = 'working'
     country: str | None = Field(default=None, max_length=100)
     tax_id: str | None = Field(default=None, max_length=100)
     email: EmailStr | None = None
@@ -16,6 +17,21 @@ class ClientInput(Input):
     owner_id: str | None = None
     details: dict[str, Any] = {}
     source: str | None = Field(default=None, max_length=250)
+
+    @model_validator(mode='after')
+    def cold_clients_only(self):
+        if self.client_base == 'cold' and self.kind != 'client':
+            raise ValueError('В базе обзвона могут быть только клиенты')
+        return self
+
+
+class PromoteClientInput(Input):
+    version: int = Field(ge=1)
+
+
+class StartItemsInput(Input):
+    item_ids: list[str] = Field(min_length=1, max_length=10000)
+    reason: str = Field(default='Передача позиций в работу', min_length=1, max_length=4000)
 
 
 class ClientPatch(Input):
@@ -35,6 +51,9 @@ class ClientPatch(Input):
 class ContactInput(Input):
     name: str = Field(min_length=1, max_length=250)
     position: str | None = Field(default=None, max_length=200)
+    department: str | None = Field(default=None, max_length=200)
+    purchase_area: str | None = Field(default=None, max_length=500)
+    comment: str | None = Field(default=None, max_length=10000)
     email: EmailStr | None = None
     phone: str | None = Field(default=None, max_length=100)
 
@@ -42,10 +61,17 @@ class ContactPatch(Input):
     version: int
     name: str = Field(default=None, min_length=1, max_length=250)
     position: str | None = None
+    department: str | None = Field(default=None, max_length=200)
+    purchase_area: str | None = Field(default=None, max_length=500)
+    comment: str | None = Field(default=None, max_length=10000)
     email: EmailStr | None = None
     phone: str | None = None
     archived: bool = Field(default=None)
     reason: str | None = None
+
+
+class ContactCreateInput(ContactInput):
+    client_id: str
 
 
 class TaskInput(Input):
@@ -223,6 +249,8 @@ class PackingPatch(Input):
 class NomenclatureInput(Input):
     name: str = Field(min_length=1, max_length=250)
     article: str | None = Field(default=None, max_length=150)
+    manufacturer: str | None = Field(default=None, max_length=250)
+    purity: str | None = Field(default=None, max_length=200)
     product_group_id: str | None = None
     cas: str | None = Field(default=None, max_length=30)
     linear_formula: str | None = Field(default=None, max_length=500)
@@ -234,6 +262,8 @@ class NomenclaturePatch(Input):
     version: int = Field(ge=1)
     name: str = Field(default=None, min_length=1, max_length=250)
     article: str | None = Field(default=None, max_length=150)
+    manufacturer: str | None = Field(default=None, max_length=250)
+    purity: str | None = Field(default=None, max_length=200)
     product_group_id: str | None = None
     cas: str | None = Field(default=None, max_length=30)
     linear_formula: str | None = Field(default=None, max_length=500)

@@ -32,6 +32,7 @@ const links = [
   { label: 'Рабочий стол', path: '/', icon: LayoutDashboard, permission: undefined },
   { label: 'Заявки', path: '/requests', icon: ClipboardList, permission: 'requests.read' },
   { label: 'Клиенты', path: '/clients', icon: Building2, permission: 'clients.read' },
+  { label: 'Контакты', path: '/contacts', icon: Building2, permission: 'clients.read' },
   { label: 'База обзвона', path: '/calls', icon: Phone, permission: 'clients.read' },
   { label: 'Задачи', path: '/tasks', icon: CheckCheck, permission: 'tasks.read' },
 ];
@@ -135,7 +136,11 @@ export function Layout() {
             >
               <MessageSquare size={19} />
               Обсуждения
-              {unreadChats > 0 && <span className="nav-unread-badge" aria-hidden="true">{unreadChats > 99 ? '99+' : unreadChats}</span>}
+              {unreadChats > 0 && (
+                <span className="nav-unread-badge" aria-hidden="true">
+                  {unreadChats > 99 ? '99+' : unreadChats}
+                </span>
+              )}
             </NavLink>
           )}
         </nav>

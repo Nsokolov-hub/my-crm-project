@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -17,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Entity, utcnow
+from app.crm.codes import next_code
 
 
 class Seller(Entity):
@@ -29,6 +31,9 @@ class Seller(Entity):
 
 class Counterparty(Entity):
     __tablename__ = 'counterparties'
+    __table_args__ = (CheckConstraint('internal_code > 0'), CheckConstraint("client_base IN ('cold', 'working')"),)
+    internal_code: Mapped[int] = mapped_column(Integer, unique=True, default=next_code)
+    client_base: Mapped[str] = mapped_column(String(20), default='working', server_default='working', index=True)
     name: Mapped[str] = mapped_column(String(250), index=True)
     kind: Mapped[str] = mapped_column(String(20), default='client')
     country: Mapped[str | None] = mapped_column(String(100))
@@ -47,6 +52,9 @@ class Contact(Entity):
     client_id: Mapped[str] = mapped_column(ForeignKey('counterparties.id'), index=True)
     name: Mapped[str] = mapped_column(String(250))
     position: Mapped[str | None] = mapped_column(String(200))
+    department: Mapped[str | None] = mapped_column(String(200))
+    purchase_area: Mapped[str | None] = mapped_column(String(500))
+    comment: Mapped[str | None] = mapped_column(Text)
     email: Mapped[str | None] = mapped_column(String(254))
     phone: Mapped[str | None] = mapped_column(String(100))
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -112,6 +120,9 @@ class RequestItem(Entity):
     __table_args__ = (CheckConstraint('quantity IS NULL OR quantity > 0'),)
     request_id: Mapped[str] = mapped_column(ForeignKey('requests.id'), index=True)
     description: Mapped[str] = mapped_column(Text)
+    source_columns: Mapped[list[str]] = mapped_column(JSON, default=list)
+    source_values: Mapped[list[str]] = mapped_column(JSON, default=list)
+    work_status: Mapped[str] = mapped_column(String(20), default='requested', server_default='requested')
     product_group_id: Mapped[str | None] = mapped_column(ForeignKey('product_groups.id'), index=True)
     nomenclature_id: Mapped[str | None] = mapped_column(ForeignKey('nomenclatures.id'), index=True)
     packing_id: Mapped[str | None] = mapped_column(ForeignKey('packings.id'), index=True)
@@ -154,6 +165,8 @@ class Nomenclature(Entity):
     __tablename__ = 'nomenclatures'
     name: Mapped[str] = mapped_column(String(250), index=True)
     article: Mapped[str | None] = mapped_column(String(150), index=True)
+    manufacturer: Mapped[str | None] = mapped_column(String(250))
+    purity: Mapped[str | None] = mapped_column(String(200))
     product_group_id: Mapped[str | None] = mapped_column(ForeignKey('product_groups.id'), index=True)
     cas: Mapped[str | None] = mapped_column(String(30), index=True)
     linear_formula: Mapped[str | None] = mapped_column(String(500))
@@ -238,3 +251,19 @@ class ImportRow(Entity):
     candidate_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     match_id: Mapped[str | None] = mapped_column(ForeignKey('counterparties.id'))
     action: Mapped[str] = mapped_column(String(30), default='create')
+
+
+class TableImport(Entity):
+    __tablename__ = 'table_imports'
+    request_id: Mapped[str] = mapped_column(ForeignKey('requests.id'), index=True)
+    author_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    source_name: Mapped[str] = mapped_column(String(250))
+    file_metadata: Mapped[dict[str, Any]] = mapped_column(JSON)
+    columns: Mapped[list[str]] = mapped_column(JSON)
+    rows: Mapped[list[list[str]]] = mapped_column(JSON)
+    mapping: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    plan: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    summary: Mapped[dict[str, Any]] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(20), default='preview')
+    result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)

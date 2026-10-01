@@ -31,8 +31,11 @@ export const clientFields: Field[] = [
 export const contactFields: Field[] = [
   { name: 'name', label: 'Имя контакта', required: true },
   { name: 'position', label: 'Должность' },
+  { name: 'department', label: 'Отдел' },
+  { name: 'purchase_area', label: 'Направление закупок', wide: true },
   { name: 'phone', label: 'Телефон' },
   { name: 'email', label: 'Электронная почта', type: 'email' },
+  { name: 'comment', label: 'Комментарий', type: 'textarea' },
 ];
 export const requestFields: Field[] = [
   { name: 'title', label: 'Тема заявки', required: true, wide: true },
@@ -41,7 +44,7 @@ export const requestFields: Field[] = [
     label: 'Клиент',
     required: true,
     type: 'select',
-    source: '/counterparties?kind=client',
+    source: '/counterparties?kind=client&client_base=working',
     create: {
       title: 'Новый клиент',
       endpoint: '/counterparties',
@@ -60,6 +63,7 @@ export const requestFields: Field[] = [
     },
   },
   { name: 'seller_id', label: 'Организация продавца', type: 'select', source: '/sellers' },
+  { name: 'contact_id', label: 'Контакт клиента', type: 'select', source: '/contacts' },
   { name: 'owner_id', label: 'Ответственный', type: 'select', source: '/users' },
   { name: 'due_at', label: 'Желаемый срок', type: 'datetime-local' },
   {
@@ -172,7 +176,7 @@ export const callFields: Field[] = [
 ];
 export const paymentFields: Field[] = [
   { name: 'amount', label: 'Сумма поступления', type: 'decimal', required: true },
-  { name: 'currency', label: 'Валюта (ISO)', required: true, placeholder: 'RUB' },
+  { name: 'currency', label: 'Валюта', type: 'select', required: true, value: 'RUB' },
   { name: 'payment_date', label: 'Дата платежа', type: 'date', required: true, value: today() },
   { name: 'number', label: 'Номер платёжного документа', required: true },
   { name: 'external_id', label: 'Банковский / внешний идентификатор' },

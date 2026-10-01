@@ -21,6 +21,7 @@ export type CollectionProps = {
   canCreate?: boolean;
   onChanged?: () => void;
   transform?: (values: Record<string, unknown>) => Record<string, unknown>;
+  deriveValues?: (values: Record<string, unknown>, changedField: string) => Record<string, unknown>;
   pageSize?: number;
   filterKeys?: string[];
   selection?: {
@@ -44,6 +45,7 @@ export function Collection({
   refreshKey = 0,
   canCreate = true,
   transform,
+  deriveValues,
   onChanged,
   pageSize = 25,
   filterKeys = [],
@@ -205,6 +207,7 @@ export function Collection({
           extra={extra}
           command={command}
           transform={transform}
+          deriveValues={deriveValues}
           onClose={() => setCreating(false)}
           onSuccess={() => {
             setCreating(false);

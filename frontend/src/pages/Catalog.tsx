@@ -23,6 +23,8 @@ type Nomenclature = Entity & {
 const nomenclatureFields: Field[] = [
   { name: 'name', label: 'Название', required: true, wide: true },
   { name: 'article', label: 'Артикул' },
+  { name: 'manufacturer', label: 'Производитель / бренд' },
+  { name: 'purity', label: 'Чистота' },
   { name: 'product_group_id', label: 'Товарная группа', type: 'select', source: '/product-groups' },
   { name: 'cas', label: 'CAS' },
   { name: 'linear_formula', label: 'Линейная формула' },
@@ -149,6 +151,8 @@ export function Catalog() {
           </div>}
           <DetailPairs values={{
             Артикул: selected.article || '—',
+            Производитель: selected.manufacturer || '—',
+            Чистота: selected.purity || '—',
             'Товарная группа': selected.product_group_name || 'Другое',
             CAS: selected.cas || '—',
             'Линейная формула': selected.linear_formula || '—',

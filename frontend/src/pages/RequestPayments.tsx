@@ -47,10 +47,18 @@ export function RequestPayments({ requestId }: { requestId: string }) {
             name: 'invoice_id',
             label: 'Счёт',
             type: 'select',
-            source: `/requests/${requestId}/invoices`,
-            labelKey: 'number',
+            options: (invoices.data?.items || [])
+              .filter((invoice) => invoice.status !== 'cancelled')
+              .map((invoice) => ({
+                value: invoice.id,
+                label: `${invoice.number} · ${invoice.currency}`,
+              })),
           },
-          ...paymentFields,
+          ...paymentFields.map((field) =>
+            field.name === 'currency'
+              ? { ...field, source: `/requests/${requestId}/payment-currencies` }
+              : field,
+          ),
           {
             name: 'evidence_file_id',
             label: 'Подтверждающий файл',
@@ -59,6 +67,11 @@ export function RequestPayments({ requestId }: { requestId: string }) {
         ]}
         createLabel="Заявить оплату"
         command
+        deriveValues={(values, changedField) => {
+          if (changedField !== 'invoice_id') return values;
+          const invoice = invoices.data?.items.find((row) => row.id === values.invoice_id);
+          return invoice ? { ...values, currency: invoice.currency } : values;
+        }}
         onSelect={setSelected}
         refreshKey={revision}
         columns={[

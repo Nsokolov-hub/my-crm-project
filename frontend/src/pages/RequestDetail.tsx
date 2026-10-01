@@ -1,7 +1,9 @@
-import { ArrowLeft, Pencil, Plus } from 'lucide-react';
+import { ArrowLeft, Pencil, Plus, Upload } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { useApi } from '../lib/hooks';
+import { useApi, useCommand } from '../lib/hooks';
+import { useAuth } from '../app/Auth';
+import { TableImportDialog } from '../components/TableImportDialog';
 import type { Entity, Page } from '../lib/types';
 import { requestEditFields, taskFields } from '../lib/fields';
 import { date } from '../lib/format';
@@ -40,6 +42,10 @@ export function RequestDetail() {
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') || 'overview';
   const request = useApi<Entity>(`/requests/${id}`);
+  const auth = useAuth();
+  const start = useCommand();
+  const [importing, setImporting] = useState(false);
+  const [notice, setNotice] = useState('');
   const [edit, setEdit] = useState(false);
   const [item, setItem] = useState<Entity>();
   const [addingItem, setAddingItem] = useState(false);
@@ -58,6 +64,7 @@ export function RequestDetail() {
   if (request.error) return <ErrorBox error={request.error} retry={request.refresh} />;
   if (!request.data) return null;
   const row = request.data;
+  const sourceColumns = (row.source_columns || []) as string[];
   return (
     <>
       <Link className="back-link" to="/requests">
@@ -100,6 +107,7 @@ export function RequestDetail() {
               <DetailPairs
                 values={{
                   Клиент: row.client_name,
+                  Контакт: row.contact_name,
                   Ответственный: row.owner_name,
                   Создана: date(row.created_at, true),
                   'Желаемый срок': date(row.due_at),
@@ -152,6 +160,35 @@ export function RequestDetail() {
             <Button variant="secondary" onClick={() => setAddingItem(true)}>
               <Plus size={16} /> Добавить позицию
             </Button>
+            {auth.can('requests.write') && (
+              <>
+                <Button variant="secondary" onClick={() => setImporting(true)}>
+                  <Upload size={16} /> Загрузить таблицу
+                </Button>
+                <Button
+                  busy={start.busy}
+                  disabled={!selectedItemIds.size}
+                  onClick={() => {
+                    void start
+                      .run<{ count: number }>(`/requests/${id}/items/start`, {
+                        item_ids: [...selectedItemIds],
+                      })
+                      .then((result) => {
+                        if (result) {
+                          setNotice(
+                            `В работу передано позиций: ${result.count}. Оплату можно внести отдельно.`,
+                          );
+                          setSelectedItemIds(new Set());
+                          refresh();
+                        }
+                      })
+                      .catch(() => undefined);
+                  }}
+                >
+                  В работу ({selectedItemIds.size})
+                </Button>
+              </>
+            )}
             <Button
               disabled={selectedItemIds.size === 0}
               title={selectedItemIds.size ? undefined : 'Сначала выберите позиции заявки'}
@@ -163,6 +200,12 @@ export function RequestDetail() {
               Создать запрос поставщику
             </Button>
           </div>
+          <ErrorBox error={start.error} />
+          {notice && (
+            <p role="status" className="info-note">
+              {notice}
+            </p>
+          )}
           <Collection
             title="Потребность клиента"
             onChanged={refresh}
@@ -187,6 +230,19 @@ export function RequestDetail() {
             }}
             onSelect={setItem}
             columns={[
+              { key: 'position_number', label: '№' },
+              ...(sourceColumns.length
+                ? sourceColumns.map((column) => ({
+                    key: `source-${column}`,
+                    label: column,
+                    render: (item: Entity) => {
+                      const cols = (item.source_columns || []) as string[];
+                      const values = (item.source_values || []) as string[];
+                      const index = cols.indexOf(column);
+                      return index >= 0 ? values[index] : '';
+                    },
+                  }))
+                : []),
               {
                 key: 'description',
                 label: 'Номенклатура',
@@ -201,9 +257,22 @@ export function RequestDetail() {
               { key: 'unit', label: 'Единица' },
               { key: 'cas', label: 'CAS' },
               { key: 'revision', label: 'Редакция' },
+              {
+                key: 'work_status',
+                label: 'В работе',
+                render: (item) => (item.work_status === 'in_progress' ? 'В работе' : 'Запрошено'),
+              },
               { key: 'archived', label: 'В архиве' },
             ]}
           />
+          {importing && (
+            <TableImportDialog
+              requestId={id}
+              kind="items"
+              onClose={() => setImporting(false)}
+              onSuccess={refresh}
+            />
+          )}
         </>
       )}
       {tab === 'rfqs' && (

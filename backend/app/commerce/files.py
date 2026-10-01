@@ -7,7 +7,8 @@ from decimal import Decimal
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
+from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Alignment, Font, PatternFill
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_RIGHT
@@ -15,10 +16,12 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.core.config import settings
 from app.core.errors import error
+
+LOGO = Path(__file__).parent / 'assets' / 'ogk-chem.jpg'
 
 
 def put_file(content: bytes, extension: str) -> dict:
@@ -179,6 +182,17 @@ def document_files(snapshot: dict) -> dict:
         ["Действует / оплатить до", snapshot["valid_until"]],
     ]
     xlsx = workbook([snapshot["title"]], xlsx_rows, "Документ")
+    book = load_workbook(io.BytesIO(xlsx))
+    logo = ExcelImage(str(LOGO))
+    logo.width, logo.height = 210, 70
+    book.active.add_image(logo, 'G1')
+    book.active.sheet_properties.pageSetUpPr.fitToPage = True
+    book.active.page_setup.orientation = 'landscape'
+    book.active.page_setup.fitToWidth = 1
+    book.active.page_setup.fitToHeight = 0
+    branded = io.BytesIO()
+    book.save(branded)
+    xlsx = branded.getvalue()
     font_name = "CRMUnicode"
     if font_name not in pdfmetrics.getRegisteredFontNames():
         candidates = [
@@ -220,6 +234,8 @@ def document_files(snapshot: dict) -> dict:
         return Paragraph(escape(value), cell_style)
 
     content = [
+        Image(str(LOGO), width=190, height=190 * 425 / 1280, hAlign='LEFT'),
+        Spacer(1, 14),
         Paragraph(escape(f"{snapshot['title']} № {snapshot['number']}"), title_style),
         p(f"Дата: {snapshot['date']} · Валюта: {snapshot['currency']}"),
         p(f"Заявка: {snapshot.get('request_number', '')}"),
