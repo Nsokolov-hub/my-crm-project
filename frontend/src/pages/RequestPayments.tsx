@@ -42,7 +42,7 @@ export function RequestPayments({ requestId }: { requestId: string }) {
     <>
       <div className="info-note">
         Заявленный платёж не уменьшает долг. Остаток меняется после подтверждения и распределения по
-        счетам. Позиции переводятся в работу отдельно, во вкладке «Исполнение».
+        счетам. Позиции переводятся в работу отдельно, во вкладке «Позиции запроса».
       </div>
       <ErrorBox error={currencies.error} retry={currencies.refresh} />
       <Collection

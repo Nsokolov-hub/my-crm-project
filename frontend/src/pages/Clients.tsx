@@ -208,7 +208,19 @@ export function Clients() {
           title={form === 'edit' ? 'Редактировать контрагента' : 'Записать звонок'}
           endpoint={form === 'edit' ? `/counterparties/${selected.id}` : '/calls'}
           method={form === 'edit' ? 'PATCH' : 'POST'}
-          fields={form === 'edit' ? editableClientFields : callFields}
+          fields={
+            form === 'edit'
+              ? [
+                  ...editableClientFields,
+                  {
+                    name: 'reason',
+                    label: 'Причина изменения',
+                    type: 'textarea',
+                    help: 'Укажите причину, если меняете ответственного за контрагента.',
+                  },
+                ]
+              : callFields
+          }
           initial={form === 'edit' ? selected : { client_id: selected.id }}
           extra={form === 'edit' ? { version: selected.version } : {}}
           onClose={() => setForm(undefined)}

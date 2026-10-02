@@ -180,6 +180,57 @@ it('shows the client owner to readers and permits supplier contacts without reas
   expect(screen.queryByLabelText('Ответственный')).not.toBeInTheDocument();
 });
 
+it('sends the reassignment reason when editing a counterparty owner', async () => {
+  const company = {
+    id: 'company',
+    name: 'ООО Клиент',
+    kind: 'client',
+    owner_id: 'old-owner',
+    owner_name: 'Первый менеджер',
+    version: 4,
+  };
+  vi.mocked(api).mockImplementation(async (path, options) => {
+    if (path === '/counterparties/company' && options?.method === 'PATCH')
+      return { ...company, owner_id: 'new-owner', owner_name: 'Новый менеджер', version: 5 };
+    if (path.startsWith('/counterparties?')) return { items: [company], total: 1 };
+    if (path.startsWith('/counterparty-owners'))
+      return {
+        items: [
+          { id: 'old-owner', name: 'Первый менеджер' },
+          { id: 'new-owner', name: 'Новый менеджер' },
+        ],
+      };
+    return { items: [], total: 0 };
+  });
+  render(
+    <MemoryRouter>
+      <Clients />
+    </MemoryRouter>,
+  );
+  fireEvent.click(await screen.findByText('ООО Клиент'));
+  fireEvent.click(screen.getByRole('button', { name: 'Редактировать' }));
+  fireEvent.focus(screen.getByLabelText('Ответственный'));
+  fireEvent.click(await screen.findByRole('option', { name: 'Новый менеджер' }));
+  fireEvent.change(screen.getByLabelText('Причина изменения'), {
+    target: { value: 'Передача клиента в другой отдел' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+  await waitFor(() =>
+    expect(api).toHaveBeenCalledWith(
+      '/counterparties/company',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: expect.objectContaining({
+          version: 4,
+          owner_id: 'new-owner',
+          reason: 'Передача клиента в другой отдел',
+        }),
+      }),
+    ),
+  );
+  expect(await screen.findByText('Новый менеджер')).toBeVisible();
+});
+
 it('uploads categorized counterparty documents and archives their metadata by version', async () => {
   const document = {
     id: 'doc',
