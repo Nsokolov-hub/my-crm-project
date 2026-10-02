@@ -178,6 +178,7 @@ def document_files(snapshot: dict) -> dict:
             snapshot["totals"]["tax"],
             snapshot["totals"]["total"],
         ],
+        *([["Общий срок поставки, дней", snapshot["delivery_days"]]] if snapshot.get("delivery_days") is not None else []),
         ["Условия", snapshot["terms"]],
         ["Действует / оплатить до", snapshot["valid_until"]],
     ]
@@ -283,6 +284,7 @@ def document_files(snapshot: dict) -> dict:
         [
             table,
             Spacer(1, 14),
+            *([p(f"Общий срок поставки: {snapshot['delivery_days']} дней")] if snapshot.get("delivery_days") is not None else []),
             p(f"Условия: {snapshot['terms']}"),
             p(f"Действует / оплатить до: {snapshot['valid_until']}"),
         ]

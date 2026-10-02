@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -17,7 +18,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.db import Entity, utcnow
+from app.core.db import Base, Entity, utcnow
 from app.crm.codes import next_code
 
 
@@ -58,6 +59,21 @@ class Contact(Entity):
     email: Mapped[str | None] = mapped_column(String(254))
     phone: Mapped[str | None] = mapped_column(String(100))
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class CounterpartyDocument(Entity):
+    __tablename__ = 'counterparty_documents'
+    __table_args__ = (CheckConstraint("category IN ('founding', 'contract', 'other')"),)
+    counterparty_id: Mapped[str] = mapped_column(ForeignKey('counterparties.id'), index=True)
+    file_id: Mapped[str] = mapped_column(ForeignKey('files.id'), unique=True)
+    category: Mapped[str] = mapped_column(String(20), default='other', server_default='other')
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default='false')
+
+
+class NumberCounter(Base):
+    __tablename__ = 'number_counters'
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
 class Call(Entity):
@@ -122,6 +138,7 @@ class RequestItem(Entity):
     description: Mapped[str] = mapped_column(Text)
     source_columns: Mapped[list[str]] = mapped_column(JSON, default=list)
     source_values: Mapped[list[str]] = mapped_column(JSON, default=list)
+    source_format: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default='{}')
     work_status: Mapped[str] = mapped_column(String(20), default='requested', server_default='requested')
     product_group_id: Mapped[str | None] = mapped_column(ForeignKey('product_groups.id'), index=True)
     nomenclature_id: Mapped[str | None] = mapped_column(ForeignKey('nomenclatures.id'), index=True)

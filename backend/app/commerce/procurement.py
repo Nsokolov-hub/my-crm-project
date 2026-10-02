@@ -1,9 +1,14 @@
+import io
 import re
+from copy import copy
 from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,11 +18,11 @@ from app.core.models import User
 from app.core.security import check_request, current_user, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.crm.imports import xlsx as literal_workbook
-from app.crm.models import Counterparty, Nomenclature, Packing, RequestItem
+from app.crm.models import Counterparty, Nomenclature, Packing, RequestItem, TableImport
 from app.crm.models import Request as CRMRequest
 
 from .calculator import convert, dec, digest, validate_cas
-from .files import put_file, read_file, workbook
+from .files import put_file, read_file
 from .models import Manufacturer, Product, Quote, Substance, SupplierRequest
 from .schemas import ProductIn, QuoteIn, RfqIn, SentIn, VerifyIn
 
@@ -219,7 +224,7 @@ def create_quote(
         if (
             not rfq
             or rfq.request_id != request_id
-            or rfq.supplier_id != data.supplier_id
+            or rfq.supplier_id not in (None, data.supplier_id)
             or not any(
                 row["id"] == item.id and row["revision"] == item.revision for row in rfq.snapshot["items"]
             )
@@ -339,6 +344,67 @@ def list_rfqs(request_id: str, db: DB, user: Actor):
     }
 
 
+def rfq_workbook(db: Session, columns: list[str], rows: list[list], items: list[RequestItem]) -> bytes:
+    """Preserve imported cell formatting while exporting only selected, literal demand values."""
+    book = load_workbook(io.BytesIO(literal_workbook([columns, *rows])))
+    sheet = book.active
+    sheet.title = 'Запрос'
+    thin = Side(style='thin', color='808080')
+    for row in sheet:
+        for cell in row:
+            cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+            cell.font = Font(name='Arial', size=11, bold=cell.row == 1)
+            cell.alignment = Alignment(wrap_text=True, vertical='top')
+            if cell.row == 1:
+                cell.fill = PatternFill('solid', fgColor='E8F0EB')
+    sheet.row_dimensions[1].height = 30
+    for index, column in enumerate(columns, 1):
+        values = [str(column), *(str(row[index - 1] or '') for row in rows)]
+        sheet.column_dimensions[get_column_letter(index)].width = min(75, max(12, max(map(len, values)) + 2))
+
+    originals, styled_columns = {}, set()
+    try:
+        for row_index, item in enumerate(items, 2):
+            reference = item.source_format or {}
+            if not reference.get('import_id') or not reference.get('row_number'):
+                continue
+            import_id = reference['import_id']
+            if import_id not in originals:
+                batch = db.get(TableImport, import_id)
+                if not batch or batch.request_id != item.request_id or batch.kind != 'items':
+                    error('SOURCE_TABLE_INVALID', 'Исходная таблица позиции недоступна', 409)
+                original = load_workbook(io.BytesIO(read_file(batch.file_metadata)), keep_links=False)
+                originals[import_id] = (original, original[batch.file_metadata['source_sheet']])
+            original_sheet = originals[import_id][1]
+            original_row = reference['row_number']
+            sheet.row_dimensions[row_index].height = original_sheet.row_dimensions[original_row].height
+            for original_column, name in enumerate(item.source_columns, 1):
+                destination_column = columns.index(name) + 1
+                source = original_sheet.cell(original_row, original_column)
+                target = sheet.cell(row_index, destination_column)
+                for attribute in ('font', 'fill', 'border', 'alignment', 'protection'):
+                    setattr(target, attribute, copy(getattr(source, attribute)))
+                target.number_format = source.number_format
+                if name not in styled_columns:
+                    header_source = original_sheet.cell(1, original_column)
+                    header_target = sheet.cell(1, destination_column)
+                    for attribute in ('font', 'fill', 'border', 'alignment', 'protection'):
+                        setattr(header_target, attribute, copy(getattr(header_source, attribute)))
+                    sheet.column_dimensions[get_column_letter(destination_column)].width = (
+                        original_sheet.column_dimensions[get_column_letter(original_column)].width)
+                    if original_sheet.row_dimensions[1].height:
+                        sheet.row_dimensions[1].height = original_sheet.row_dimensions[1].height
+                    styled_columns.add(name)
+        sheet.auto_filter.ref = sheet.dimensions
+        buffer = io.BytesIO()
+        book.save(buffer)
+        return buffer.getvalue()
+    finally:
+        for original, _sheet in originals.values():
+            original.close()
+        book.close()
+
+
 @router.post("/requests/{request_id}/rfqs")
 def create_rfq(request_id: str, data: RfqIn, db: DB, user: Actor):
     check_request(db, user, request_id, "quotes.write")
@@ -346,7 +412,7 @@ def create_rfq(request_id: str, data: RfqIn, db: DB, user: Actor):
     def operation():
         advisory(db, f"request-commerce:{request_id}")
         request = db.get(CRMRequest, request_id)
-        recipient = supplier(db, data.supplier_id)
+        recipient = supplier(db, data.supplier_id) if data.supplier_id else None
         if len(set(data.item_ids)) != len(data.item_ids):
             error("DUPLICATE_ITEM", "Позиция указана повторно")
         items = db.scalars(
@@ -367,7 +433,7 @@ def create_rfq(request_id: str, data: RfqIn, db: DB, user: Actor):
             error("RFQ_PARENT", "Исходный запрос поставщику не найден", 404)
         snapshot = {
             "request_number": request.number,
-            "supplier": {"id": recipient.id, "name": recipient.name, "email": recipient.email},
+            "supplier": {"id": recipient.id, "name": recipient.name, "email": recipient.email} if recipient else None,
             "items": [serialize(item) for item in items],
             "response_due": data.response_due.isoformat(),
             "comment": data.comment,
@@ -394,13 +460,14 @@ def create_rfq(request_id: str, data: RfqIn, db: DB, user: Actor):
             for item, fallback in zip(items, rows, strict=True):
                 original = dict(zip(item.source_columns, item.source_values, strict=True)) if item.source_columns else dict(zip(manual_columns, fallback, strict=True))
                 exported.append([original.get(col, '') for col in columns])
-            content = literal_workbook([columns, *exported])
+            content = rfq_workbook(db, columns, exported, items)
             snapshot['source_columns'] = columns
         else:
-            content = workbook(
+            content = rfq_workbook(
+                db,
                 ["Name", "Packing", "CAS", "Quantity", "Cost", "Article", "Comment"],
                 rows,
-                "Supplier request",
+                items,
             )
         metadata = put_file(content, "xlsx")
         obj = SupplierRequest(

@@ -515,6 +515,17 @@ def preview(
         plan=plan,
         summary=summarize(plan),
     )
+    if kind == 'items' and Path(file.filename or '').suffix.lower() == '.xlsx':
+        # Retain row references to the immutable original instead of duplicating style XML per item.
+        source_book = load_workbook(io.BytesIO(content), read_only=True, data_only=False, keep_links=False)
+        try:
+            source_sheet = source_book.active
+            batch.file_metadata = {**batch.file_metadata, 'source_sheet': source_sheet.title,
+                                   'source_rows': [index for index, cells in enumerate(
+                                       source_sheet.iter_rows(min_row=2), 2)
+                                       if any(string_value(cell) for cell in cells)]}
+        finally:
+            source_book.close()
     db.add(batch)
     db.flush()
     audit(db, user, "table_import", batch.id, "preview", after=batch.summary)
@@ -660,10 +671,12 @@ def confirm(
             return batch_view(batch)
         created = 0
         if batch.kind == "items":
-            for entry, raw in zip(batch.plan, batch.rows, strict=True):
+            for index, (entry, raw) in enumerate(zip(batch.plan, batch.rows, strict=True)):
                 fields = structured_item_fields(db, ItemInput(**entry["data"]).model_dump())
                 item = RequestItem(
-                    request_id=request_id, **fields, source_columns=batch.columns, source_values=raw
+                    request_id=request_id, **fields, source_columns=batch.columns, source_values=raw,
+                    source_format={'import_id': batch.id, 'row_number': batch.file_metadata['source_rows'][index]}
+                    if batch.file_metadata.get('source_rows') else {},
                 )
                 db.add(item)
                 db.flush()

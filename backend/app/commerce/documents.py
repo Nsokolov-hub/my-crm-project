@@ -153,6 +153,7 @@ def base_snapshot(
         "request_number": request.number,
         "calculation_number": calculation.snapshot.get("calculation_number"),
         "calculation_version": calculation.snapshot.get("version_number"),
+        "delivery_days": calculation.snapshot.get("delivery_days"),
         "seller": {"id": seller.id, "name": seller.name, "details": seller.details},
         "client": {"id": client.id, "name": client.name, "details": client.details, "tax_id": client.tax_id},
         "currency": profile["sale_currency"],
@@ -394,6 +395,7 @@ def issue_invoice(request_id: str, data: InvoiceIn, db: DB, user: Actor):
         # Parties remain bound to the accepted proposal, including requisites.
         snapshot["seller"] = copy.deepcopy(proposal.snapshot["seller"])
         snapshot["client"] = copy.deepcopy(proposal.snapshot["client"])
+        snapshot["delivery_days"] = proposal.snapshot.get("delivery_days")
         obj = CommercialDocument(
             request_id=request_id,
             seller_id=proposal.seller_id,

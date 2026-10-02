@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -24,10 +24,12 @@ from app.core.security import (
 )
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
 from app.core.service import page as paginate
+from app.crm.codes import next_request_number
 from app.crm.models import (
     Call,
     Contact,
     Counterparty,
+    CounterpartyDocument,
     Country,
     Currency,
     Nomenclature,
@@ -51,6 +53,7 @@ from app.crm.schemas import (
     ContactCreateInput,
     ContactInput,
     ContactPatch,
+    CounterpartyDocumentPatch,
     CountryInput,
     CurrencyInput,
     ItemInput,
@@ -454,9 +457,11 @@ def edit_packing(entity_id: str, body: PackingPatch, user: User = Depends(curren
 
 
 @router.get('/counterparties')
-def clients(q: str = '', kind: str | None = None, client_base: str | None = None, page: int = 1, page_size: int = 25, sort: str = 'name', direction: str = 'asc', archived: bool = False, filter_name: str = '', filter_tax_id: str = '', filter_profile: str = '', filter_city: str = '', filter_phone: str = '', filter_email: str = '', user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def clients(q: str = '', kind: str | None = None, client_base: str | None = None, contact_eligible: bool = False, page: int = 1, page_size: int = 25, sort: str = 'name', direction: str = 'asc', archived: bool = False, filter_name: str = '', filter_tax_id: str = '', filter_profile: str = '', filter_city: str = '', filter_phone: str = '', filter_email: str = '', user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     require_permission(db, user, 'clients.read')
     stmt = select(Counterparty).where(client_predicate(db, user), Counterparty.archived == archived)
+    if contact_eligible:
+        stmt = stmt.where(Counterparty.client_base == 'working', Counterparty.archived.is_(False))
     if kind:
         stmt = stmt.where(Counterparty.kind.in_([kind, 'both']))
     if client_base:
@@ -479,7 +484,7 @@ def clients(q: str = '', kind: str | None = None, client_base: str | None = None
     query_parts = search_parts(q)
     filter_parts = {key: search_parts(value) for key, value in filters.items()}
     if not query_parts and not any(filter_parts.values()):
-        return paginate(db, stmt, page, page_size)
+        return add_counterparty_owners(db, paginate(db, stmt, page, page_size))
     if page < 1 or not 1 <= page_size <= 100:
         raise DomainError('PAGINATION_INVALID', 'Размер страницы от 1 до 100; номер от 1', 422)
     start = (page - 1) * page_size
@@ -499,7 +504,26 @@ def clients(q: str = '', kind: str | None = None, client_base: str | None = None
         if start <= total < start + page_size:
             items.append(serialize(row))
         total += 1
-    return {'items': items, 'total': total, 'page': page, 'page_size': page_size}
+    return add_counterparty_owners(db, {'items': items, 'total': total, 'page': page, 'page_size': page_size})
+
+
+def add_counterparty_owners(db: Session, result: dict) -> dict:
+    names = {row.id: row.name for row in db.scalars(select(User).where(
+        User.id.in_({row['owner_id'] for row in result['items']})))}
+    for row in result['items']:
+        row['owner_name'] = names.get(row['owner_id'])
+    return result
+
+
+def counterparty_view(db: Session, row: Counterparty) -> dict:
+    return add_counterparty_owners(db, {'items': [serialize(row)]})['items'][0]
+
+
+@router.get('/counterparty-owners')
+def counterparty_owners(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+    require_permission(db, user, 'clients.read')
+    rows = db.scalars(select(User).where(User.active.is_(True)).order_by(User.name, User.id))
+    return {'items': [{'id': row.id, 'name': row.name} for row in rows]}
 
 
 def search_parts(value: str) -> list[str]:
@@ -520,12 +544,13 @@ def create_client(body: ClientInput, user: User = Depends(current_user), db: Ses
     if data['owner_id'] != user.id:
         require_permission(db, user, 'requests.assign')
     active_user(db, data['owner_id'])
-    return save(db, user, Counterparty(**data), 'counterparty')
+    result = save(db, user, Counterparty(**data), 'counterparty')
+    return counterparty_view(db, db.get(Counterparty, result['id']))
 
 
 @router.get('/counterparties/{entity_id}')
 def client_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
-    return serialize(check_client(db, user, entity_id))
+    return counterparty_view(db, check_client(db, user, entity_id))
 
 
 @router.post('/counterparties/{entity_id}/promote')
@@ -535,13 +560,13 @@ def promote_client(entity_id: str, body: PromoteClientInput, user: User = Depend
     if row.archived:
         raise DomainError('CLIENT_ARCHIVED', 'Сначала восстановите клиента из архива', 409)
     if row.client_base == 'working':
-        return serialize(row)
+        return counterparty_view(db, row)
     check_version(row, body.version)
     before = serialize(row)
     row.client_base = 'working'
     row.version += 1
     audit(db, user, 'counterparty', row.id, 'promoted', before, serialize(row), 'Перенос из базы обзвона в рабочую базу')
-    return serialize(row)
+    return counterparty_view(db, row)
 
 
 @router.patch('/counterparties/{entity_id}')
@@ -580,7 +605,71 @@ def edit_client(entity_id: str, body: ClientPatch, user: User = Depends(current_
                 pass
 
     audit(db, user, 'counterparty', row.id, 'updated', before, serialize(row), body.reason)
-    return serialize(row)
+    return counterparty_view(db, row)
+
+
+def counterparty_document_view(db: Session, user: User, row: CounterpartyDocument) -> dict:
+    from app.communication.access import check_file, file_view
+    file = file_view(check_file(db, user, row.file_id))
+    return {**serialize(row), **{key: file[key] for key in ('name', 'media_type', 'size', 'status')}}
+
+
+@router.get('/counterparties/{entity_id}/documents')
+def counterparty_documents(entity_id: str, archived: bool = False, page: int = 1, page_size: int = 100,
+                           user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+    check_client(db, user, entity_id)
+    result = paginate(db, select(CounterpartyDocument).where(
+        CounterpartyDocument.counterparty_id == entity_id, CounterpartyDocument.archived == archived
+    ).order_by(CounterpartyDocument.created_at.desc(), CounterpartyDocument.id), page, page_size)
+    result['items'] = [counterparty_document_view(db, user, db.get(CounterpartyDocument, row['id']))
+                       for row in result['items']]
+    return result
+
+
+@router.post('/counterparties/{entity_id}/documents', status_code=201)
+def upload_counterparty_document(entity_id: str, file: UploadFile = File(), category: str = Form('other'),
+                                 idempotency_key: str | None = Header(default=None),
+                                 user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+    from app.communication.routes import upload_file
+    client = check_client(db, user, entity_id, 'clients.write')
+    if client.archived:
+        raise DomainError('CLIENT_ARCHIVED', 'Контрагент в архиве', 409)
+    if category not in ('founding', 'contract', 'other'):
+        raise DomainError('DOCUMENT_CATEGORY_INVALID', 'Выберите категорию документа', 422, 'category')
+    saved = upload_file(file, 'client', entity_id, 'general', user, db, idempotency_key)
+    row = db.scalar(select(CounterpartyDocument).where(CounterpartyDocument.file_id == saved['id']))
+    if row:
+        if row.category != category:
+            raise DomainError('IDEMPOTENCY_CONFLICT', 'Этот ключ использован для другой категории', 409)
+        return counterparty_document_view(db, user, row)
+    row = CounterpartyDocument(counterparty_id=entity_id, file_id=saved['id'], category=category)
+    save(db, user, row, 'counterparty_document')
+    return counterparty_document_view(db, user, row)
+
+
+@router.get('/counterparty-documents/{entity_id}/download')
+def download_counterparty_document(entity_id: str, user: User = Depends(current_user),
+                                   db: Session = Depends(get_db)):
+    from app.communication.routes import download_file
+    row = db.get(CounterpartyDocument, entity_id)
+    if not row:
+        raise DomainError('NOT_FOUND', 'Документ не найден', 404)
+    check_client(db, user, row.counterparty_id)
+    return download_file(row.file_id, user, db)
+
+
+@router.patch('/counterparty-documents/{entity_id}')
+def archive_counterparty_document(entity_id: str, body: CounterpartyDocumentPatch,
+                                  user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+    row = lock(db, CounterpartyDocument, entity_id)
+    check_client(db, user, row.counterparty_id, 'clients.write')
+    check_version(row, body.version)
+    before = serialize(row)
+    row.archived = body.archived
+    row.version += 1
+    audit(db, user, 'counterparty_document', row.id, 'archived' if body.archived else 'restored',
+          before, serialize(row), body.reason)
+    return counterparty_document_view(db, user, row)
 
 
 @router.get('/counterparties/{entity_id}/contacts')
@@ -595,15 +684,15 @@ def contacts(entity_id: str, q: str = '', user: User = Depends(current_user), db
 @router.post('/counterparties/{entity_id}/contacts', status_code=201)
 def create_contact(entity_id: str, body: ContactInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     client = check_client(db, user, entity_id, 'clients.write')
-    if client.client_base != 'working' or client.kind not in ('client', 'both'):
-        raise DomainError('WORKING_CLIENT_REQUIRED', 'Контакты привязываются к клиентам рабочей базы', 422)
+    if client.client_base != 'working' or client.archived:
+        raise DomainError('WORKING_CLIENT_REQUIRED', 'Выберите действующего контрагента рабочей базы', 422)
     return save(db, user, Contact(client_id=entity_id, **body.model_dump()), 'contact')
 
 
 @router.get('/contacts')
 def contact_registry(q: str = '', page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db)):
     require_permission(db, user, 'clients.read')
-    accessible = select(Counterparty.id).where(client_predicate(db, user), Counterparty.client_base == 'working', Counterparty.kind.in_(['client', 'both']), Counterparty.archived.is_(False))
+    accessible = select(Counterparty.id).where(client_predicate(db, user), Counterparty.client_base == 'working', Counterparty.archived.is_(False))
     stmt = select(Contact).where(Contact.client_id.in_(accessible), Contact.archived.is_(False))
     if q:
         stmt = stmt.where(or_(Contact.name.ilike(f'%{q}%'), Contact.department.ilike(f'%{q}%'), Contact.purchase_area.ilike(f'%{q}%'), Contact.email.ilike(f'%{q}%')))
@@ -857,9 +946,7 @@ def create_request(body: RequestInput, idempotency_key: str | None = Header(defa
     if owner.id != user.id:
         require_permission(db, user, 'requests.assign')
     def operation() -> dict[str, Any]:
-        advisory(db, 'request.number')
-        count = db.scalar(select(func.count()).select_from(Request)) or 0
-        row = Request(**body.model_dump(exclude={'owner_id'}), owner_id=owner.id, number=f'З-{utcnow():%Y}-{count + 1:05d}')
+        row = Request(**body.model_dump(exclude={'owner_id'}), owner_id=owner.id, number=next_request_number(db))
         return save(db, user, row, 'request')
     return idem(db, user, idempotency_key, 'requests.create', body.model_dump(mode='json'), operation)
 
@@ -1214,7 +1301,7 @@ def create_quote_sheet(
     if body.supplier_request_id:
         from app.commerce.models import SupplierRequest
         rfq = db.get(SupplierRequest, body.supplier_request_id)
-        if not rfq or rfq.request_id != entity_id or rfq.supplier_id != body.supplier_id:
+        if not rfq or rfq.request_id != entity_id or rfq.supplier_id not in (None, body.supplier_id):
             raise DomainError('SUPPLIER_REQUEST_INVALID', 'Запрос поставщику не соответствует заявке и поставщику', 422, 'supplier_request_id')
 
     def operation() -> dict[str, Any]:

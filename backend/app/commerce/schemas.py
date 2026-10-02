@@ -77,7 +77,7 @@ class QuoteIn(Command):
 
 
 class RfqIn(Command):
-    supplier_id: str
+    supplier_id: str | None = None
     item_ids: list[str] = Field(min_length=1, max_length=10000)
     parent_id: str | None = None
     response_due: date
@@ -246,6 +246,9 @@ class CalculationIn(Command):
     payment_terms: dict = Field(default_factory=dict)
     previous_id: str | None = None
     reason: str = ""
+    vat_deductible: bool = False
+    delivery_days: int | None = Field(default=None, ge=0, le=3650)
+    expected_wave_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 class RequestWaveIn(Command):
@@ -326,9 +329,15 @@ class WaveIn(Command):
     route: str = Field(min_length=1, max_length=300)
     origin_country: str = Field(min_length=1, max_length=100)
     owner_id: str
-    close_date: date
-    departure_date: date
-    arrival_date: date
+    close_date: date | None = None
+    departure_date: date | None = None
+    arrival_date: date | None = None
+    close_week: int | None = Field(default=None, ge=1, le=53)
+    close_year: int | None = Field(default=None, ge=1900, le=9998)
+    departure_week: int | None = Field(default=None, ge=1, le=53)
+    departure_year: int | None = Field(default=None, ge=1900, le=9998)
+    arrival_week: int | None = Field(default=None, ge=1, le=53)
+    arrival_year: int | None = Field(default=None, ge=1900, le=9998)
     details: dict = Field(default_factory=dict)
 
 
@@ -339,6 +348,12 @@ class WaveUpdate(VersionCommand):
     close_date: date | None = None
     departure_date: date | None = None
     arrival_date: date | None = None
+    close_week: int | None = Field(default=None, ge=1, le=53)
+    close_year: int | None = Field(default=None, ge=1900, le=9998)
+    departure_week: int | None = Field(default=None, ge=1, le=53)
+    departure_year: int | None = Field(default=None, ge=1900, le=9998)
+    arrival_week: int | None = Field(default=None, ge=1, le=53)
+    arrival_year: int | None = Field(default=None, ge=1900, le=9998)
     reason: str = Field(min_length=3)
 
 

@@ -48,7 +48,7 @@ export function ContactCard({
             {contact.data && (
               <DetailPairs
                 values={{
-                  Клиент: contact.data.client_name,
+                  Контрагент: contact.data.client_name,
                   Имя: contact.data.name,
                   Должность: contact.data.position,
                   Отдел: contact.data.department,
@@ -78,7 +78,10 @@ export function Contacts() {
   const contactId = params.get('contact_id');
   return (
     <>
-      <PageHeading title="Контакты" description="Закупщики и отделы клиентов рабочей базы." />
+      <PageHeading
+        title="Контакты"
+        description="Контактные лица, закупщики и отделы клиентов и поставщиков."
+      />
       <Collection
         title="Контактные лица"
         endpoint="/contacts"
@@ -88,9 +91,9 @@ export function Contacts() {
         fields={[
           {
             name: 'client_id',
-            label: 'Клиент рабочей базы',
+            label: 'Контрагент',
             type: 'select',
-            source: '/counterparties?kind=client&client_base=working',
+            source: '/counterparties?contact_eligible=true',
             required: true,
           },
           ...contactFields,
@@ -98,7 +101,7 @@ export function Contacts() {
         onSelect={(row) => setParams({ contact_id: row.id })}
         columns={[
           { key: 'name', label: 'Имя' },
-          { key: 'client_name', label: 'Клиент' },
+          { key: 'client_name', label: 'Контрагент' },
           { key: 'department', label: 'Отдел' },
           { key: 'purchase_area', label: 'Направление закупок' },
           { key: 'phone', label: 'Телефон' },
