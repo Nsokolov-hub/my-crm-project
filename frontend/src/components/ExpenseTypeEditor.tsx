@@ -36,7 +36,7 @@ const distributions = [
   ['EQUALLY_BY_POSITION', 'Поровну по строкам'], ['BY_WEIGHT', 'По весу'], ['MANUAL', 'Вручную'],
 ];
 const bases = [
-  ['PURCHASE', 'Закупка'], ['CUSTOMS_BASE', 'Таможенная база'],
+  ['PURCHASE', 'Закупка'], ['CUSTOMS_BASE', 'Таможенная стоимость'],
   ['DUTY', 'Пошлина'], ['COST', 'Себестоимость'],
 ];
 const newBracket = (): Bracket => ({ from_amount: '', to_amount: '', fee: '', valid_from: '', valid_to: '' });

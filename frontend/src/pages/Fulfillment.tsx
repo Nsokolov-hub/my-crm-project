@@ -6,6 +6,7 @@ import { Badge, Button, DataTable, DetailPairs, Modal, PageHeading } from '../co
 import { date, decimal, nowLocal } from '../lib/format';
 import { useApi } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
+import { waveWeekInitial, waveWeekLabel } from '../lib/waves';
 export function RequestFulfillment({ requestId }: { requestId: string }) {
   const auth = useAuth();
   const [approval, setApproval] = useState<Entity>();
@@ -271,15 +272,110 @@ export function ApprovalDecision({
   );
 }
 const waveFields: Field[] = [
-  { name: 'number', label: 'Номер волны', help: 'Оставьте пустым для номера «Поставщик 1», «Поставщик 2»…' },
-  { name: 'supplier_id', label: 'Поставщик', type: 'select', source: '/counterparties?kind=supplier', required: true },
+  {
+    name: 'number',
+    label: 'Номер волны',
+    help: 'Оставьте пустым для номера «Поставщик 1», «Поставщик 2»…',
+  },
+  {
+    name: 'supplier_id',
+    label: 'Поставщик',
+    type: 'select',
+    source: '/counterparties?kind=supplier',
+    required: true,
+  },
   { name: 'route', label: 'Маршрут', required: true },
   { name: 'origin_country', label: 'Страна отправления', required: true },
   { name: 'owner_id', label: 'Ответственный', type: 'select', source: '/users', required: true },
-  { name: 'close_date', label: 'Закрытие для добавления', type: 'date', required: true },
-  { name: 'departure_date', label: 'Плановая отправка', type: 'date', required: true },
-  { name: 'arrival_date', label: 'Плановое прибытие', type: 'date', required: true },
+  {
+    name: 'close_week',
+    label: 'Неделя закрытия',
+    type: 'number',
+    required: true,
+    help: 'Номер недели ISO: от 1 до 53.',
+  },
+  {
+    name: 'close_year',
+    label: 'Год закрытия',
+    type: 'number',
+    required: true,
+    value: new Date().getFullYear(),
+  },
+  { name: 'departure_week', label: 'Неделя отправки', type: 'number', required: true },
+  {
+    name: 'departure_year',
+    label: 'Год отправки',
+    type: 'number',
+    required: true,
+    value: new Date().getFullYear(),
+  },
+  { name: 'arrival_week', label: 'Неделя прибытия', type: 'number', required: true },
+  {
+    name: 'arrival_year',
+    label: 'Год прибытия',
+    type: 'number',
+    required: true,
+    value: new Date().getFullYear(),
+  },
 ];
+function WaveFinancialSummary({ summary }: { summary: Entity }) {
+  const rows = ((summary.allocations || []) as Entity[]).map((row, index) => ({
+    ...row,
+    id: String(row.id || index),
+  }));
+  return (
+    <section className="calculation-section">
+    <h3>Текущие расходы волны</h3>
+    {summary.status === 'unconfigured' && <p className="info-note">Для предварительных расходов нужен опубликованный профиль расчёта с тарифами волны.</p>}
+    {summary.status === 'partial' && <p className="info-note">Для части ранее принятых позиций нет сохранённой базы. Доступные расходы распределены по известному количеству.</p>}
+      {Boolean(summary.provisional) && (
+        <p className="info-note">
+          Волна пока пустая. Минимальные расходы предварительные и пересчитаются при добавлении
+          товаров.
+        </p>
+      )}
+      {Boolean(summary.error) && (
+        <p className="field-error" role="alert">
+          {String(summary.error)}
+        </p>
+      )}
+      <DetailPairs
+        values={{
+          'Количество, шт.': decimal(summary.total_quantity),
+          'Таможенная стоимость, ₽': decimal(summary.customs_value),
+          'Таможенный сбор, ₽': decimal(summary.customs_fee),
+          'Ввозной НДС, ₽': decimal(summary.import_vat),
+          'Общие расходы, ₽': decimal(summary.expenses_total),
+        }}
+      />
+      {rows.length > 0 && (
+        <DataTable<Entity>
+          rows={rows}
+          columns={[
+            { key: 'request_number', label: 'Заявка' },
+            { key: 'description', label: 'Товар' },
+            { key: 'quantity', label: 'Количество', render: (row) => decimal(row.quantity) },
+            {
+              key: 'customs_fee',
+              label: 'Таможенный сбор, ₽',
+              render: (row) => decimal(row.customs_fee),
+            },
+            {
+              key: 'import_vat',
+              label: 'Ввозной НДС, ₽',
+              render: (row) => decimal(row.import_vat),
+            },
+            {
+              key: 'expenses_total',
+              label: 'Расходы, ₽',
+              render: (row) => decimal(row.expenses_total),
+            },
+          ]}
+        />
+      )}
+    </section>
+  );
+}
 export function Waves() {
   const [selected, setSelected] = useState<Entity>();
   const [editing, setEditing] = useState(false);
@@ -312,9 +408,13 @@ export function Waves() {
           { key: 'supplier_name', label: 'Поставщик' },
           { key: 'route', label: 'Маршрут' },
           { key: 'status', label: 'Состояние', render: (r) => <Badge value={r.status} /> },
-          { key: 'close_date', label: 'Приём до', render: (r) => date(r.close_date) },
-          { key: 'departure_date', label: 'Отправка', render: (r) => date(r.departure_date) },
-          { key: 'arrival_date', label: 'Прибытие', render: (r) => date(r.arrival_date) },
+          { key: 'close_week', label: 'Приём до', render: (r) => waveWeekLabel(r, 'close') },
+          {
+            key: 'departure_week',
+            label: 'Отправка',
+            render: (r) => waveWeekLabel(r, 'departure'),
+          },
+          { key: 'arrival_week', label: 'Прибытие', render: (r) => waveWeekLabel(r, 'arrival') },
         ]}
       />
       {selected && !editing && !allocationAction && (
@@ -325,14 +425,17 @@ export function Waves() {
                 Поставщик: selected.supplier_name,
                 Маршрут: selected.route,
                 Статус: selected.status,
-                'Приём до': date(selected.close_date),
-                Отправка: date(selected.departure_date),
-                Прибытие: date(selected.arrival_date),
+                'Приём до': waveWeekLabel(selected, 'close'),
+                Отправка: waveWeekLabel(selected, 'departure'),
+                Прибытие: waveWeekLabel(selected, 'arrival'),
               }}
             />
             <Button variant="secondary" onClick={() => setEditing(true)}>
               Изменить сроки и состояние
             </Button>
+            {Boolean(selected.financial_summary) && (
+              <WaveFinancialSummary summary={selected.financial_summary as Entity} />
+            )}
             <h3>Распределённые позиции</h3>
             <DataTable
               rows={(selected.allocations || []) as Entity[]}
@@ -371,7 +474,7 @@ export function Waves() {
           endpoint={`/waves/${selected.id}`}
           method="PATCH"
           command
-          initial={selected}
+          initial={{ ...selected, ...waveWeekInitial(selected) }}
           extra={{ version: selected.version }}
           fields={[
             {
@@ -388,9 +491,7 @@ export function Waves() {
                 { value: 'cancelled', label: 'Отменена' },
               ],
             },
-            ...waveFields.filter((f) =>
-              ['close_date', 'departure_date', 'arrival_date'].includes(f.name),
-            ),
+            ...waveFields.filter((f) => f.name.endsWith('_week') || f.name.endsWith('_year')),
             {
               name: 'reason',
               label: 'Причина изменения',

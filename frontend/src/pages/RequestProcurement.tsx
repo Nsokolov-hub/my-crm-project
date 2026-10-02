@@ -28,8 +28,8 @@ export function RequestRfqs({
   const fields: Field[] = [
     {
       name: 'supplier_id',
-      label: 'Поставщик',
-      required: true,
+      label: 'Поставщик (необязательно)',
+      help: 'Оставьте пустым, чтобы выгрузить единый запрос для всех поставщиков.',
       type: 'select',
       source: '/counterparties?kind=supplier',
     },
@@ -50,7 +50,7 @@ export function RequestRfqs({
       <ErrorBox error={error} />
       <Collection
         title="Запросы поставщикам"
-        description="Отдельный файл для каждого поставщика. Отправка фиксируется после передачи файла."
+        description="Единый файл можно отправить всем поставщикам. При необходимости создайте запрос отдельному поставщику."
         endpoint={`/requests/${requestId}/rfqs`}
         fields={fields}
         createLabel="Создать запрос"
@@ -67,7 +67,7 @@ export function RequestRfqs({
           {
             key: 'supplier_id',
             label: 'Поставщик',
-            render: (r) => String(r.supplier_name || r.supplier_id),
+            render: (r) => String(r.supplier_name || r.supplier_id || 'Общий запрос'),
           },
           { key: 'revision', label: 'Редакция' },
           { key: 'created_at', label: 'Создан', render: (r) => date(r.created_at) },
@@ -99,7 +99,7 @@ export function RequestRfqs({
       />
       {launching && (
         <RecordForm
-          title="Запрос поставщику по выбранным позициям"
+          title="Запрос по выбранным позициям"
           endpoint={`/requests/${requestId}/rfqs`}
           fields={fields}
           initial={{ item_ids: launchItemIds }}
@@ -116,10 +116,14 @@ export function RequestRfqs({
         />
       )}
       {selected && !sending && (
-        <Modal title="Запрос поставщику" onClose={() => setSelected(undefined)}>
+        <Modal
+          title={selected.supplier_id ? 'Запрос поставщику' : 'Общий запрос поставщикам'}
+          onClose={() => setSelected(undefined)}
+        >
           <div className="form-body">
             <DetailPairs
               values={{
+                Поставщик: selected.supplier_name || selected.supplier_id || 'Все поставщики',
                 Редакция: selected.revision,
                 Создан: date(selected.created_at),
                 Отправлен: date(selected.sent_at, true),
@@ -409,10 +413,13 @@ function QuoteSheetEditor({
               <select value={rfqId} onChange={(event) => setRfqId(event.target.value)}>
                 <option value="">Без связи с запросом</option>
                 {rfqs.data?.items
-                  .filter((rfq) => !supplierId || rfq.supplier_id === supplierId)
+                  .filter(
+                    (rfq) => !supplierId || !rfq.supplier_id || rfq.supplier_id === supplierId,
+                  )
                   .map((rfq) => (
                     <option key={rfq.id} value={rfq.id}>
                       {String(rfq.number || rfq.request_number || date(rfq.created_at))}
+                      {!rfq.supplier_id && ' · Общий запрос'}
                     </option>
                   ))}
               </select>

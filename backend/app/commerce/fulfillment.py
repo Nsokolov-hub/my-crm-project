@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter
@@ -6,9 +6,15 @@ from sqlalchemy import select
 
 from app.commerce.recalculate import recalculate_fulfillment
 from app.core.db import utcnow
-from app.core.errors import error
+from app.core.errors import DomainError, error
 from app.core.models import User
-from app.core.security import check_request, request_predicate, require_permission
+from app.core.security import (
+    can,
+    check_request,
+    has_request_permission,
+    request_predicate,
+    require_permission,
+)
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
 from app.crm.models import Counterparty, QuoteItem, RequestItem, Task
 from app.crm.models import Request as CRMRequest
@@ -572,6 +578,35 @@ def decide_approval(approval_id: str, data: DecisionIn, db: DB, user: Actor):
     )
 
 
+def wave_schedule(data, current: Wave | None = None) -> dict:
+    result = {}
+    for prefix in ("close", "departure", "arrival"):
+        week = getattr(data, f"{prefix}_week")
+        year = getattr(data, f"{prefix}_year")
+        exact = getattr(data, f"{prefix}_date")
+        if week is not None or year is not None:
+            if week is None or year is None:
+                error("WAVE_WEEK", "Укажите номер недели и год вместе", field=f"{prefix}_week")
+            try:
+                scheduled = date.fromisocalendar(year, week, 1)
+            except ValueError:
+                error("WAVE_WEEK", "В выбранном ISO-году нет такой недели", field=f"{prefix}_week")
+            if exact is not None and exact.isocalendar()[:2] != (year, week):
+                error("WAVE_WEEK", "Дата и номер ISO-недели не совпадают", field=f"{prefix}_week")
+        elif exact is not None:
+            scheduled = exact
+            year, week, _ = exact.isocalendar()
+        elif current:
+            scheduled = getattr(current, f"{prefix}_date")
+            year, week, _ = scheduled.isocalendar()
+        else:
+            error("WAVE_WEEK", "Укажите неделю и год планирования", field=f"{prefix}_week")
+        result.update({f"{prefix}_week": week, f"{prefix}_year": year, f"{prefix}_date": scheduled})
+    if not result["close_date"] <= result["departure_date"] <= result["arrival_date"]:
+        error("WAVE_DATES", "Недели закрытия, отправления и прибытия должны идти по порядку")
+    return result
+
+
 def wave_view(db, user, wave: Wave) -> dict:
     accessible = select(CRMRequest.id).where(request_predicate(db, user))
     allocations = db.scalars(
@@ -580,7 +615,27 @@ def wave_view(db, user, wave: Wave) -> dict:
         .where(WaveAllocation.wave_id == wave.id, Execution.request_id.in_(accessible))
     ).all()
     supplier = db.get(Counterparty, wave.supplier_id) if wave.supplier_id else None
-    return {**serialize(wave), "supplier_name": supplier.name if supplier else None,
+    value = serialize(wave)
+    for prefix in ("close", "departure", "arrival"):
+        year, week, _ = getattr(wave, f"{prefix}_date").isocalendar()
+        value[f"{prefix}_year"] = getattr(wave, f"{prefix}_year") or year
+        value[f"{prefix}_week"] = getattr(wave, f"{prefix}_week") or week
+    value["financial_summary"] = None
+    if all(can(db, user, code) for code in ("finance.purchase.read", "finance.calculations.read")):
+        from .financial import wave_financial_summary, wave_selections
+        peers, _, _ = wave_selections(db, wave.id)
+        finance_requests = {row["_request_id"] for row in peers}
+        finance_requests.update(db.scalars(select(Execution.request_id).join(
+            WaveAllocation, WaveAllocation.execution_id == Execution.id).where(
+            WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True))).all())
+        if all(has_request_permission(db, user, request_id, "finance.purchase.read")
+               and has_request_permission(db, user, request_id, "finance.calculations.read") for request_id in finance_requests):
+            try:
+                value["financial_summary"] = wave_financial_summary(db, wave.id)
+            except DomainError as exc:
+                value["financial_summary"] = {"status": "error", "error": exc.message, "code": exc.code,
+                                              "provisional": True, "allocations": []}
+    return {**value, "supplier_name": supplier.name if supplier else None,
             "allocations": [allocation_view(db, row) for row in allocations]}
 
 
@@ -603,8 +658,7 @@ def create_wave(data: WaveIn, db: DB, user: Actor):
         supplier = db.get(Counterparty, data.supplier_id)
         if not supplier or supplier.archived or supplier.kind not in ("supplier", "both"):
             error("SUPPLIER_REQUIRED", "Поставщик волны не найден", field="supplier_id")
-        if not data.close_date <= data.departure_date <= data.arrival_date:
-            error("WAVE_DATES", "Даты закрытия, отправления и прибытия должны идти по порядку")
+        schedule = wave_schedule(data)
         owner = db.get(User, data.owner_id)
         if not owner or not owner.active:
             error("OWNER_REQUIRED", "Выберите действующего ответственного")
@@ -619,7 +673,7 @@ def create_wave(data: WaveIn, db: DB, user: Actor):
         advisory(db, f"wave-number:{number}")
         if db.scalar(select(Wave.id).where(Wave.number == number)):
             error("WAVE_NUMBER", "Номер волны уже существует", 409)
-        obj = Wave(**{**data.model_dump(exclude={"idempotency_key"}), "number": number})
+        obj = Wave(**{**data.model_dump(exclude={"idempotency_key"}), "number": number, **schedule})
         db.add(obj)
         db.flush()
         audit(db, user, "wave", obj.id, "create", after=serialize(obj))
@@ -673,11 +727,8 @@ def update_wave(wave_id: str, data: WaveUpdate, db: DB, user: Actor):
                             "Не весь объём подтверждён фактическими событиями или есть незакрытая претензия",
                         )
             wave.status = data.status
-        for field in ("close_date", "departure_date", "arrival_date"):
-            if getattr(data, field) is not None:
-                setattr(wave, field, getattr(data, field))
-        if not wave.close_date <= wave.departure_date <= wave.arrival_date:
-            error("WAVE_DATES", "Даты закрытия, отправления и прибытия должны идти по порядку")
+        for field, value in wave_schedule(data, wave).items():
+            setattr(wave, field, value)
         wave.version += 1
         for allocation in allocations:
             execution = db.get(Execution, allocation.execution_id)

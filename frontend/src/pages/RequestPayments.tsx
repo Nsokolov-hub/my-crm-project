@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
 import { RecordForm } from '../components/Form';
 import { LineCommand } from '../components/LineCommand';
@@ -8,10 +9,14 @@ import { paymentFields } from '../lib/fields';
 import { useApi, useCommand } from '../lib/hooks';
 import type { Entity, Page } from '../lib/types';
 export function RequestPayments({ requestId }: { requestId: string }) {
+  const auth = useAuth();
   const [selected, setSelected] = useState<Entity>();
   const [action, setAction] = useState<'allocate' | 'reverse'>();
   const [revision, setRevision] = useState(0);
   const invoices = useApi<Page>(`/requests/${requestId}/invoices`);
+  const currencies = useApi<Page>(
+    auth.can('payments.write') ? `/requests/${requestId}/payment-currencies` : null,
+  );
   const operation = useCommand();
   function done() {
     setSelected(undefined);
@@ -37,8 +42,9 @@ export function RequestPayments({ requestId }: { requestId: string }) {
     <>
       <div className="info-note">
         Заявленный платёж не уменьшает долг. Остаток меняется после подтверждения и распределения по
-        счетам.
+        счетам. Позиции переводятся в работу отдельно, во вкладке «Исполнение».
       </div>
+      <ErrorBox error={currencies.error} retry={currencies.refresh} />
       <Collection
         title="Платежи"
         endpoint={`/requests/${requestId}/payments`}
@@ -56,7 +62,14 @@ export function RequestPayments({ requestId }: { requestId: string }) {
           },
           ...paymentFields.map((field) =>
             field.name === 'currency'
-              ? { ...field, source: `/requests/${requestId}/payment-currencies` }
+              ? {
+                  ...field,
+                  options: (currencies.data?.items || []).map((currency) => ({
+                    value: String(currency.code || currency.id).toUpperCase(),
+                    label: String(currency.name || currency.code || currency.id),
+                  })),
+                  help: 'При выборе счёта валюта подставляется автоматически.',
+                }
               : field,
           ),
           {
@@ -66,6 +79,7 @@ export function RequestPayments({ requestId }: { requestId: string }) {
           },
         ]}
         createLabel="Заявить оплату"
+        canCreate={auth.can('payments.write')}
         command
         deriveValues={(values, changedField) => {
           if (changedField !== 'invoice_id') return values;
@@ -98,20 +112,22 @@ export function RequestPayments({ requestId }: { requestId: string }) {
                 Подтвердил: selected.confirmed_by,
               }}
             />
-            <div className="inline-actions">
-              {selected.status === 'declared' ? (
-                <Button busy={operation.busy} onClick={() => void confirm()}>
-                  Подтвердить поступление
-                </Button>
-              ) : (
-                <>
-                  <Button onClick={() => setAction('allocate')}>Распределить</Button>
-                  <Button variant="secondary" onClick={() => setAction('reverse')}>
-                    Обратная операция
+            {auth.can('payments.confirm') && (
+              <div className="inline-actions">
+                {selected.status === 'declared' ? (
+                  <Button busy={operation.busy} onClick={() => void confirm()}>
+                    Подтвердить поступление
                   </Button>
-                </>
-              )}
-            </div>
+                ) : (
+                  <>
+                    <Button onClick={() => setAction('allocate')}>Распределить</Button>
+                    <Button variant="secondary" onClick={() => setAction('reverse')}>
+                      Обратная операция
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </Modal>
       )}

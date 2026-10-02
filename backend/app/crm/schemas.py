@@ -74,6 +74,12 @@ class ContactCreateInput(ContactInput):
     client_id: str
 
 
+class CounterpartyDocumentPatch(Input):
+    version: int = Field(ge=1)
+    archived: bool
+    reason: str | None = Field(default=None, max_length=4000)
+
+
 class TaskInput(Input):
     title: str = Field(min_length=1, max_length=250)
     entity_type: Literal['request', 'counterparty', 'wave'] | None = None

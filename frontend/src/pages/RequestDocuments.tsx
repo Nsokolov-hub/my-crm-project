@@ -114,6 +114,7 @@ export function RequestDocuments({ requestId }: { requestId: string }) {
                 'Дата выпуска': date(selected.created_at, true),
                 Расчёт: selected.calculation_id,
                 Предложение: selected.proposal_id,
+                'Общий срок поставки': snapshot?.delivery_days != null ? `${snapshot.delivery_days} дней` : '—',
               }}
             />
             <DataTable<Entity>

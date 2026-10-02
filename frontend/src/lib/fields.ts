@@ -18,7 +18,7 @@ export const clientFields: Field[] = [
   { name: 'tax_id', label: 'ИНН / налоговый номер' },
   { name: 'phone', label: 'Телефон' },
   { name: 'email', label: 'Электронная почта', type: 'email' },
-  { name: 'owner_id', label: 'Ответственный', type: 'select', source: '/users' },
+  { name: 'owner_id', label: 'Ответственный', type: 'select', source: '/counterparty-owners' },
   {
     name: 'details',
     label: 'Реквизиты и дополнительные сведения',

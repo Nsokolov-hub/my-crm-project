@@ -22,6 +22,7 @@ import { date } from '../lib/format';
 import { api } from '../lib/api';
 import { useApi, useCommand } from '../lib/hooks';
 import type { Entity, Field, Page, User } from '../lib/types';
+import { CounterpartyDocuments } from '../components/CounterpartyDocuments';
 const callProspectFields: Field[] = [
   { name: 'name', label: 'Название', required: true, wide: true },
   { name: 'tax_id', label: 'ИНН', required: true },
@@ -68,6 +69,9 @@ function CallHistory({ clientId }: { clientId: string }) {
 }
 export function Clients() {
   const auth = useAuth();
+  const editableClientFields = clientFields.filter(
+    (field) => field.name !== 'owner_id' || auth.can('requests.assign'),
+  );
   const [selected, setSelected] = useState<Entity>();
   const [form, setForm] = useState<'edit' | 'call'>();
   const [importing, setImporting] = useState(false);
@@ -89,7 +93,7 @@ export function Clients() {
         title="База контрагентов"
         endpoint="/counterparties"
         query="&client_base=working"
-        fields={clientFields}
+        fields={editableClientFields}
         createLabel="Добавить контрагента"
         canCreate={auth.can('clients.write')}
         refreshKey={revision}
@@ -109,6 +113,11 @@ export function Clients() {
             ),
           },
           { key: 'kind', label: 'Тип', render: (row) => <Badge value={row.kind} /> },
+          {
+            key: 'owner_name',
+            label: 'Ответственный',
+            render: (row) => String(row.owner_name || 'Не назначен'),
+          },
           { key: 'country', label: 'Страна' },
           { key: 'phone', label: 'Телефон' },
           { key: 'email', label: 'Почта' },
@@ -150,6 +159,7 @@ export function Clients() {
                     Страна: selected.country,
                     Телефон: selected.phone,
                     Почта: selected.email,
+                    Ответственный: selected.owner_name || 'Не назначен',
                   }}
                 />
               </div>
@@ -159,7 +169,7 @@ export function Clients() {
                   endpoint={`/counterparties/${selected.id}/contacts`}
                   fields={contactFields}
                   createLabel="Добавить контакт"
-                  canCreate={auth.can('clients.write') && selected.kind !== 'supplier'}
+                  canCreate={auth.can('clients.write')}
                   columns={[
                     {
                       key: 'name',
@@ -175,6 +185,7 @@ export function Clients() {
                 />
               </aside>
             </div>
+            <CounterpartyDocuments counterpartyId={selected.id} />
             <Collection
               title="История звонков"
               endpoint={`/calls?client_id=${selected.id}`}
@@ -197,7 +208,7 @@ export function Clients() {
           title={form === 'edit' ? 'Редактировать контрагента' : 'Записать звонок'}
           endpoint={form === 'edit' ? `/counterparties/${selected.id}` : '/calls'}
           method={form === 'edit' ? 'PATCH' : 'POST'}
-          fields={form === 'edit' ? clientFields : callFields}
+          fields={form === 'edit' ? editableClientFields : callFields}
           initial={form === 'edit' ? selected : { client_id: selected.id }}
           extra={form === 'edit' ? { version: selected.version } : {}}
           onClose={() => setForm(undefined)}

@@ -75,7 +75,7 @@ const distributionLabels: Record<string, string> = {
   EQUALLY_BY_POSITION: 'Поровну по строкам', BY_WEIGHT: 'По весу', MANUAL: 'Вручную',
 };
 const baseLabels: Record<string, string> = {
-  PURCHASE: 'Закупка', CUSTOMS_BASE: 'Таможенная база', DUTY: 'Пошлина', COST: 'Себестоимость',
+  PURCHASE: 'Закупка', CUSTOMS_BASE: 'Таможенная стоимость', DUTY: 'Пошлина', COST: 'Себестоимость',
 };
 export function Settings() {
   const auth = useAuth();

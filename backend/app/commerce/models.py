@@ -51,7 +51,7 @@ class Product(Entity, Base):
 class SupplierRequest(Entity, Base):
     __tablename__ = "supplier_requests"
     request_id: Mapped[str] = mapped_column(ForeignKey("requests.id"), index=True)
-    supplier_id: Mapped[str] = mapped_column(ForeignKey("counterparties.id"))
+    supplier_id: Mapped[str | None] = mapped_column(ForeignKey("counterparties.id"))
     parent_id: Mapped[str | None] = mapped_column(ForeignKey("supplier_requests.id"))
     revision: Mapped[int] = mapped_column(default=1)
     snapshot: Mapped[dict] = mapped_column(JSON)
@@ -238,6 +238,12 @@ class Wave(Entity, Base):
     close_date: Mapped[date] = mapped_column(Date)
     departure_date: Mapped[date] = mapped_column(Date)
     arrival_date: Mapped[date] = mapped_column(Date)
+    close_week: Mapped[int | None]
+    close_year: Mapped[int | None]
+    departure_week: Mapped[int | None]
+    departure_year: Mapped[int | None]
+    arrival_week: Mapped[int | None]
+    arrival_year: Mapped[int | None]
     details: Mapped[dict] = mapped_column(JSON, default=dict)
 
 

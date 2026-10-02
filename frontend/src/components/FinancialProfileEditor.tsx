@@ -49,7 +49,7 @@ const rateFields = [
 ] as const;
 const rateNames = new Set<string>(rateFields.map((field) => field.name));
 const formulaLabels: Record<string, string> = {
-  customs_base: 'База для пошлины',
+  customs_base: 'Таможенная стоимость',
   duty: 'Пошлина',
   import_tax: 'Налог при ввозе',
   cost: 'Себестоимость',
