@@ -337,8 +337,11 @@ function WaveFinancialSummary({ summary }: { summary: Entity }) {
             values={{
               'Продажа с НДС, ₽': decimal((summary.actual as Entity).sales),
               'Себестоимость, ₽': decimal((summary.actual as Entity).cost),
-              'Прибыль, ₽': decimal((summary.actual as Entity).profit),
+              'Валовая прибыль, ₽': decimal((summary.actual as Entity).profit),
               'Рентабельность, %': decimal((summary.actual as Entity).profitability_percent),
+              'Доходность затрат, %': decimal(
+                (summary.actual as Entity).cost_profitability_percent,
+              ),
               'Предоплата по заказам, ₽': decimal((summary.actual as Entity).prepayment_total),
               'Отсрочка по заказам, ₽': decimal((summary.actual as Entity).deferred_total),
             }}

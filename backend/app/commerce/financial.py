@@ -23,7 +23,7 @@ from app.crm.models import (
     Request as CRMRequest,
 )
 
-from .calculator import calculate, dec, digest, example_profile, validate_profile
+from .calculator import calculate, dec, digest, example_profile, profitability_metrics, validate_profile
 from .itemized import calculate_itemized, itemized_profile
 from .models import (
     Calculation,
@@ -112,7 +112,7 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
                         "bonus_withdrawal_percent", "bonus_withdrawal_fee", "additional_service_fee",
                     ))
                 if can_profit:
-                    allowed.update(("cost", "profit", "margin", "markup_amount", "profitability_percent", "margin_percent"))
+                    allowed.update(("cost", "profit", "margin", "markup_amount", "profitability_percent", "margin_percent", "cost_profitability_percent"))
                 line["detail"] = {key: value for key, value in line["detail"].items() if key in allowed}
 
     if "totals" in snapshot and not all_finances:
@@ -122,7 +122,7 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
         if can_reward:
             allowed.update(("internal_bonus", "service_fee"))
         if can_profit:
-            allowed.update(("cost", "profit", "markup_amount", "profitability_percent", "margin_percent"))
+            allowed.update(("cost", "profit", "markup_amount", "profitability_percent", "margin_percent", "cost_profitability_percent"))
         snapshot["totals"] = {key: value for key, value in snapshot["totals"].items() if key in allowed}
 
     if not can_calculations:
@@ -1074,8 +1074,7 @@ def wave_actual_summary(db, wave_id, profile, expenses, rates):
     return {key: format(value.quantize(dec('.01')), 'f') for key, value in {
         'sales': sales, 'sale_net': sale_net, 'cost': costs, 'profit': profit,
         'prepayment_total': prepaid, 'deferred_total': deferred,
-        'profitability_percent': profit / costs * 100 if costs else dec('0'),
-        'margin_percent': profit / sale_net * 100 if sale_net else dec('0'),
+        **profitability_metrics(profit, sale_net, costs),
     }.items()} | {'status': 'current', 'customs_fee_1': current['wave_distribution']['customs_fee_1'],
                  'customs_fee_2': current['wave_distribution']['customs_fee_2'],
                  'basis': 'Принятые и распределённые позиции: цены документов и текущие общие расходы; финансирование и бонусы по сохранённому расчёту'}

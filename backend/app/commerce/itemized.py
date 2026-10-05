@@ -9,7 +9,7 @@ from decimal import ROUND_CEILING, Decimal, localcontext
 
 from app.core.errors import error
 
-from .calculator import ROUNDING, dec, distribute
+from .calculator import ROUNDING, dec, distribute, profitability_metrics
 
 
 def _money(value: Decimal, rounding: str) -> Decimal:
@@ -442,10 +442,9 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         source = row["source"]
         quote = source["quote_item"]
         qty = row["quantity"]
-        incoming_vat = _money((row["customs_base"] + row["duty"]) * vat_rate, rounding)
         mode = row['calculation_type']
-        if mode != 'IMPORT':
-            incoming_vat = Decimal('0')
+        import_vat_base = row["customs_base"] + row["duty"] if mode == "IMPORT" else Decimal("0")
+        incoming_vat = _money(import_vat_base * vat_rate, rounding)
         expenses_total = row["international_logistics"] + row["general_expenses"] + row["customs_fee"]
         clean_cost = row["customs_base"] + row["duty"] + (Decimal("0") if deduct_vat else incoming_vat)
         if mode == 'DAP':
@@ -509,7 +508,9 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "fixed_group_quantity": row.get("fixed_group_quantity", Decimal("0")),
             "general_expenses": row["general_expenses"], "expenses_total": expenses_total,
             "cash_expenses": row["cash_expenses"],
-            "import_vat": incoming_vat, "cost_before_financing": cost_before_financing,
+            "import_vat_base": import_vat_base, "import_vat": incoming_vat,
+            "import_cost_with_vat": import_vat_base + incoming_vat,
+            "cost_before_financing": cost_before_financing,
             "financed_amount": financed_amount, "financing_cost": financing_cost,
             "clean_cost": clean_cost, "pre_bonus_sale_net": pre_bonus_sale_net,
             "cost_before_adjustment": cost_before_adjustment, "internal_bonus": internal_bonus,
@@ -518,12 +519,11 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "bonus_withdrawal_fee": bonus_withdrawal_fee,
             "additional_service_fee": additional_service_fee,
             "service_fee": service_fee, "cost": cost, "markup_coefficient": row["markup_coefficient"],
-            "markup_amount": clean_cost * (row["markup_coefficient"] - 1),
+            "markup_amount": markup_base * (row["markup_coefficient"] - 1),
             "sale_net": sale_net, "sale_tax": sale_tax,
             "sale_total": sale_total, "profit": profit, "vat_payable": vat_payable,
             "cash_need": cash_need, "sale_unit_gross": unit_gross,
-            "profitability_percent": profit / cost * 100 if cost else Decimal("0"),
-            "margin_percent": profit / sale_net * 100 if sale_net else Decimal("0"),
+            **profitability_metrics(profit, sale_net, cost),
             "expense_share_percent": expenses_total / cost * 100 if cost else Decimal("0"),
             "investment_efficiency_percent": profit / cash_need * 100 if cash_need else Decimal("0"),
         }
@@ -552,7 +552,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         })
     total_keys = (
         "purchase_rub", "international_logistics", "customs_base", "duty", "clean_cost", "pre_bonus_sale_net",
-        "customs_fee", "customs_fee_1", "customs_fee_2", "general_expenses", "expenses_total", "cash_expenses", "import_vat", "cost_before_financing",
+        "customs_fee", "customs_fee_1", "customs_fee_2", "general_expenses", "expenses_total", "cash_expenses", "import_vat_base", "import_vat", "import_cost_with_vat", "cost_before_financing",
         "financed_amount", "financing_cost", "internal_bonus", "service_fee", "cost", "markup_amount",
         "sale_net", "sale_tax", "sale_total", "profit", "vat_payable", "cash_need",
     )
@@ -562,11 +562,12 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     totals.update(net=totals["sale_net"], tax=totals["sale_tax"], total=totals["sale_total"])
     if dec(totals["cost"]):
         totals["markup_coefficient"] = _string(dec(totals["sale_net"]) / dec(totals["cost"]))
-        totals["profitability_percent"] = _string(dec(totals["profit"]) / dec(totals["cost"]) * 100)
         totals["expense_share_percent"] = _string(dec(totals["expenses_total"]) / dec(totals["cost"]) * 100)
     else:
-        totals.update(markup_coefficient="0", profitability_percent="0", expense_share_percent="0")
-    totals["margin_percent"] = _string(dec(totals["profit"]) / dec(totals["sale_net"]) * 100 if dec(totals["sale_net"]) else Decimal("0"))
+        totals.update(markup_coefficient="0", expense_share_percent="0")
+    totals.update({key: _string(value) for key, value in profitability_metrics(
+        dec(totals["profit"]), dec(totals["sale_net"]), dec(totals["cost"])
+    ).items()})
     if dec(totals["cash_need"]):
         totals["investment_efficiency_percent"] = _string(dec(totals["profit"]) / dec(totals["cash_need"]) * 100)
     else:
@@ -608,7 +609,7 @@ def itemized_profile() -> dict:
         "default_markup_coefficient": "1.5",
         "default_bonus_coefficient": "1",
         "bonus_withdrawal_percent": "16",
-        "round_sale_up_to_ruble": True,
+        "round_sale_up_to_ruble": False,
         "default_expenses": [],
         "customs_rules": [
             {"product_group_slug": "reference_standards", "type": "PERCENTAGE", "value": "5"},

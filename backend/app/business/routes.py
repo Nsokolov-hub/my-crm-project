@@ -14,7 +14,7 @@ from fastapi.responses import Response
 from pydantic import AwareDatetime, EmailStr, Field, TypeAdapter, ValidationError
 from sqlalchemy import or_, select
 
-from app.commerce.calculator import dec
+from app.commerce.calculator import dec, profitability_metrics
 from app.commerce.files import workbook
 from app.commerce.models import Calculation, CommercialDocument, Execution
 from app.commerce.procurement import DB, Actor, product_view, supplier
@@ -1093,8 +1093,7 @@ def manager_report(db: DB, user: Actor, from_date: date, to_date: date):
             row["cost"] += cost
     for row in totals.values():
         row["gross_profit"] = row["sale_net"] - row["cost"]
-        row["margin_percent"] = row["gross_profit"] / row["sale_net"] * 100 if row["sale_net"] else Decimal(0)
-        row["profitability_percent"] = row["gross_profit"] / row["cost"] * 100 if row["cost"] else Decimal(0)
+        row.update(profitability_metrics(row["gross_profit"], row["sale_net"], row["cost"]))
     return {
         "items": plain(list(totals.values())),
         "total": len(totals),

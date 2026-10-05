@@ -850,9 +850,9 @@ export function SalesManagerReport() {
           { key: 'sale_net', label: 'Продажи без НДС', render: (r) => decimal(r.sale_net) },
           { key: 'gross_profit', label: 'Валовая прибыль', render: (r) => decimal(r.gross_profit) },
           {
-            key: 'margin_percent',
-            label: 'Маржа, %',
-            render: (r) => Number(r.margin_percent).toFixed(2),
+            key: 'cost_profitability_percent',
+            label: 'Доходность затрат, %',
+            render: (r) => Number(r.cost_profitability_percent).toFixed(2),
           },
           {
             key: 'profitability_percent',
