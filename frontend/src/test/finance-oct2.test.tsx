@@ -63,10 +63,27 @@ it('sends the selected VAT deduction mode and common delivery term in preview an
         description: 'Стандарт',
         quantity: '2',
         total: '300',
-        detail: { import_vat: '44', customs_fee: '20' },
+        detail: {
+          import_vat: '44',
+          customs_fee: '20',
+          import_vat_base: '200',
+          import_cost_with_vat: '244',
+          profit: '100',
+          profitability_percent: '33.33',
+          margin_percent: '33.33',
+          cost_profitability_percent: '50',
+        },
       },
     ],
-    totals: { import_vat: '44', total: '300' },
+    totals: {
+      import_vat: '44',
+      total: '300',
+      import_vat_base: '200',
+      profit: '100',
+      profitability_percent: '33.33',
+      margin_percent: '33.33',
+      cost_profitability_percent: '50',
+    },
     base_version_id: null,
   };
   vi.mocked(api).mockImplementation(async (path, options) => {
@@ -110,6 +127,25 @@ it('sends the selected VAT deduction mode and common delivery term in preview an
     ),
   );
   expect(screen.getAllByText('Ввозной НДС, ₽').length).toBeGreaterThan(0);
+  expect(screen.getByText('Валовая прибыль, ₽ ⓘ')).toHaveAttribute(
+    'title',
+    expect.stringContaining('Продажа без НДС'),
+  );
+  expect(screen.getByText('Рентабельность, % ⓘ')).toHaveAttribute(
+    'title',
+    'Валовая прибыль / продажа без НДС × 100%',
+  );
+  expect(screen.getByText('Доходность затрат, % ⓘ')).toHaveAttribute(
+    'title',
+    'Валовая прибыль / себестоимость × 100%',
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Показать детали' }));
+  expect(screen.getAllByText('База ввозного НДС (ННБ), ₽ ⓘ')).toHaveLength(2);
+  expect(screen.getByText('Таможенная стоимость с пошлиной и ввозным НДС, ₽ ⓘ')).toHaveAttribute(
+    'title',
+    'ННБ + ввозной НДС',
+  );
+  expect(screen.queryByText('Маржа, %')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Записать версию' }));
   await waitFor(() =>
     expect(api).toHaveBeenCalledWith(

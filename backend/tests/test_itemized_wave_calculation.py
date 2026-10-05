@@ -11,6 +11,7 @@ def itemized_profile():
     profile = current_profile()
     profile['customs_fee_overrides'] = []
     profile['vat_deduction_mode'] = False
+    profile['round_sale_up_to_ruble'] = True
     for rule in profile['customs_rules']:
         if rule['product_group_slug'] in ('other', 'lab_glassware'):
             rule.update(type='NONE', value='0')

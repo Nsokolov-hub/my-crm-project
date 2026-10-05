@@ -97,7 +97,9 @@ def test_supplier_modes_and_expenses(mode, net, cost):
     assert Decimal(result["totals"]["customs_fee"]) == Decimal(result["totals"]["import_vat"]) == 0
     assert Decimal(result["totals"]["sale_net"]) == Decimal(net)
     assert Decimal(result["totals"]["cost"]) == Decimal(cost)
-    assert Decimal(result["totals"]["profitability_percent"]) > Decimal(result["totals"]["margin_percent"])
+    assert result["totals"]["profitability_percent"] == result["totals"]["margin_percent"]
+    assert Decimal(result["totals"]["cost_profitability_percent"]) > Decimal(result["totals"]["profitability_percent"])
+    assert result["totals"]["markup_amount"] == result["totals"]["profit"]
 
 
 def structured(env, mode="RUSSIA", markup="1.5", owner=None):
@@ -612,6 +614,40 @@ def test_actual_wave_preserves_sale_and_reallocates_changed_shared_budget(crm): 
         )
         assert Decimal(old["profit"]) - Decimal(changed["profit"]) == 105
         assert Decimal(old["prepayment_total"]) == Decimal(old["sales"])
+        for summary in (old, changed):
+            assert Decimal(summary["profitability_percent"]) == (
+                Decimal(summary["profit"]) / Decimal(summary["sale_net"]) * 100
+            ).quantize(Decimal(".01"))
+            assert Decimal(summary["cost_profitability_percent"]) == (
+                Decimal(summary["profit"]) / Decimal(summary["cost"]) * 100
+            ).quantize(Decimal(".01"))
+
+
+def test_manager_report_profitability_uses_accepted_sales_without_vat(crm):  # noqa: F811
+    req, data, _, _ = structured(crm)
+    calculation = cmd(crm, f"/requests/{req['id']}/calculations", data)
+    proposal = cmd(crm, f"/requests/{req['id']}/proposals", {
+        "calculation_id": calculation["id"],
+        "valid_until": (date.today() + timedelta(days=7)).isoformat(),
+        "terms": "Предоплата",
+    })
+    cmd(crm, f"/proposals/{proposal['id']}/accept", {
+        "version": proposal["version"], "reason": "Подтверждённый заказ",
+        "lines": [{"line_id": calculation["snapshot"]["lines"][0]["line_id"], "quantity": "1"}],
+    })
+    with crm["sessions"].begin() as db:
+        request_row = db.get(Request, req["id"])
+        request_row.is_test = False
+        request_row.sale_confirmed_at = datetime.now(timezone.utc)
+    response = crm["client"].get("/api/v1/analytics/sales-managers", params={
+        "from_date": date.today().isoformat(), "to_date": date.today().isoformat(),
+    })
+    assert response.status_code == 200, response.text
+    row = response.json()["items"][0]
+    assert Decimal(row["gross_profit"]) == Decimal("500")
+    assert Decimal(row["profitability_percent"]) == Decimal("500") / Decimal("1500") * 100
+    assert Decimal(row["cost_profitability_percent"]) == Decimal("50")
+    assert row["margin_percent"] == row["profitability_percent"]
 
 
 def test_calendar_is_available_without_task_permissions_and_cannot_confirm(crm):  # noqa: F811

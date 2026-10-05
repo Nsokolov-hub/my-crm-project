@@ -117,7 +117,7 @@ class ProfileDefinition(Input):
     default_markup_coefficient: Positive = Decimal("1.5")
     default_bonus_coefficient: Positive = Decimal("1")
     bonus_withdrawal_percent: Annotated[Decimal, Field(ge=0, le=100)] = Decimal("16")
-    round_sale_up_to_ruble: bool = True
+    round_sale_up_to_ruble: bool = False
     default_expenses: list[dict] = Field(default_factory=list, max_length=30)
     exchange_rates: list[dict] = Field(default_factory=list, max_length=30)
     funding_ratio: Annotated[Decimal, Field(ge=0, le=1, decimal_places=8)] = Decimal("1")

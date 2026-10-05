@@ -511,7 +511,7 @@ function ItemizedProfileForm({
                   checked={definition.round_sale_up_to_ruble}
                   onChange={(event) => update({ round_sale_up_to_ruble: event.target.checked })}
                 />
-                Округлять цену за штуку с НДС вверх до рубля, как в Excel
+                Округлять цену за штуку с НДС вверх до рубля
               </label>
             </div>
           </section>

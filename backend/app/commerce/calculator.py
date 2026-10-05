@@ -30,6 +30,16 @@ REQUIRED_OUTPUTS = {
 BUILT_INS = {"purchase", "quantity", "expenses_cost", "expenses_cash"}
 
 
+def profitability_metrics(profit: Decimal, sale_net: Decimal, cost: Decimal) -> dict[str, Decimal]:
+    """The agreed profitability uses sales without VAT as its denominator."""
+    sales_return = profit / sale_net * 100 if sale_net else Decimal("0")
+    return {
+        "profitability_percent": sales_return,
+        "margin_percent": sales_return,  # Retained for API compatibility.
+        "cost_profitability_percent": profit / cost * 100 if cost else Decimal("0"),
+    }
+
+
 def dec(value) -> Decimal:
     if isinstance(value, (float, bool)):
         error("DECIMAL_REQUIRED", "Передайте десятичное число строкой")
