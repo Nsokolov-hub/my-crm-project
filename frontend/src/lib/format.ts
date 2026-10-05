@@ -1,5 +1,15 @@
 import type { Entity } from './types';
 export const stageLabels: Record<string, string> = {
+  income: 'Приход',
+  expense: 'Расход',
+  prepayment: 'Предоплата',
+  deferred: 'Отсрочка',
+  other: 'Прочее',
+  weekly: 'Еженедельно',
+  monthly: 'Ежемесячно',
+  none: 'Не повторять',
+  calendar: 'Платёж',
+  task: 'Задача',
   new: 'Новая',
   clarification: 'Уточнение',
   collecting_quotes: 'Сбор квот',
