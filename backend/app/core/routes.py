@@ -67,6 +67,7 @@ def user_view(db: Session, user: User) -> dict[str, Any]:
         "email": user.email,
         "name": user.name,
         "active": user.active,
+        "own_requests_only": user.own_requests_only,
         "version": user.version,
         "mfa_enabled": user.mfa_enabled,
         "roles": [{"id": r.id, "name": r.name} for r in roles],
@@ -235,12 +236,14 @@ class UserInput(Input):
     name: str = Field(min_length=1, max_length=200)
     password: str = Field(min_length=12, max_length=200)
     role_ids: list[str] = []
+    own_requests_only: bool = False
 
 
 class UserPatch(Input):
     version: int
     name: str | None = Field(default=None, min_length=1, max_length=200)
     active: bool | None = None
+    own_requests_only: bool | None = None
     role_ids: list[str] | None = None
     grants: list[GrantInput] | None = None
     reassign_to: str | None = None
@@ -309,7 +312,8 @@ def create_user(
 ) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     row = User(
-        email=str(body.email).lower(), name=body.name, password_hash=password_hasher.hash(body.password)
+        email=str(body.email).lower(), name=body.name, password_hash=password_hasher.hash(body.password),
+        own_requests_only=body.own_requests_only
     )
     db.add(row)
     db.flush()
@@ -369,6 +373,8 @@ def edit_user(
                         reason=body.reason,
                     )
         db.execute(update(AuthSession).where(AuthSession.user_id == row.id).values(revoked=True))
+    if body.own_requests_only is not None:
+        row.own_requests_only = body.own_requests_only
     if body.name is not None:
         row.name = body.name
     if body.active is not None:

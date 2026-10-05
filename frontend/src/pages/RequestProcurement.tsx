@@ -8,6 +8,7 @@ import { date, decimal, nowLocal } from '../lib/format';
 import { useApi, useCommand, useDebounced, useDirtyProtection } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
 import { useAuth } from '../app/Auth';
+import { SupplierMailEditor } from '../components/SupplierMailEditor';
 import { TableImportDialog } from '../components/TableImportDialog';
 export function RequestRfqs({
   requestId,
@@ -25,6 +26,8 @@ export function RequestRfqs({
   const [error, setError] = useState<unknown>();
   const [revision, setRevision] = useState(0);
   const [launching, setLaunching] = useState(launchItemIds.length > 0);
+  const [mailing, setMailing] = useState(false);
+  const items = useApi<Page>(`/requests/${requestId}/supplier-mail/items`);
   const fields: Field[] = [
     {
       name: 'supplier_id',
@@ -48,6 +51,32 @@ export function RequestRfqs({
   return (
     <>
       <ErrorBox error={error} />
+      <Button onClick={() => setMailing(true)}>Отправить запрос по электронной почте</Button>
+      <Collection
+        title="Отправленные письма"
+        endpoint={`/requests/${requestId}/supplier-mail`}
+        refreshKey={revision}
+        columns={[
+          { key: 'recipient', label: 'Кому' },
+          { key: 'subject', label: 'Тема' },
+          { key: 'status', label: 'Отправка', render: (r) => <Badge value={r.status} /> },
+          { key: 'sent_at', label: 'Дата', render: (r) => date(r.sent_at, true) },
+        ]}
+      />
+      {mailing && (
+        <SupplierMailEditor
+          requestId={requestId}
+          requestNumber={requestNumber}
+          itemIds={
+            launchItemIds.length ? launchItemIds : (items.data?.items || []).map((r) => r.id)
+          }
+          onClose={() => setMailing(false)}
+          onSuccess={() => {
+            setMailing(false);
+            setRevision((v) => v + 1);
+          }}
+        />
+      )}
       <Collection
         title="Запросы поставщикам"
         description="Единый файл можно отправить всем поставщикам. При необходимости создайте запрос отдельному поставщику."
@@ -292,7 +321,6 @@ function QuoteSheetEditor({
     if (!supplierId || !active.length) return;
     active.forEach((row) => {
       if (
-        !row.source_request_item_id ||
         !row.nomenclature_id ||
         !row.packing_id ||
         !row.quantity ||
@@ -300,8 +328,7 @@ function QuoteSheetEditor({
         !row.unit_price ||
         row.delivery_days === ''
       )
-        errors[row.key] =
-          'Выберите позицию заявки, товар, фасовку, количество, цену, валюту и срок поставки.';
+        errors[row.key] = 'Выберите товар, фасовку, количество, цену, валюту и срок поставки.';
       else if (
         !Number.isInteger(Number(row.quantity)) ||
         Number(row.quantity) <= 0 ||
@@ -328,7 +355,7 @@ function QuoteSheetEditor({
           supplier_id: supplierId,
           ...(rfqId ? { supplier_request_id: rfqId } : {}),
           items: active.map((row) => ({
-            source_request_item_id: row.source_request_item_id,
+            source_request_item_id: row.source_request_item_id || null,
             nomenclature_id: row.nomenclature_id,
             packing_id: row.packing_id,
             quantity: row.quantity.replace(',', '.'),
@@ -486,7 +513,7 @@ function QuoteSheetEditor({
                             void findLatest(row.key, supplierId, nomenclatureId, packingId);
                           }}
                         >
-                          <option value="">Выберите позицию</option>
+                          <option value="">Отдельное предложение</option>
                           {requestItemOptions.map((item) => (
                             <option key={item.id} value={item.id}>
                               {String(item.nomenclature_name || item.description)}

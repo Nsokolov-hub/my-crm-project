@@ -1,0 +1,88 @@
+.business-filters {
+  margin-block: 18px;
+  align-items: end;
+}
+
+.business-filters label {
+  display: grid;
+  gap: 8px;
+}
+
+.cash-chart {
+  display: flex;
+  height: 200px;
+  gap: 16px;
+  overflow-x: auto;
+  align-items: stretch;
+  margin-block: 20px;
+}
+
+.cash-chart-day {
+  min-width: 72px;
+  display: flex;
+  flex-direction: column;
+  justify-content: end;
+  text-align: center;
+}
+
+.cash-chart-bars {
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  gap: 5px;
+  height: 165px;
+}
+
+.cash-chart-bars i {
+  width: 22px;
+  min-height: 2px;
+  background: #339767;
+  border-radius: 5px 5px 0 0;
+}
+
+.cash-chart-bars i + i {
+  background: #7a5acc;
+}
+
+.mail-preview {
+  padding: 16px;
+  white-space: pre-wrap;
+  overflow: auto;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.main-content {
+  font-size: 15px;
+}
+
+.main-content table td,
+.main-content table th {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.tabs button {
+  font-size: 15px;
+}
+
+.detail-pairs dt {
+  font-size: 14px;
+}
+
+.detail-pairs dt[title] {
+  cursor: help;
+}
+
+.notification-button .nav-unread-badge {
+  position: absolute;
+  top: -5px;
+  right: -8px;
+  background: #be3d59;
+  color: #fff;
+}
+
+.notification-list article {
+  border-left: 4px solid #7a5acc;
+}

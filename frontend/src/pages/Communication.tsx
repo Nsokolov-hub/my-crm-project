@@ -55,30 +55,46 @@ export function FilesPanel({
     const timer = setInterval(files.refresh, 5000);
     return () => clearInterval(timer);
   }, [files.data, files.refresh]);
-  const upload = useCallback(async (file: File) => {
-    setBusy(true);
-    setError(undefined);
-    try {
-      const signature = [file.name, file.size, file.lastModified, classification, entityType, entityId].join(':');
-      if (pendingUpload.current?.signature !== signature)
-        pendingUpload.current = { signature, key: createRequestKey() };
-      const form = new FormData();
-      form.set('file', file);
-      form.set('entity_type', entityType);
-      form.set('entity_id', entityId);
-      form.set('classification', classification);
-      const result = await api<Entity>('/files', { method: 'POST', body: form, key: pendingUpload.current.key });
-      pendingUpload.current = undefined;
-      if (onAttach && file === initialFile) setAutoAttachId(result.id);
-      refreshFiles();
-    } catch (e) {
-      setError(e);
-    } finally {
-      setBusy(false);
-    }
-  }, [classification, entityType, entityId, refreshFiles, initialFile, onAttach]);
+  const upload = useCallback(
+    async (file: File) => {
+      setBusy(true);
+      setError(undefined);
+      try {
+        const signature = [
+          file.name,
+          file.size,
+          file.lastModified,
+          classification,
+          entityType,
+          entityId,
+        ].join(':');
+        if (pendingUpload.current?.signature !== signature)
+          pendingUpload.current = { signature, key: createRequestKey() };
+        const form = new FormData();
+        form.set('file', file);
+        form.set('entity_type', entityType);
+        form.set('entity_id', entityId);
+        form.set('classification', classification);
+        const result = await api<Entity>('/files', {
+          method: 'POST',
+          body: form,
+          key: pendingUpload.current.key,
+        });
+        pendingUpload.current = undefined;
+        if (onAttach && file === initialFile) setAutoAttachId(result.id);
+        refreshFiles();
+      } catch (e) {
+        setError(e);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [classification, entityType, entityId, refreshFiles, initialFile, onAttach],
+  );
   useEffect(() => {
-    const ready = files.data?.items.find((row) => row.id === autoAttachId && row.status === 'clean');
+    const ready = files.data?.items.find(
+      (row) => row.id === autoAttachId && row.status === 'clean',
+    );
     if (!ready || !onAttach) return;
     setAutoAttachId(undefined);
     onAttach(ready);
@@ -90,11 +106,14 @@ export function FilesPanel({
   }, [initialFile, upload]);
   useEffect(() => {
     const paste = (event: ClipboardEvent) => {
-      const item = Array.from(event.clipboardData?.items || []).find((entry) => entry.type.startsWith('image/'));
+      const item = Array.from(event.clipboardData?.items || []).find((entry) =>
+        entry.type.startsWith('image/'),
+      );
       const source = item?.getAsFile();
       if (!source || busy) return;
       event.preventDefault();
-      const extension = source.type === 'image/jpeg' ? 'jpg' : source.type === 'image/gif' ? 'gif' : 'png';
+      const extension =
+        source.type === 'image/jpeg' ? 'jpg' : source.type === 'image/gif' ? 'gif' : 'png';
       void upload(new File([source], `Снимок-${Date.now()}.${extension}`, { type: source.type }));
     };
     document.addEventListener('paste', paste);
@@ -108,7 +127,12 @@ export function FilesPanel({
       <ErrorBox error={error || files.error} />
       {autoAttachId && <p>Снимок проверяется и будет приложен к сообщению автоматически.</p>}
       <div className="inline-actions">
-        <Button type="button" variant="secondary" disabled={busy} onClick={() => fileInput.current?.click()}>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={busy}
+          onClick={() => fileInput.current?.click()}
+        >
           <Paperclip size={16} />
           {busy ? 'Загружается…' : 'Прикрепить файл'}
         </Button>
@@ -148,10 +172,18 @@ export function FilesPanel({
               label: 'Размер',
               render: (r) => `${Math.ceil(Number(r.size) / 1024)} КБ`,
             },
-            { key: 'status', label: 'Проверка', render: (r) =>
-              r.status === 'quarantined' || r.status === 'pending'
-                ? 'Проверяется…' : r.status === 'scan_failed'
-                  ? 'Не удалось проверить файл' : <Badge value={r.status} /> },
+            {
+              key: 'status',
+              label: 'Проверка',
+              render: (r) =>
+                r.status === 'quarantined' || r.status === 'pending' ? (
+                  'Проверяется…'
+                ) : r.status === 'scan_failed' ? (
+                  'Не удалось проверить файл'
+                ) : (
+                  <Badge value={r.status} />
+                ),
+            },
             {
               key: 'actions',
               label: 'Действия',
@@ -365,12 +397,17 @@ export function ChatRoom({ chat, onBack }: { chat: Entity; onBack?: () => void }
           maxLength={20000}
           onChange={(e) => setText(e.target.value)}
           onPaste={(event) => {
-            const item = Array.from(event.clipboardData.items).find((entry) => entry.type.startsWith('image/'));
+            const item = Array.from(event.clipboardData.items).find((entry) =>
+              entry.type.startsWith('image/'),
+            );
             const source = item?.getAsFile();
             if (!source) return;
             event.preventDefault();
-            const extension = source.type === 'image/jpeg' ? 'jpg' : source.type === 'image/gif' ? 'gif' : 'png';
-            setPastedFile(new File([source], `Снимок-${Date.now()}.${extension}`, { type: source.type }));
+            const extension =
+              source.type === 'image/jpeg' ? 'jpg' : source.type === 'image/gif' ? 'gif' : 'png';
+            setPastedFile(
+              new File([source], `Снимок-${Date.now()}.${extension}`, { type: source.type }),
+            );
             setFilesOpen(true);
           }}
           onKeyDown={(e) => {
@@ -422,10 +459,14 @@ export function ChatRoom({ chat, onBack }: { chat: Entity; onBack?: () => void }
         </div>
       </form>
       {filesOpen && (
-        <Modal title="Вложения обсуждения" wide onClose={() => {
-          setFilesOpen(false);
-          setPastedFile(undefined);
-        }}>
+        <Modal
+          title="Вложения обсуждения"
+          wide
+          onClose={() => {
+            setFilesOpen(false);
+            setPastedFile(undefined);
+          }}
+        >
           <div className="form-body">
             <FilesPanel
               entityType="chat"
@@ -597,6 +638,9 @@ export function Notifications() {
   const list = useApi<Page>(`/notifications${unread ? '?read=false' : ''}`);
   const command = useCommand();
   function target(row: Entity) {
+    if (row.entity_type === 'workflow_review') return '/approvals';
+    if (row.entity_type === 'calendar_entry') return '/payment-calendar';
+    if (row.entity_type === 'employee_absence') return '/tasks';
     return row.entity_type === 'request'
       ? `/requests/${row.entity_id}`
       : row.entity_type === 'counterparty'
@@ -643,7 +687,10 @@ export function Notifications() {
                     onClick={() =>
                       void command
                         .run(`/notifications/${row.id}/read`, {})
-                        .then(() => list.refresh())
+                        .then(() => {
+                          list.refresh();
+                          window.dispatchEvent(new Event('crm:notifications-read'));
+                        })
                         .catch(() => {})
                     }
                   >

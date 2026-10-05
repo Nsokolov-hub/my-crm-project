@@ -11,6 +11,7 @@ import {
   Truck,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
+import { SalesManagerReport } from './Business';
 import { useState } from 'react';
 import { useAuth } from '../app/Auth';
 import {
@@ -323,6 +324,7 @@ export function Dashboard() {
   );
 }
 export function Analytics() {
+  const analyticsAuth = useAuth();
   const navigate = useNavigate();
   const [from, setFrom] = useState(`${today().slice(0, 4)}-01-01`);
   const [to, setTo] = useState(today());
@@ -347,6 +349,7 @@ export function Analytics() {
           </Button>
         }
       />
+      {analyticsAuth.can('finance.profit.read') && <SalesManagerReport />}
       <div className="filter-bar">
         <CalendarDays size={18} />
         <label>

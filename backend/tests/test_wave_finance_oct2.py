@@ -93,6 +93,7 @@ def test_vat_deduction_removes_import_vat_from_cost_but_not_cash_needed():
     profile = profile_definition("country")
     row = _selection("first", "reference_standards", "2", "300", "1")
     row["currency_code"] = "RUB"
+    profile["vat_deduction_mode"] = False
     before = calculate_itemized(profile, [row], [], [])
     profile["vat_deduction_mode"] = True
     after = calculate_itemized(profile, [row], [], [])

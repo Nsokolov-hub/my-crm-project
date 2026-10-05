@@ -99,7 +99,7 @@ it('sends the selected VAT deduction mode and common delivery term in preview an
   fireEvent.change(screen.getByLabelText('Профиль расчёта'), {
     target: { value: 'profile' },
   });
-  fireEvent.click(screen.getByLabelText('Расчёт с вычетом НДС'));
+  expect(screen.getByLabelText('Расчёт с вычетом НДС')).toBeChecked();
   fireEvent.change(screen.getByLabelText('Общий срок поставки, дней'), { target: { value: '35' } });
   await waitFor(() =>
     expect(api).toHaveBeenCalledWith(
@@ -200,7 +200,7 @@ it('refreshes shared wave costs in a new version while retaining request costs a
   fireEvent.click(await screen.findByText('Версия №1'));
   expect(screen.getByText(/Состав или расходы волны изменились/)).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Создать новую версию' }));
-  expect(await screen.findByLabelText('Общий срок поставки, дней')).toHaveValue(null);
+  expect(await screen.findByLabelText('Общий срок поставки, дней')).toHaveValue(30);
   await waitFor(() =>
     expect(api).toHaveBeenCalledWith(
       '/requests/request/calculations/preview',

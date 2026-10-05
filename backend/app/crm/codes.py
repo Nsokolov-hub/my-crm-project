@@ -62,7 +62,19 @@ def next_code(context):
 @event.listens_for(Session, "before_flush")
 def assign_codes(session, flush_context, instances):
     # Assign a range before SQLAlchemy batches multiple INSERTs into one statement.
-    from app.crm.models import Counterparty
+    from app.crm.models import Counterparty, ProductGroup
+
+    groups = [row for row in session.new if isinstance(row, ProductGroup) and row.internal_code is None]
+    if groups:
+        connection = session.connection()
+        if connection.dialect.name == 'postgresql':
+            connection.execute(text('SELECT pg_advisory_xact_lock(176222514)'))
+        code = connection.scalar(select(func.coalesce(func.max(ProductGroup.internal_code), 0)))
+        explicit = [row.internal_code for row in session.new if isinstance(row, ProductGroup) and row.internal_code]
+        code = max([code, *explicit])
+        for row in groups:
+            code += 1
+            row.internal_code = code
 
     rows = [row for row in session.new if isinstance(row, Counterparty) and row.internal_code is None]
     if not rows:

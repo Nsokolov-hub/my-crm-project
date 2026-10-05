@@ -290,7 +290,7 @@ def test_stale_and_ambiguous_quote_imports_are_blocked(crm):
     assert batch["summary"]["errors"] == 1 and "неоднозначен" in batch["rows"][0]["errors"][0]
 
 
-def test_different_supplier_packings_for_one_source_are_caught_in_preview(crm):
+def test_different_supplier_packings_for_one_source_are_allowed(crm):
     login(crm)
     req = request(crm)
     suppliers = [
@@ -308,12 +308,11 @@ def test_different_supplier_packings_for_one_source_are_caught_in_preview(crm):
         ],
         "quotes",
     )
-    assert batch["summary"]["errors"] == 1
-    assert "разные товары или фасовки" in batch["rows"][1]["errors"][0]
-    confirm(crm, req["id"], batch["id"], 422)
+    assert batch["summary"]["errors"] == 0
+    confirm(crm, req["id"], batch["id"])
     with crm["sessions"]() as db:
-        assert db.scalar(select(func.count()).select_from(Nomenclature)) == 0
-        assert db.scalar(select(func.count()).select_from(QuoteItem)) == 0
+        assert db.scalar(select(func.count()).select_from(Nomenclature)) == 1
+        assert db.scalar(select(func.count()).select_from(QuoteItem)) == 2
 
 
 def test_text_and_xlsx_readers_preserve_identifiers_and_reject_formulas():

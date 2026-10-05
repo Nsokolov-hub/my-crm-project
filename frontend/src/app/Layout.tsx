@@ -28,6 +28,7 @@ import { api } from '../lib/api';
 import { useApi } from '../lib/hooks';
 import type { Page } from '../lib/types';
 import '../styles/communication-v2.scss';
+import '../styles/business.scss';
 const links = [
   { label: 'Рабочий стол', path: '/', icon: LayoutDashboard, permission: undefined },
   { label: 'Заявки', path: '/requests', icon: ClipboardList, permission: 'requests.read' },
@@ -37,6 +38,19 @@ const links = [
   { label: 'Задачи', path: '/tasks', icon: CheckCheck, permission: 'tasks.read' },
 ];
 const operations = [
+  {
+    label: 'Заказы поставщикам',
+    path: '/supplier-orders',
+    icon: Truck,
+    permission: 'procurement.write',
+  },
+  { label: 'Платёжный календарь', path: '/payment-calendar', icon: Wallet, permission: undefined },
+  {
+    label: 'Отсутствие сотрудников',
+    path: '/employee-absences',
+    icon: CheckCheck,
+    permission: 'approvals.decide',
+  },
   { label: 'Номенклатура', path: '/catalog', icon: FlaskConical, permission: 'catalog.read' },
   { label: 'Документы', path: '/documents', icon: FileText, permission: 'requests.read' },
   { label: 'Оплаты', path: '/payments', icon: Wallet, permission: 'requests.read' },
@@ -49,9 +63,21 @@ export function Layout() {
   const [mobile, setMobile] = useState(false);
   const [search, setSearch] = useState('');
   const notifications = useApi<Page>('/notifications?read=false&page_size=1');
+  const refreshNotifications = notifications.refresh;
+  useEffect(() => {
+    const refresh = () => refreshNotifications?.();
+    const timer = window.setInterval(refresh, 30000);
+    window.addEventListener('crm:notifications-read', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('crm:notifications-read', refresh);
+    };
+  }, [refreshNotifications]);
   const name = auth.session?.user.name || 'Сотрудник';
   const availableLinks = links.filter((link) => !link.permission || auth.can(link.permission));
-  const availableOperations = operations.filter((link) => auth.can(link.permission));
+  const availableOperations = operations.filter(
+    (link) => !link.permission || auth.can(link.permission),
+  );
   const canSeeAnalytics = auth.can('analytics.read');
   const canUseChats = auth.can('chats.use');
   const [unreadChats, setUnreadChats] = useState(0);
@@ -198,7 +224,9 @@ export function Layout() {
               aria-label="Уведомления"
             >
               <Bell size={20} />
-              {Boolean(notifications.data?.unread) && <i />}
+              {Boolean(notifications.data?.unread) && (
+                <span className="nav-unread-badge">{notifications.data?.unread}</span>
+              )}
             </NavLink>
             <span className="topbar-divider" />
             <div className="user-info">

@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     require_mfa: bool = False
     crm_api_password: str = 'crm_api_password'
     crm_backup_password: str = 'crm_backup_password'
+    smtp_host: str = ''
+    smtp_port: int = 587
+    smtp_user: str = ''
+    smtp_password: str = ''
+    smtp_from: str = ''
+    smtp_starttls: bool = True
 
     def verify(self) -> None:
         if self.environment == 'production':

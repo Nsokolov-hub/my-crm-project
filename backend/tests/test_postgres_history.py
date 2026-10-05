@@ -44,20 +44,10 @@ def postgres_history(monkeypatch):
             # Step 1: Migrate up to initial_schema
             migrations.upgrade(config, '2abdec759d06')
             
-            from sqlalchemy.orm import Session
+            # Seed using the historical schema, independent of current ORM columns.
+            conn.execute(text("INSERT INTO users (id,email,name,password_hash,active,mfa_enabled,mfa_last_step,created_at,version) VALUES ('user1','u@test.local','U','hash',true,false,-1,CURRENT_TIMESTAMP,1)"))
+            conn.execute(text("INSERT INTO audit_events (id,entity_type,entity_id,action,actor_id,request_id,created_at,version) VALUES ('audit1','user','user1','create','user1','req1',CURRENT_TIMESTAMP,1)"))
 
-            from app.core.models import AuditEvent, User
-            
-            with Session(conn) as session:
-                user = User(id='user1', email='u@test.local', name='U', password_hash='hash')
-                session.add(user)
-                session.flush()
-                
-                audit = AuditEvent(id='audit1', entity_type='user', entity_id='user1', action='create', actor_id='user1', request_id='req1')
-                session.add(audit)
-                
-                session.commit()
-                
             # Step 3: Upgrade to protect_history
             migrations.upgrade(config, '51eab019a784')
             

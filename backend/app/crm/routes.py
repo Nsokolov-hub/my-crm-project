@@ -4,6 +4,7 @@ from typing import Any
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -309,6 +310,28 @@ def create_product_group(body: ProductGroupInput, user: User = Depends(current_u
     return save(db, user, ProductGroup(**body.model_dump()), 'product_group')
 
 
+class ProductGroupPatch(BaseModel):
+    version: int
+    name: str = Field(min_length=1, max_length=150)
+
+
+@router.patch('/product-groups/{entity_id}')
+def edit_product_group(entity_id: str, body: ProductGroupPatch, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    require_permission(db, user, 'catalog.write')
+    advisory(db, 'catalog.product_groups')
+    row = db.get(ProductGroup, entity_id)
+    if not row:
+        raise DomainError('NOT_FOUND', 'Товарная группа не найдена', 404)
+    check_version(row, body.version)
+    if db.scalar(select(ProductGroup.id).where(ProductGroup.name == body.name, ProductGroup.id != entity_id)):
+        raise DomainError('PRODUCT_GROUP_EXISTS', 'Товарная группа уже существует', 409)
+    before = serialize(row)
+    row.name, row.version = body.name, row.version + 1
+    audit(db, user, 'product_group', row.id, 'updated', before, serialize(row))
+    db.commit()
+    return serialize(row)
+
+
 @router.get('/currencies')
 def currencies(active: bool = True, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     require_permission(db, user, 'catalog.read')
@@ -348,6 +371,7 @@ def create_country(body: CountryInput, user: User = Depends(current_user), db: S
 def nomenclatures(
     q: str = '', product_group_id: str | None = None, page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100), active: bool = True,
+    cas: str = '', manufacturer: str = '', article: str = '',
     user: User = Depends(current_user), db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     require_permission(db, user, 'catalog.read')
@@ -356,6 +380,9 @@ def nomenclatures(
         stmt = stmt.where(or_(Nomenclature.name.ilike(f'%{q}%'), Nomenclature.article.ilike(f'%{q}%'), Nomenclature.cas.ilike(f'%{q}%')))
     if product_group_id:
         stmt = stmt.where(Nomenclature.product_group_id == product_group_id)
+    for column, value in ((Nomenclature.cas, cas), (Nomenclature.manufacturer, manufacturer), (Nomenclature.article, article)):
+        if value:
+            stmt = stmt.where(column.ilike(f'%{value}%'))
     result = paginate(db, stmt.order_by(Nomenclature.name, Nomenclature.id), page, page_size)
     result['items'] = [nomenclature_view(db, db.get(Nomenclature, item['id'])) for item in result['items']]
     return result
@@ -758,6 +785,8 @@ def create_task(body: TaskInput, user: User = Depends(current_user), db: Session
     require_permission(db, user, 'tasks.write')
     check_link(db, user, body.entity_type, body.entity_id)
     assignee = active_user(db, body.assignee_id or user.id)
+    from app.business.routes import ensure_available
+    ensure_available(db, assignee.id)
     check_link(db, assignee, body.entity_type, body.entity_id)
     row = Task(**body.model_dump(exclude={'assignee_id'}), assignee_id=assignee.id, author_id=user.id)
     result = save(db, user, row, 'task')
@@ -772,6 +801,8 @@ def create_bulk_call_tasks(body: BulkCallTaskInput, idempotency_key: str | None 
     if len(set(body.client_ids)) != len(body.client_ids):
         raise DomainError('CLIENT_DUPLICATE', 'Уберите повторяющихся клиентов', 422, 'client_ids')
     assignee = active_user(db, body.assignee_id)
+    from app.business.routes import ensure_available
+    ensure_available(db, assignee.id)
     if not can(db, assignee, 'clients.read') or not can(db, assignee, 'tasks.read'):
         raise DomainError('ASSIGNEE_ACCESS_REQUIRED', 'У сотрудника должны быть права просмотра клиентов и задач', 422, 'assignee_id')
     clients_to_assign = [check_client(db, user, client_id, 'clients.write') for client_id in body.client_ids]
@@ -812,12 +843,23 @@ def edit_task(entity_id: str, body: TaskPatch, user: User = Depends(current_user
     if body.assignee_id:
         assignee = active_user(db, body.assignee_id)
         check_link(db, assignee, row.entity_type, row.entity_id)
+    from app.business.routes import ensure_available, local_date, submit_review
+    if body.assignee_id:
+        ensure_available(db, body.assignee_id)
+    late = local_date(utcnow()) > local_date(row.due_at)
+    if late and body.due_at and not can(db, user, "approvals.decide"):
+        raise DomainError("TASK_DEADLINE_APPROVAL", "Перенос просроченной задачи выполняет руководитель", 422)
     before = serialize(row)
     for k, v in body.model_dump(exclude_unset=True, exclude={'version'}).items():
         setattr(row, k, v)
     if body.status in ('completed', 'cancelled'):
         row.completed_at = utcnow()
     row.version += 1
+    if late and body.status in ("completed", "cancelled") and not can(db, user, "approvals.decide"):
+        row.status = "completion_pending"
+        row.completed_at = None
+        submit_review(db, user, "task", row, "Закрытие просроченной задачи: " + row.title,
+                      {**serialize(row), "requested_status": body.status}, row.entity_id if row.entity_type == "request" else None)
     audit(db, user, 'task', row.id, 'updated', before, serialize(row), body.result)
     return serialize(row)
 
@@ -882,6 +924,8 @@ def create_call(body: CallInput, idempotency_key: str | None = Header(default=No
                 row.task_id = existing_task.id
                 notify(db, assignee.id, f'task:{existing_task.id}', 'Время звонка перенесено', 'task', existing_task.id)
             else:
+                from app.business.routes import ensure_available
+                ensure_available(db, assignee.id)
                 task = Task(title='Связаться с клиентом', entity_type='counterparty', entity_id=body.client_id, author_id=user.id, assignee_id=assignee.id, due_at=body.next_at)
                 db.add(task)
                 db.flush()
@@ -993,7 +1037,7 @@ def edit_request(entity_id: str, body: RequestPatch, user: User = Depends(curren
         if db.scalar(select(CommercialDocument.id).where(CommercialDocument.request_id == row.id).limit(1)):
             raise DomainError('SELLER_LOCKED', 'У заявки уже выпущены документы. Для другой организации создайте отдельную заявку.', 409, 'seller_id')
     if 'commercial_stage' in body.model_fields_set and body.commercial_stage != row.commercial_stage:
-        allowed = ['new', 'clarification', 'collecting_quotes', 'calculation', 'closed_lost']
+        allowed = ['new', 'clarification', 'collecting_quotes', 'quote_given', 'calculation', 'closed_lost']
         if body.commercial_stage not in allowed:
             raise DomainError('STAGE_ACTION_REQUIRED', 'Этот этап меняется при выполнении связанной бизнес-операции', 422, 'commercial_stage')
         if body.commercial_stage == 'closed_lost':
@@ -1038,7 +1082,7 @@ def share_request(entity_id: str, body: ShareInput, user: User = Depends(current
 @router.get('/requests/{entity_id}/items')
 def items(entity_id: str, q: str = '', page: int = 1, page_size: int = 100, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     check_request(db, user, entity_id)
-    stmt = select(RequestItem).where(RequestItem.request_id == entity_id)
+    stmt = select(RequestItem).where(RequestItem.request_id == entity_id, RequestItem.quote_only.is_(False))
     if q:
         names = select(Nomenclature.id).where(or_(
             Nomenclature.name.ilike(f'%{q}%'), Nomenclature.article.ilike(f'%{q}%'),
@@ -1168,6 +1212,7 @@ def quote_item_view(db: Session, row: QuoteItem, show_purchase: bool = True) -> 
         'product_group_slug': group.slug if group else None,
         'currency_code': currency.code,
         'supplier_name': supplier.name,
+        'calculation_type': (supplier.details or {}).get('calculation_type', 'IMPORT'),
         'expired': aware_utc(row.valid_until) <= utcnow(),
     })
     if not show_purchase:
@@ -1316,15 +1361,17 @@ def create_quote_sheet(
         for item in body.items:
             nomenclature = require_nomenclature(db, item.nomenclature_id)
             require_packing(db, item.packing_id, nomenclature.id)
-            source = db.get(RequestItem, item.source_request_item_id)
+            source = db.get(RequestItem, item.source_request_item_id) if item.source_request_item_id else None
+            if source is None and not item.source_request_item_id:
+                source = RequestItem(request_id=entity_id, description=nomenclature.name, nomenclature_id=nomenclature.id,
+                                     packing_id=item.packing_id, product_group_id=nomenclature.product_group_id,
+                                     quantity=item.quantity, unit='pcs', quote_only=True)
+                db.add(source)
+                db.flush()
             if not source or source.request_id != entity_id or source.archived:
                 raise DomainError('REQUEST_ITEM_INVALID', 'Позиция не относится к выбранной заявке', 422, 'source_request_item_id')
             if not source.nomenclature_id or not source.packing_id or source.quantity is None or source.unit != 'pcs':
                 raise DomainError('REQUEST_ITEM_UNSTRUCTURED', 'Сначала укажите номенклатуру, фасовку и количество в позиции заявки', 422, 'source_request_item_id')
-            if source.nomenclature_id != nomenclature.id:
-                raise DomainError('NOMENCLATURE_MISMATCH', 'Номенклатура не совпадает с позицией заявки', 422, 'nomenclature_id')
-            if source.packing_id != item.packing_id:
-                raise DomainError('PACKING_MISMATCH', 'Фасовка не совпадает с позицией заявки', 422, 'packing_id')
             quoted_at = item.quoted_at.astimezone(timezone.utc) if item.quoted_at else utcnow()
             if quoted_at > utcnow() + timedelta(minutes=1):
                 raise DomainError('QUOTE_DATE_FUTURE', 'Дата квоты не может быть в будущем', 422, 'quoted_at')
@@ -1350,13 +1397,19 @@ def create_quote_sheet(
                 packing_id=item.packing_id, quantity=item.quantity, unit_price=unit_price,
                 currency_id=currency_id, delivery_days=delivery_days, quoted_at=quoted_at,
                 valid_until=quoted_at + timedelta(days=21),
-                source_request_item_id=item.source_request_item_id,
+                source_request_item_id=source.id,
                 price_source_id=candidate.id if candidate and item.unit_price is None else None,
                 author_id=user.id,
             )
             db.add(row)
             db.flush()
             audit(db, user, 'quote_item', row.id, 'created', after=serialize(row))
+        parent = lock(db, Request, entity_id)
+        if parent.commercial_stage in ('new', 'clarification', 'collecting_quotes', 'quotes'):
+            before_stage = parent.commercial_stage
+            parent.commercial_stage = 'quote_given'
+            parent.version += 1
+            audit(db, user, 'request', parent.id, 'quote_given', before={'commercial_stage': before_stage}, after={'commercial_stage': parent.commercial_stage})
         result = quote_sheet_view(db, sheet)
         audit(db, user, 'quote_sheet', sheet.id, 'created', after=result)
         return result

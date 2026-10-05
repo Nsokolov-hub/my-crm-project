@@ -1,4 +1,5 @@
 import { Download, Plus } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
@@ -6,13 +7,15 @@ import { RecordForm } from '../components/Form';
 import { LineCommand } from '../components/LineCommand';
 import { Badge, Button, DataTable, DetailPairs, ErrorBox, Modal } from '../components/ui';
 import { download } from '../lib/api';
-import { date, decimal, nowLocal } from '../lib/format';
+import { date, decimal, nowLocal, today } from '../lib/format';
 import { useApi } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
 export function RequestDocuments({ requestId }: { requestId: string }) {
   const auth = useAuth();
   const [selected, setSelected] = useState<Entity>();
-  const [action, setAction] = useState<'proposal' | 'invoice' | 'accept' | 'sent' | 'cancel-invoice'>();
+  const [action, setAction] = useState<
+    'proposal' | 'invoice' | 'accept' | 'sent' | 'cancel-invoice'
+  >();
   const [error, setError] = useState<unknown>();
   const [revision, setRevision] = useState(0);
   const executions = useApi<Page>(`/requests/${requestId}/executions`);
@@ -73,12 +76,23 @@ export function RequestDocuments({ requestId }: { requestId: string }) {
   return (
     <>
       <div className="tab-actions">
-        <Button disabled={!auth.can('documents.write')} title={!auth.can('documents.write') ? 'Для выпуска КП нужно право «Выпуск документов»' : undefined}
-          onClick={() => setAction('proposal')}>
+        <Button
+          disabled={!auth.can('documents.write')}
+          title={
+            !auth.can('documents.write')
+              ? 'Для выпуска КП нужно право «Выпуск документов»'
+              : undefined
+          }
+          onClick={() => setAction('proposal')}
+        >
           <Plus size={16} />
           Выпустить КП
         </Button>
-        {!auth.can('documents.write') && <span className="muted">Для выпуска КП администратор должен выдать право «Выпуск документов».</span>}
+        {!auth.can('documents.write') && (
+          <span className="muted">
+            Для выпуска КП администратор должен выдать право «Выпуск документов».
+          </span>
+        )}
       </div>
       <ErrorBox error={error} />
       <Collection
@@ -114,9 +128,33 @@ export function RequestDocuments({ requestId }: { requestId: string }) {
                 'Дата выпуска': date(selected.created_at, true),
                 Расчёт: selected.calculation_id,
                 Предложение: selected.proposal_id,
-                'Общий срок поставки': snapshot?.delivery_days != null ? `${snapshot.delivery_days} дней` : '—',
+                'Общий срок поставки':
+                  snapshot?.delivery_days != null ? `${snapshot.delivery_days} дней` : '—',
               }}
             />
+            <Link
+              className="button secondary"
+              to={
+                '/payment-calendar?' +
+                new URLSearchParams({
+                  create: '1',
+                  direction: 'income',
+                  request_id: requestId,
+                  document_id: selected.id,
+                  counterparty_id: String((snapshot?.client as Entity)?.id || ''),
+                  amount: String(selected.total),
+                  currency: String(selected.currency),
+                  planned_date: String(selected.valid_until || today()),
+                  purpose: `Оплата ${selected.kind === 'invoice' ? 'счёта' : 'заказа'} ${selected.number}`,
+                  payment_kind:
+                    Number(((snapshot?.payment_terms || {}) as Entity).deferred_percent || 0) > 0
+                      ? 'deferred'
+                      : 'prepayment',
+                })
+              }
+            >
+              Создать приход в календаре
+            </Link>
             <DataTable<Entity>
               rows={lines}
               columns={[

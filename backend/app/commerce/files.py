@@ -9,7 +9,7 @@ from xml.sax.saxutils import escape
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as ExcelImage
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
@@ -80,13 +80,30 @@ def format_details(value: object) -> str:
 
 
 def party_details(party: dict) -> str:
-    details = party.get("details")
-    tax_id = party.get("tax_id")
-    if isinstance(details, dict) and tax_id and not any(key in details for key in ("tax_id", "inn", "ИНН")):
-        details = {"ИНН": tax_id, **details}
-    elif not details and tax_id:
-        details = {"ИНН": tax_id}
-    return format_details(details)
+    details = party.get("details") or {}
+    keys = {"ИНН": ("ИНН", "inn", "tax_id"), "КПП": ("КПП", "kpp"),
+            "Юридический адрес": ("Юридический адрес", "legal_address", "address"),
+            "ОГРН": ("ОГРН", "ogrn", "registration_number")}
+    legal = {label: next((details[key] for key in aliases if details.get(key)), None)
+             for label, aliases in keys.items()}
+    legal["ИНН"] = party.get("tax_id") or legal["ИНН"]
+    return format_details(legal)
+
+
+def payment_bank(snapshot):
+    saved = snapshot.get("bank_details") or snapshot.get("seller", {}).get("details") or {}
+    keys = {"Банк получателя": ("Банк", "bank", "bank_name"), "БИК": ("БИК", "bic", "bank_code"),
+            "Корреспондентский счёт": ("Корреспондентский счёт", "correspondent_account", "correspondent"),
+            "Расчётный счёт": ("Расчётный счёт", "settlement_account", "account", "bank_account"),
+            "ИНН": ("ИНН", "inn", "tax_id"), "КПП": ("КПП", "kpp"),
+            "Получатель": ("Получатель", "recipient")}
+    result = {label: next((str(saved[key]) for key in aliases if saved.get(key)), "—")
+              for label, aliases in keys.items()}
+    if result["ИНН"] == "—":
+        result["ИНН"] = snapshot["seller"].get("tax_id") or "—"
+    if result["Получатель"] == "—":
+        result["Получатель"] = snapshot["seller"]["name"]
+    return result
 
 
 def pdf_decimal(value: object, *, money: bool = False) -> str:
@@ -187,6 +204,16 @@ def document_files(snapshot: dict) -> dict:
     logo = ExcelImage(str(LOGO))
     logo.width, logo.height = 210, 70
     book.active.add_image(logo, 'G1')
+    bank = payment_bank(snapshot)
+    bank_start = book.active.max_row + 2
+    for index, (key, value) in enumerate(bank.items(), bank_start):
+        book.active.cell(index, 1, key)
+        book.active.cell(index, 2, safe_cell(value))
+        book.active.merge_cells(start_row=index, start_column=2, end_row=index, end_column=5)
+        for cell in book.active[index][:5]:
+            cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+            cell.alignment = Alignment(wrap_text=True, vertical='top')
+        book.active.row_dimensions[index].height = 30
     book.active.sheet_properties.pageSetUpPr.fitToPage = True
     book.active.page_setup.orientation = 'landscape'
     book.active.page_setup.fitToWidth = 1
@@ -246,6 +273,10 @@ def document_files(snapshot: dict) -> dict:
         p(party_details(snapshot["client"])),
         Spacer(1, 8),
     ]
+    bank_table = Table([[p(key), p(value)] for key, value in payment_bank(snapshot).items()], colWidths=[sum(widths) * .35, sum(widths) * .65])
+    bank_table.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), .6, colors.HexColor('#596C61')), ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('BOTTOMPADDING', (0, 0), (-1, -1), 5)]))
+    content.insert(4, bank_table)
+    content.insert(5, Spacer(1, 10))
     pdf_headers = ["№", "Наименование", "Кол-во / ед.", "Цена/ед.", "Без налога", "Налог", "Итого"]
     table_rows = [[p(value) for value in pdf_headers]]
     for index, row in enumerate(snapshot["lines"], 1):

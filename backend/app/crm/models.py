@@ -139,6 +139,7 @@ class RequestItem(Entity):
     source_columns: Mapped[list[str]] = mapped_column(JSON, default=list)
     source_values: Mapped[list[str]] = mapped_column(JSON, default=list)
     source_format: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default='{}')
+    quote_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default='false')
     work_status: Mapped[str] = mapped_column(String(20), default='requested', server_default='requested')
     product_group_id: Mapped[str | None] = mapped_column(ForeignKey('product_groups.id'), index=True)
     nomenclature_id: Mapped[str | None] = mapped_column(ForeignKey('nomenclatures.id'), index=True)
@@ -175,6 +176,7 @@ class ProductGroup(Entity):
     __tablename__ = 'product_groups'
     name: Mapped[str] = mapped_column(String(150), unique=True)
     slug: Mapped[str] = mapped_column(String(80), unique=True)
+    internal_code: Mapped[int] = mapped_column(Integer, unique=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 

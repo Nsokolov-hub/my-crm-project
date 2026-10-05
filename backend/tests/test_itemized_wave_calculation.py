@@ -2,8 +2,21 @@
 
 from decimal import Decimal
 
-from app.commerce.itemized import calculate_itemized, itemized_profile
+from app.commerce.itemized import calculate_itemized
+from app.commerce.itemized import itemized_profile as current_profile
 
+
+def itemized_profile():
+    """Historical profile: reproducibility remains supported after the new defaults."""
+    profile = current_profile()
+    profile['customs_fee_overrides'] = []
+    profile['vat_deduction_mode'] = False
+    for rule in profile['customs_rules']:
+        if rule['product_group_slug'] in ('other', 'lab_glassware'):
+            rule.update(type='NONE', value='0')
+        if rule['product_group_slug'] == 'columns':
+            rule.update(type='FIXED_GROUP', value='73800')
+    return profile
 
 def _selection(identifier: str, group: str, quantity: str, price: str, bonus: str) -> dict:
     return {

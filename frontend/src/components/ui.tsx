@@ -349,12 +349,21 @@ export function Section({
     </section>
   );
 }
-export function DetailPairs({ values }: { values: Record<string, unknown> }) {
+export function DetailPairs({
+  values,
+  formulas = {},
+}: {
+  values: Record<string, unknown>;
+  formulas?: Record<string, string>;
+}) {
   return (
     <dl className="detail-pairs">
       {Object.entries(values).map(([key, value]) => (
         <div key={key}>
-          <dt>{key}</dt>
+          <dt title={formulas[key]} tabIndex={formulas[key] ? 0 : undefined}>
+            {key}
+            {formulas[key] ? ' ⓘ' : ''}
+          </dt>
           <dd>{display(value)}</dd>
         </div>
       ))}

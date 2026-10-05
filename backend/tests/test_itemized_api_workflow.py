@@ -60,6 +60,7 @@ def test_profile_rates_wave_quantity_and_proposal(commerce):  # noqa: F811
                           source_request_item_id=env["item_id"], author_id=env["owner_id"])
         db.add(quote)
         profile = itemized_profile()
+        profile["customs_fee_overrides"] = []  # Legacy wave lacks recorded group composition.
         profile["import_country_id"] = country.id
         profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "4997"}]
         profile["exchange_rates"] = [{"currency": "USD", "management_per_unit": "100",

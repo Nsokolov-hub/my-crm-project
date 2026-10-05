@@ -458,6 +458,7 @@ export function UserAccessEditor({
   const employee = user as Employee;
   const [name, setName] = useState(employee.name);
   const [active, setActive] = useState(employee.active);
+  const [ownRequestsOnly, setOwnRequestsOnly] = useState(Boolean(user.own_requests_only));
   const [roleIds, setRoleIds] = useState<string[]>((employee.roles || []).map((role) => role.id));
   const [grants, setGrants] = useState<Grant[]>(employee.grants || []);
   const [reassignTo, setReassignTo] = useState('');
@@ -483,6 +484,7 @@ export function UserAccessEditor({
           version: user.version,
           name: name.trim(),
           active,
+          own_requests_only: ownRequestsOnly,
           role_ids: roleIds,
           grants,
           reason: reason.trim(),
@@ -529,6 +531,17 @@ export function UserAccessEditor({
               Доступ активен
             </label>
             <div className="field wide">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={ownRequestsOnly}
+                  onChange={(e) => {
+                    setOwnRequestsOnly(e.target.checked);
+                    setDirty(true);
+                  }}
+                />{' '}
+                Показывать только собственные заявки (включая прямые ссылки и отчёты)
+              </label>
               <strong>Назначенные роли</strong>
               {roles.loading ? (
                 <Loading />

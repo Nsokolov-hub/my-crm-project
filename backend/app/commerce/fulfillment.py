@@ -118,6 +118,7 @@ def allocation_view(db, allocation: WaveAllocation) -> dict:
 def execution_view(db, execution: Execution) -> dict:
     value = serialize(execution)
     value.pop("snapshot")
+    value["description"] = execution.snapshot.get("description") or "Позиция исполнения"
     allocations = db.scalars(
         select(WaveAllocation).where(
             WaveAllocation.execution_id == execution.id, WaveAllocation.active.is_(True)
@@ -632,6 +633,8 @@ def wave_view(db, user, wave: Wave) -> dict:
                and has_request_permission(db, user, request_id, "finance.calculations.read") for request_id in finance_requests):
             try:
                 value["financial_summary"] = wave_financial_summary(db, wave.id)
+                if not all(has_request_permission(db, user, request_id, "finance.profit.read") for request_id in finance_requests):
+                    value["financial_summary"].pop("actual", None)
             except DomainError as exc:
                 value["financial_summary"] = {"status": "error", "error": exc.message, "code": exc.code,
                                               "provisional": True, "allocations": []}
