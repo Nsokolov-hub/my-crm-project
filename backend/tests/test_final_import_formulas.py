@@ -85,7 +85,9 @@ def test_explicit_legacy_rounding_and_disabled_vat_deduction_are_preserved():
     without_deduction = shipment_a(deduct_vat=False)["lines"][0]["detail"]
     assert Decimal(without_deduction["clean_cost"]) == Decimal("19266.24")
     assert Decimal(without_deduction["vat_payable"]) == Decimal(without_deduction["sale_tax"])
-    assert Decimal(without_deduction["profit"]) == Decimal("9633.12")
+    assert Decimal(without_deduction["markup_base"]) == Decimal("15792")
+    assert Decimal(without_deduction["cost_after_markup"]) == Decimal("23688")
+    assert Decimal(without_deduction["profit"]) == Decimal("7896")
 
 
 @pytest.mark.parametrize("profit,sales,cost,expected", [

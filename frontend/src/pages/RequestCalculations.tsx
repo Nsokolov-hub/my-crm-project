@@ -5,6 +5,7 @@ import { Collection } from '../components/Collection';
 import { Badge, Button, DataTable, DetailPairs, ErrorBox, Modal } from '../components/ui';
 import { ApiError } from '../lib/api';
 import { displayCalculationMetrics } from '../lib/calculations';
+import { normalizeLogisticsExpense } from '../lib/logistics';
 import { date, decimal, label } from '../lib/format';
 import { useApi, useCommand, useDirtyProtection } from '../lib/hooks';
 import type { Entity, Page } from '../lib/types';
@@ -44,6 +45,9 @@ const detailLabels: Record<string, string> = {
   exchange_rate: 'Курс к ₽',
   purchase_rub: 'Закупка, ₽',
   international_logistics: 'Международная логистика, ₽',
+  domestic_logistics: 'Логистика РФ — вывоз из аэропорта, ₽',
+  client_delivery: 'Доставка клиенту — СДЭК и Москва, ₽',
+  domestic_logistics_total: 'Логистика внутри РФ всего, ₽',
   customs_base: 'Таможенная стоимость, ₽',
   duty: 'Пошлина, ₽',
   duty_per_unit: 'Пошлина за единицу, ₽',
@@ -72,7 +76,9 @@ const detailLabels: Record<string, string> = {
   additional_service_fee: 'Дополнительная комиссия, ₽',
   fixed_group_quantity: 'Количество в группе пошлины, шт.',
   markup_coefficient: 'Коэффициент наценки',
-  markup_amount: 'Наценка, ₽',
+  markup_base: 'База наценки, ₽',
+  cost_after_markup: 'Цена с наценкой, ₽',
+  markup_amount: 'Прибавка от наценки, ₽',
   bonus_coefficient: 'Коэффициент бонуса',
   sale_net: 'Продажа без НДС, ₽',
   sale_tax: 'НДС продажи, ₽',
@@ -109,10 +115,11 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
     <div className="calculation-breakdown">
       <h4>Общий расчёт по позициям</h4>
       <p>
-        Волна: {String(wave.number || '—')}. Расходы по количеству делятся на{' '}
+        Волна: {String(wave.number || '—')}. Общие расходы волны делятся на{' '}
         {decimal(distribution.total_quantity || 0)} шт. (
         {decimal(distribution.selected_quantity || 0)} шт. в этом расчёте +{' '}
-        {decimal(distribution.existing_quantity || 0)} шт. в других заказах волны).
+        {decimal(distribution.existing_quantity || 0)} шт. в других заказах волны). Доставка клиенту
+        делится на {decimal(distribution.selected_quantity || 0)} шт. этого расчёта.
       </p>
       <DataTable<Entity>
         rows={rows}
@@ -175,8 +182,16 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
                 'Чистая стоимость до наценки, ₽':
                   'Импорт с вычетом: ННБ. Без вычета: ННБ + ввозной НДС.',
                 'Цена до бонуса без НДС, ₽':
-                  'Импорт: чистая стоимость × коэффициент наценки + прочие расходы + таможенный сбор + финансирование',
-                'Наценка, ₽': 'База наценки × (коэффициент − 1)',
+                  'Импорт: (таможенная стоимость + пошлина) × коэффициент + расходы + сбор + финансирование; НДС без вычета добавляется отдельно.',
+                'База наценки, ₽': 'Импорт: таможенная стоимость + таможенная пошлина',
+                'Цена с наценкой, ₽':
+                  'База наценки × коэффициент, до добавления перевыставляемых расходов',
+                'Логистика РФ — вывоз из аэропорта, ₽':
+                  'Общая логистика РФ × количество строки / количество всей волны',
+                'Доставка клиенту — СДЭК и Москва, ₽':
+                  '(СДЭК + доставка в Москве) × количество строки / количество этого расчёта',
+                'Логистика внутри РФ всего, ₽': 'Доля вывоза из аэропорта + доля доставки клиенту',
+                'Прибавка от наценки, ₽': 'База наценки × (коэффициент − 1)',
                 'Валовая прибыль, ₽': 'Продажа без НДС − себестоимость',
                 'Рентабельность, %': 'Валовая прибыль / продажа без НДС × 100%',
                 'Доходность затрат, %': 'Валовая прибыль / себестоимость × 100%',
@@ -210,9 +225,9 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
               { key: 'amount', label: 'Всего, ₽', render: (row) => decimal(row.amount) },
               { key: 'method', label: 'Способ' },
               {
-                key: 'wave_total_quantity',
-                label: 'Кол-во в волне',
-                render: (row) => decimal(row.wave_total_quantity),
+                key: 'distribution_quantity',
+                label: 'На сколько единиц делится',
+                render: (row) => decimal(row.distribution_quantity ?? row.wave_total_quantity),
               },
               {
                 key: 'existing_wave_share',
@@ -250,7 +265,7 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
   );
 }
 function expenseFromReference(row: Record<string, unknown>): Expense {
-  return {
+  return normalizeLogisticsExpense({
     name: String(row.name || ''),
     amount: String(row.amount ?? row.default_value ?? '0'),
     currency: String(row.currency || row.currency_code || 'RUB'),
@@ -265,7 +280,7 @@ function expenseFromReference(row: Record<string, unknown>): Expense {
     brackets: Array.isArray(row.brackets) ? (row.brackets as Record<string, unknown>[]) : [],
     include_in_cost: row.include_in_cost !== false,
     include_in_cash: row.include_in_cash !== false,
-  };
+  });
 }
 
 const standardExpenses: Expense[] = [
@@ -293,6 +308,14 @@ const moscowDelivery = expenseFromReference({
   amount: '5000',
   currency: 'RUB',
   scope: 'REQUEST',
+  stage: 'CLIENT_DELIVERY',
+});
+const airportPickup = expenseFromReference({
+  name: 'Логистика РФ (вывоз из аэропорта)',
+  amount: '0',
+  currency: 'RUB',
+  stage: 'DOMESTIC_LOGISTICS',
+  scope: 'WAVE',
 });
 
 function CalculationEditor({
@@ -441,17 +464,19 @@ function CalculationEditor({
       quotes.loading
     )
       return;
-    const defaults = (
-      ((selectedProfile.definition as Entity).default_expenses || []) as Entity[]
-    ).filter((expense) => hasImportSelections || expense.scope === 'REQUEST');
-    const shared = hasImportSelections ? waveExpenses.data?.expenses : undefined;
+    const defaults = (((selectedProfile.definition as Entity).default_expenses || []) as Entity[])
+      .map(normalizeLogisticsExpense)
+      .filter((expense) => hasImportSelections || expense.scope === 'REQUEST');
+    const shared = hasImportSelections
+      ? waveExpenses.data?.expenses?.map(normalizeLogisticsExpense)
+      : undefined;
     const previousExpenses =
       Array.isArray(previousInput.expenses) &&
       profileId ===
         String(
           previousInput.profile_id || previousSnapshot.profile_id || previous?.profile_id || '',
         )
-        ? (previousInput.expenses as Entity[])
+        ? (previousInput.expenses as Entity[]).map(normalizeLogisticsExpense)
         : undefined;
     const requestExpenses = (previousExpenses || defaults).filter((row) => row.scope === 'REQUEST');
     setExpenses(
@@ -699,12 +724,17 @@ function CalculationEditor({
   const resultLabels: Record<string, string> = {
     purchase_rub: 'Закупка, ₽',
     international_logistics: 'Международная логистика, ₽',
+    domestic_logistics: detailLabels.domestic_logistics,
+    client_delivery: detailLabels.client_delivery,
+    domestic_logistics_total: detailLabels.domestic_logistics_total,
     duty: 'Пошлина, ₽',
     customs_fee: 'Таможенный сбор, ₽',
     customs_base: 'Таможенная стоимость, ₽',
     import_vat_base: 'База ввозного НДС (ННБ), ₽',
     import_vat: 'Ввозной НДС, ₽',
     clean_cost: 'Чистая стоимость до наценки, ₽',
+    markup_base: detailLabels.markup_base,
+    cost_after_markup: detailLabels.cost_after_markup,
     cash_need: 'Денежные затраты на заказ, ₽',
     general_expenses: 'Общие расходы, ₽',
     cost: 'Себестоимость, ₽',
@@ -1046,14 +1076,30 @@ function CalculationEditor({
                 <h3>Расходы сделки</h3>
                 <p>
                   Общие расходы волны переходят в следующие расчёты и заново делятся на всё
-                  подтверждённое количество. Расход «Только эта заявка» подходит для доставки
-                  клиенту.
+                  количество волны. Вывоз из аэропорта делится по волне. СДЭК и доставка клиенту в
+                  Москве суммируются и делятся только между позициями этого расчёта.
                 </p>
                 {waveExpenses.data?.source_calculation_id && (
                   <p>Расходы волны загружены из последнего сохранённого расчёта.</p>
                 )}
               </div>
               <div className="calculation-expense-actions">
+                {hasImportSelections && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      setExpenses((current) =>
+                        current.some((entry) => entry.stage === 'DOMESTIC_LOGISTICS')
+                          ? current
+                          : [...current, airportPickup],
+                      );
+                      invalidate();
+                    }}
+                  >
+                    Вывоз из аэропорта — на всю волну
+                  </Button>
+                )}
                 <Button
                   type="button"
                   variant="secondary"
@@ -1151,7 +1197,9 @@ function CalculationEditor({
                     onChange={(event) => {
                       setExpenses((current) =>
                         current.map((entry, i) =>
-                          i === index ? { ...entry, name: event.target.value } : entry,
+                          i === index
+                            ? normalizeLogisticsExpense({ ...entry, name: event.target.value })
+                            : entry,
                         ),
                       );
                       invalidate();
@@ -1256,7 +1304,9 @@ function CalculationEditor({
                     onChange={(event) => {
                       setExpenses((current) =>
                         current.map((entry, i) =>
-                          i === index ? { ...entry, stage: event.target.value } : entry,
+                          i === index
+                            ? normalizeLogisticsExpense({ ...entry, stage: event.target.value })
+                            : entry,
                         ),
                       );
                       invalidate();
@@ -1264,12 +1314,15 @@ function CalculationEditor({
                   >
                     <option value="GENERAL">Общий расход</option>
                     <option value="INTERNATIONAL_LOGISTICS">Международная логистика</option>
+                    <option value="DOMESTIC_LOGISTICS">Вывоз из аэропорта — вся волна</option>
+                    <option value="CLIENT_DELIVERY">Доставка клиенту — этот расчёт</option>
                   </select>
                 </label>
                 <label>
                   Относится к{' '}
                   <select
                     value={expense.scope}
+                    disabled={['DOMESTIC_LOGISTICS', 'CLIENT_DELIVERY'].includes(expense.stage)}
                     onChange={(event) => {
                       setExpenses((current) =>
                         current.map((entry, i) =>
@@ -1280,7 +1333,7 @@ function CalculationEditor({
                     }}
                   >
                     <option value="WAVE">Всей волне</option>
-                    <option value="REQUEST">Только этой заявке</option>
+                    <option value="REQUEST">Только этому расчёту</option>
                   </select>
                 </label>
                 {expense.calculation_type === 'PERCENTAGE' && (
@@ -1336,6 +1389,7 @@ function CalculationEditor({
                   Распределение{' '}
                   <select
                     value={expense.method}
+                    disabled={['DOMESTIC_LOGISTICS', 'CLIENT_DELIVERY'].includes(expense.stage)}
                     onChange={(event) => {
                       setExpenses((current) =>
                         current.map((entry, i) =>
@@ -1544,6 +1598,15 @@ function CalculationEditor({
                     'База ввозного НДС (ННБ), ₽': 'Таможенная стоимость + пошлина',
                     'Чистая стоимость до наценки, ₽':
                       'Импорт с вычетом: таможенная стоимость + пошлина. Без вычета добавляется ввозной НДС.',
+                    'База наценки, ₽': 'Импорт: таможенная стоимость + таможенная пошлина',
+                    'Цена с наценкой, ₽':
+                      'База наценки × коэффициент, до добавления перевыставляемых расходов',
+                    'Логистика РФ — вывоз из аэропорта, ₽':
+                      'Общая логистика РФ × количество расчёта / количество всей волны',
+                    'Доставка клиенту — СДЭК и Москва, ₽':
+                      'СДЭК + доставка в Москве; расходы только этого расчёта',
+                    'Логистика внутри РФ всего, ₽':
+                      'Доля вывоза из аэропорта + СДЭК + доставка в Москве',
                     'Себестоимость, ₽':
                       'Закупка + расходы + пошлина + сбор + финансирование + бонусы; ввозной НДС включается при отключённом вычете.',
                     'Валовая прибыль, ₽':

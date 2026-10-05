@@ -10,6 +10,7 @@ from decimal import ROUND_CEILING, Decimal, localcontext
 from app.core.errors import error
 
 from .calculator import ROUNDING, dec, distribute, profitability_metrics
+from .logistics import normalize_logistics_expenses
 
 
 def _money(value: Decimal, rounding: str) -> Decimal:
@@ -189,6 +190,7 @@ def calculate_itemized(
 
 def _calculate_itemized(profile, selections, expenses, rates, internal_adjustment, payment_terms,
                         wave_existing_quantity, wave_existing_components, wave_existing_selections):
+    expenses = normalize_logistics_expenses(expenses)
     validate_itemized_profile(profile)
     rounding = profile.get("rounding", "half_up")
     if rounding not in ROUNDING:
@@ -237,6 +239,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "purchase_foreign": foreign, "exchange_rate": exchange_rate,
             "purchase_rub": purchase_rub,
             "international_logistics": Decimal("0"), "general_expenses": Decimal("0"),
+            "domestic_logistics": Decimal("0"), "client_delivery": Decimal("0"),
             "cash_expenses": Decimal("0"),
             "duty": Decimal("0"), "customs_fee": Decimal("0"),
             "expense_details": {},
@@ -321,6 +324,10 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             if expense.get("include_in_cost", True):
                 key = "international_logistics" if stage == "INTERNATIONAL_LOGISTICS" else "general_expenses"
                 row[key] += part
+                if stage == "DOMESTIC_LOGISTICS":
+                    row["domestic_logistics"] += part
+                elif stage == "CLIENT_DELIVERY":
+                    row["client_delivery"] += part
         if expense.get("include_in_cost", True):
             key = "international_logistics" if stage == "INTERNATIONAL_LOGISTICS" else "general_expenses"
             existing[key] += existing_share
@@ -331,6 +338,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "wave_parts": {key: _string(value) for key, value in parts.items()},
             "existing_wave_share": _string(existing_share + sum(value for key, value in parts.items() if key not in selected_ids)),
             "wave_total_quantity": _string(wave_total_quantity),
+            "distribution_quantity": _string(wave_total_quantity if wave_scope else selected_quantity),
             "basis": expense.get("basis", ""), "percent_base": expense.get("percent_base"),
             "calculation_basis": _string(calculation_basis) if calculation_basis is not None else None,
         })
@@ -451,17 +459,19 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             clean_cost = _money((row['purchase_rub'] + row['duty']) * (Decimal('1') + vat_rate), rounding) + row['international_logistics']
         elif mode == 'RUSSIA':
             clean_cost = row['purchase_rub']
-        markup_base = clean_cost + (row["general_expenses"] if mode == "DAP" else Decimal("0"))
+        markup_base = (import_vat_base if mode == "IMPORT" else
+                       clean_cost + (row["general_expenses"] if mode == "DAP" else Decimal("0")))
+        cost_after_markup = markup_base * row["markup_coefficient"]
         cost_before_financing = clean_cost + row["general_expenses"] + row["customs_fee"]
         if mode == 'RUSSIA':
             cost_before_financing += row['international_logistics']
         financed_amount = _money(cost_before_financing * deferred / 100, rounding)
         financing_cost = _money(financed_amount * annual_rate * Decimal(days) / day_basis, rounding)
         cost_before_adjustment = cost_before_financing + financing_cost
-        # In the supplied workbook, markup applies to the clean landed cost;
-        # shared expenses are added afterwards, before the per-line bonus.
+        # Import markup covers customs value and duty. Non-deductible VAT and
+        # delivery/shared expenses are recharged afterwards without markup.
         pre_bonus_sale_net = (
-            markup_base * row["markup_coefficient"]
+            cost_after_markup + (clean_cost - markup_base if mode == "IMPORT" else Decimal("0"))
             + (row["general_expenses"] if mode != "DAP" else Decimal("0")) + row["customs_fee"] + financing_cost
         )
         if mode == 'RUSSIA':
@@ -501,6 +511,8 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         detail = {
             "purchase_foreign": row["purchase_foreign"], "exchange_rate": row["exchange_rate"],
             "purchase_rub": row["purchase_rub"], "international_logistics": row["international_logistics"],
+            "domestic_logistics": row["domestic_logistics"], "client_delivery": row["client_delivery"],
+            "domestic_logistics_total": row["domestic_logistics"] + row["client_delivery"],
             "customs_base": row["customs_base"], "duty": row["duty"], "customs_fee": row["customs_fee"],
             "duty_per_unit": row["duty"] / qty,
             "customs_fee_per_unit": row["customs_fee"] / qty,
@@ -519,6 +531,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "bonus_withdrawal_fee": bonus_withdrawal_fee,
             "additional_service_fee": additional_service_fee,
             "service_fee": service_fee, "cost": cost, "markup_coefficient": row["markup_coefficient"],
+            "markup_base": markup_base, "cost_after_markup": cost_after_markup,
             "markup_amount": markup_base * (row["markup_coefficient"] - 1),
             "sale_net": sale_net, "sale_tax": sale_tax,
             "sale_total": sale_total, "profit": profit, "vat_payable": vat_payable,
@@ -552,8 +565,10 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         })
     total_keys = (
         "purchase_rub", "international_logistics", "customs_base", "duty", "clean_cost", "pre_bonus_sale_net",
+        "domestic_logistics", "client_delivery", "domestic_logistics_total",
         "customs_fee", "customs_fee_1", "customs_fee_2", "general_expenses", "expenses_total", "cash_expenses", "import_vat_base", "import_vat", "import_cost_with_vat", "cost_before_financing",
         "financed_amount", "financing_cost", "internal_bonus", "service_fee", "cost", "markup_amount",
+        "markup_base", "cost_after_markup",
         "sale_net", "sale_tax", "sale_total", "profit", "vat_payable", "cash_need",
     )
     wave_lines = output

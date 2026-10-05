@@ -547,6 +547,7 @@ def test_actual_wave_preserves_sale_and_reallocates_changed_shared_budget(crm): 
     from app.commerce.models import Execution
 
     req, data, _, _ = structured(crm, mode="IMPORT")
+    data.update(delivery_required=True, delivery_city="Москва")
     data["expenses"] = [
         {
             "name": "Логистика",
@@ -555,7 +556,9 @@ def test_actual_wave_preserves_sale_and_reallocates_changed_shared_budget(crm): 
             "method": "BY_QUANTITY",
             "scope": "WAVE",
             "stage": "INTERNATIONAL_LOGISTICS",
-        }
+        },
+        {"name": "Курьер по Москве", "amount": "200", "currency": "RUB",
+         "method": "BY_QUANTITY", "scope": "REQUEST", "stage": "CLIENT_DELIVERY"},
     ]
     calculation = cmd(crm, f"/requests/{req['id']}/calculations", data)
     proposal = cmd(
@@ -596,7 +599,7 @@ def test_actual_wave_preserves_sale_and_reallocates_changed_shared_budget(crm): 
 
     with crm["sessions"]() as db:
         old = wave_actual_summary(
-            db, req["wave_id"], calculation["snapshot"]["profile"], data["expenses"], []
+            db, req["wave_id"], calculation["snapshot"]["profile"], data["expenses"][:1], []
         )
         changed = wave_actual_summary(
             db,
@@ -606,6 +609,8 @@ def test_actual_wave_preserves_sale_and_reallocates_changed_shared_budget(crm): 
             [],
         )
         assert old["status"] == changed["status"] == "current"
+        assert Decimal(old["cost"]) == Decimal(calculation["snapshot"]["totals"]["cost"])
+        assert Decimal(calculation["snapshot"]["totals"]["client_delivery"]) == 4200
         assert Decimal(changed["cost"]) - Decimal(old["cost"]) == 105  # logistics + import duty on it
         assert (
             old["sales"]

@@ -182,7 +182,7 @@ def test_request_percentage_minimum_is_not_shared_with_existing_wave_orders():
     assert allocation["existing_wave_share"] == "0"
 
 
-def test_excel_purine_rows_match_cached_gross_unit_prices():
+def test_purine_rows_apply_markup_before_non_deductible_vat():
     # Считалка 94: Вход-Выход!D14:H16, Колонки!AG6:AL7, AE6:AE7, AS6:AS7.
     profile = itemized_profile()
     profile["import_country_id"] = "country-1"
@@ -216,8 +216,11 @@ def test_excel_purine_rows_match_cached_gross_unit_prices():
         wave_existing_quantity=Decimal("4"),
     )
     first, second = result["lines"]
-    assert first["detail"]["sale_unit_gross"] == "133237"
-    assert first["total"] == "266474.00"
-    assert second["detail"]["sale_unit_gross"] == "67630"
-    assert second["total"] == "135260.00"
-    assert abs(Decimal(first["detail"]["profit"]) - Decimal("78461.25")) <= Decimal("0.01")
+    # The October 5 correction applies markup to customs value plus duty;
+    # the old workbook's non-deductible VAT is now recharged without markup.
+    assert first["detail"]["markup_base"] == "80390.63"
+    assert first["detail"]["sale_unit_gross"] == "123105"
+    assert first["total"] == "246210.00"
+    assert second["detail"]["sale_unit_gross"] == "63107"
+    assert second["total"] == "126214.00"
+    assert abs(Decimal(first["detail"]["profit"]) - Decimal("64312.50")) <= Decimal("0.01")

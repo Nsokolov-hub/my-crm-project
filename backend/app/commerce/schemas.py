@@ -210,7 +210,7 @@ class Expense(Input):
     calculation_type: Literal["FIXED", "PERCENTAGE", "BRACKET", "MANUAL"] = "FIXED"
     percent_base: Literal["PURCHASE", "CUSTOMS_BASE", "DUTY", "COST"] | None = None
     brackets: list[ExpenseBracket] = Field(default_factory=list)
-    stage: Literal["INTERNATIONAL_LOGISTICS", "GENERAL"] = "GENERAL"
+    stage: Literal["INTERNATIONAL_LOGISTICS", "GENERAL", "DOMESTIC_LOGISTICS", "CLIENT_DELIVERY"] = "GENERAL"
     scope: Literal["WAVE", "REQUEST"] = "WAVE"
     minimum_amount: Nonnegative = Decimal("0")
     minimum_currency: Currency = "RUB"
@@ -225,7 +225,7 @@ class ExpenseTypeIn(Command):
     default_value: Nonnegative = Decimal("0")
     currency_id: str
     distribution_method: Literal["BY_QUANTITY", "BY_PURCHASE_VALUE", "EQUALLY_BY_POSITION", "BY_WEIGHT", "MANUAL"] = "BY_QUANTITY"
-    stage: Literal["INTERNATIONAL_LOGISTICS", "GENERAL"] = "GENERAL"
+    stage: Literal["INTERNATIONAL_LOGISTICS", "GENERAL", "DOMESTIC_LOGISTICS", "CLIENT_DELIVERY"] = "GENERAL"
     percent_base: Literal["PURCHASE", "CUSTOMS_BASE", "DUTY", "COST"] | None = None
     brackets: list[ExpenseBracket] = Field(default_factory=list)
     include_in_cost: bool = True

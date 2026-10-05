@@ -25,6 +25,7 @@ from app.crm.models import (
 
 from .calculator import calculate, dec, digest, example_profile, profitability_metrics, validate_profile
 from .itemized import calculate_itemized, itemized_profile
+from .logistics import normalize_logistics_expenses
 from .models import (
     Calculation,
     CalculationProfile,
@@ -223,7 +224,8 @@ def latest_wave_expenses(db, wave_id: str) -> tuple[list[dict] | None, str | Non
             expenses = (snapshot.get("input") or {}).get("expenses")
             if not expenses:
                 continue
-        return [dict(row) for row in expenses if row.get("scope", "WAVE") == "WAVE"], calculation.id
+        return [row for row in normalize_logistics_expenses(expenses)
+                if row.get("scope", "WAVE") == "WAVE"], calculation.id
     return None, None
 
 
@@ -420,7 +422,8 @@ def wave_financial_summary(db, wave_id: str) -> dict:
         if not published:
             return {"status": "unconfigured", "provisional": True, "total_quantity": "0", "allocations": []}
         profile = deepcopy(published.definition)
-        expenses = [row for row in profile.get("default_expenses", []) if row.get("scope", "WAVE") == "WAVE"]
+        expenses = [row for row in normalize_logistics_expenses(profile.get("default_expenses", []))
+                    if row.get("scope", "WAVE") == "WAVE"]
         wave = db.get(Wave, wave_id)
         logistics = supplier_logistics(db, wave.supplier_id) if wave else None
         if logistics:
@@ -682,11 +685,11 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         if data.expenses is not None:
             effective_expenses = [expense.model_dump(mode="json") for expense in data.expenses]
         elif wave_expenses is not None:
-            request_defaults = [row for row in profile.definition.get("default_expenses", [])
+            request_defaults = [row for row in normalize_logistics_expenses(profile.definition.get("default_expenses", []))
                                 if row.get("scope") == "REQUEST"]
             effective_expenses = wave_expenses + request_defaults
         else:
-            effective_expenses = list(profile.definition.get("default_expenses", []))
+            effective_expenses = normalize_logistics_expenses(profile.definition.get("default_expenses", []))
             default_logistics = supplier_logistics(db, wave.supplier_id) if wave else None
             if not importing:
                 effective_expenses = [row for row in effective_expenses if row.get("scope") == "REQUEST"]
@@ -700,6 +703,7 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             delivery_vat = (dec(delivery['amount']) * dec(profile.definition['vat_rate']) / 100).quantize(dec('.01'))
             effective_expenses += [delivery, {**delivery, 'name': 'НДС доставки СДЭК', 'amount': str(delivery_vat),
                                              'include_in_cost': not data.vat_deductible, 'basis': 'НДС тарифа СДЭК'}]
+        effective_expenses = normalize_logistics_expenses(effective_expenses)
         validate_unknown_wave_basis(profile.definition, effective_expenses, missing_basis)
         effective_profile = deepcopy(profile.definition)
         effective_profile["vat_deduction_mode"] = data.vat_deductible
@@ -1053,7 +1057,8 @@ def wave_actual_summary(db, wave_id, profile, expenses, rates):
         detail = old['detail']
         new = current_lines[old['quote_item_id']]
         current_factor = quantity / dec(new['quantity'])
-        wave_names = {expense['name'] for expense in snapshot.get('resolved_expenses', snapshot.get('input', {}).get('expenses', []) or [])
+        wave_names = {expense['name'] for expense in normalize_logistics_expenses(
+            snapshot.get('resolved_expenses', snapshot.get('input', {}).get('expenses', []) or []))
                       if expense.get('scope', 'WAVE') == 'WAVE' and expense.get('include_in_cost', True)}
         old_shared = sum((dec(old.get('expense_details', {}).get(name, '0')) for name in wave_names), dec('0'))
         old_vat = dec('0') if snapshot.get('vat_deductible', snapshot.get('profile', {}).get('vat_deduction_mode', True)) else dec(detail.get('import_vat', '0'))

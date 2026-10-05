@@ -335,7 +335,11 @@ export function Settings() {
                 Этап:
                   expenseType.stage === 'INTERNATIONAL_LOGISTICS'
                     ? 'Международная логистика'
-                    : 'Общий расход',
+                    : expenseType.stage === 'DOMESTIC_LOGISTICS'
+                      ? 'Вывоз из аэропорта — вся волна'
+                      : expenseType.stage === 'CLIENT_DELIVERY'
+                        ? 'Доставка клиенту — этот расчёт'
+                        : 'Общий расход',
                 ...(expenseType.percent_base
                   ? {
                       'База начисления':

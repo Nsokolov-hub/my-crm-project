@@ -68,6 +68,8 @@ it('sends the selected VAT deduction mode and common delivery term in preview an
           customs_fee: '20',
           import_vat_base: '200',
           import_cost_with_vat: '244',
+          markup_base: '15792',
+          cost_after_markup: '23688',
           profit: '100',
           profitability_percent: '33.33',
           margin_percent: '33.33',
@@ -79,7 +81,9 @@ it('sends the selected VAT deduction mode and common delivery term in preview an
       import_vat: '44',
       total: '300',
       import_vat_base: '200',
-      profit: '100',
+      markup_base: '15792',
+      cost_after_markup: '23688',
+      profit: '7896',
       profitability_percent: '33.33',
       margin_percent: '33.33',
       cost_profitability_percent: '50',
@@ -127,6 +131,8 @@ it('sends the selected VAT deduction mode and common delivery term in preview an
     ),
   );
   expect(screen.getAllByText('Ввозной НДС, ₽').length).toBeGreaterThan(0);
+  expect(screen.getByText('Цена с наценкой, ₽ ⓘ').parentElement).toHaveTextContent(/23\s688/);
+  expect(screen.getByText('Валовая прибыль, ₽ ⓘ').parentElement).toHaveTextContent(/7\s896/);
   expect(screen.getByText('Валовая прибыль, ₽ ⓘ')).toHaveAttribute(
     'title',
     expect.stringContaining('Продажа без НДС'),
@@ -177,8 +183,9 @@ it('refreshes shared wave costs in a new version while retaining request costs a
     currency: 'RUB',
     method: 'BY_QUANTITY',
     basis: 'Доставка',
-    scope: 'REQUEST',
+    scope: 'WAVE', // Legacy incorrect scope must become calculation-only before filtering.
   };
+  const airport = { ...shared, name: 'Логистика РФ', amount: '1200', stage: 'GENERAL' };
   const previous = {
     id: 'old',
     version_number: 1,
@@ -190,7 +197,11 @@ it('refreshes shared wave costs in a new version while retaining request costs a
         profile_id: 'profile',
         delivery_days: null,
         selections: [{ quote_item_id: 'quote', markup_coefficient: '1.5' }],
-        expenses: [{ ...shared, amount: '100' }, own],
+        expenses: [
+          { ...shared, amount: '100' },
+          { ...airport, amount: '100', scope: 'REQUEST' },
+          own,
+        ],
       },
       lines: [{ quote_item_id: 'quote' }],
     },
@@ -200,7 +211,7 @@ it('refreshes shared wave costs in a new version while retaining request costs a
       return { snapshot: { lines: [], totals: {}, wave: { financial_digest: 'b'.repeat(64) } } };
     if (path.split('?')[0].endsWith('/calculations')) return { items: [previous] };
     if (path.endsWith('/wave-expenses'))
-      return { expenses: [shared], source_calculation_id: 'peer-new' };
+      return { expenses: [shared, airport], source_calculation_id: 'peer-new' };
     if (path.includes('/quote-items'))
       return {
         items: [
@@ -244,7 +255,18 @@ it('refreshes shared wave costs in a new version while retaining request costs a
         body: expect.objectContaining({
           expenses: expect.arrayContaining([
             expect.objectContaining({ name: 'Логистика', amount: '150' }),
-            expect.objectContaining({ name: 'Доставка клиенту', amount: '7' }),
+            expect.objectContaining({
+              name: 'Логистика РФ',
+              amount: '1200',
+              scope: 'WAVE',
+              stage: 'DOMESTIC_LOGISTICS',
+            }),
+            expect.objectContaining({
+              name: 'Доставка клиенту',
+              amount: '7',
+              scope: 'REQUEST',
+              stage: 'CLIENT_DELIVERY',
+            }),
           ]),
         }),
       }),
@@ -254,6 +276,7 @@ it('refreshes shared wave costs in a new version while retaining request costs a
     .mocked(api)
     .mock.calls.find(([path]) => path.endsWith('/calculations/preview'))?.[1]?.body;
   expect(body).not.toHaveProperty('delivery_days');
+  expect((body as { expenses: unknown[] }).expenses).toHaveLength(3);
 });
 
 it('edits waves using week numbers and displays recalculated costs for all orders', async () => {
