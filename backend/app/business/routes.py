@@ -637,7 +637,7 @@ def delivery_expense(db, request, chosen_city, required):
         "currency": "RUB",
         "method": "BY_QUANTITY",
         "scope": "REQUEST",
-        "stage": "GENERAL",
+        "stage": "CLIENT_DELIVERY",
         "calculation_type": "FIXED",
         "include_in_cost": True,
         "include_in_cash": True,

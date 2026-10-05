@@ -138,7 +138,11 @@ export function ExpenseTypeEditor({ onClose, onSuccess }: { onClose: () => void;
             {errors.currency_id && <p className="field-error">{errors.currency_id}</p>}
           </div>
           {select('distribution_method', 'Распределение', distributions)}
-          {select('stage', 'Этап', [['GENERAL', 'Общий расход'], ['INTERNATIONAL_LOGISTICS', 'Международная логистика']])}
+          {select('stage', 'Этап', [
+            ['GENERAL', 'Общий расход'], ['INTERNATIONAL_LOGISTICS', 'Международная логистика'],
+            ['DOMESTIC_LOGISTICS', 'Вывоз из аэропорта — вся волна'],
+            ['CLIENT_DELIVERY', 'Доставка клиенту — этот расчёт'],
+          ])}
           {['PERCENTAGE', 'BRACKET'].includes(values.calculation_type) && select('percent_base', 'База начисления', bases)}
           {values.calculation_type === 'BRACKET' && <div className="field wide">
             <label>Диапазоны расходов <span>*</span></label>

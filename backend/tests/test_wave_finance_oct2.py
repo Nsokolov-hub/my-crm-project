@@ -100,9 +100,10 @@ def test_vat_deduction_removes_import_vat_from_cost_but_not_cash_needed():
     imported = Decimal(before["totals"]["import_vat"])
     assert imported > 0
     assert Decimal(before["totals"]["cost"]) - Decimal(after["totals"]["cost"]) == imported
-    assert Decimal(before["totals"]["sale_net"]) - Decimal(after["totals"]["sale_net"]) == imported * Decimal(
-        "1.5"
-    )
+    # Markup is always on customs value + duty; unrecoverable VAT is recharged afterwards.
+    assert Decimal(before["totals"]["sale_net"]) - Decimal(after["totals"]["sale_net"]) == imported
+    assert before["totals"]["cost_after_markup"] == after["totals"]["cost_after_markup"]
+    assert before["totals"]["profit"] == after["totals"]["profit"]
     assert before["totals"]["cash_need"] == after["totals"]["cash_need"]
     assert before["totals"]["import_vat"] == after["totals"]["import_vat"]
 
