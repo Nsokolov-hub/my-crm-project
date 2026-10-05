@@ -428,6 +428,21 @@ def test_own_only_overrides_all_and_shared_request_access(crm):  # noqa: F811
     login(crm, "manager@example.com")
     assert crm["client"].get("/api/v1/requests/" + other_request["id"]).status_code == 404
     assert not crm["client"].get("/api/v1/requests").json()["items"]
+    with crm["sessions"].begin() as db:
+        notification = Notification(
+            user_id=crm["manager"].id,
+            event_key="foreign-request",
+            title="Чужая заявка",
+            entity_type="request",
+            entity_id=other_request["id"],
+        )
+        db.add(notification)
+        db.flush()
+        notification_id = notification.id
+    visible = crm["client"].get("/api/v1/notifications?read=false").json()
+    assert not visible["items"]
+    assert visible["unread"] == 0
+    post(crm, f"/notifications/{notification_id}/read", {}, status=404)
 
 
 def test_invoice_legal_details_and_bank_selection_exclude_service_data():

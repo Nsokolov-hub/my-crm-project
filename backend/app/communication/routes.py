@@ -365,45 +365,44 @@ def read_chat(entity_id: str, body: ReadInput, user: User = Depends(current_user
     return chat_view(db, chat, member)
 
 
+def notification_scope(db, user):
+    from app.business.models import CalendarEntry, SupplierOrderLine, WorkflowReview
+    from app.commerce.models import Execution
+    from app.crm.models import Counterparty, Request, Task
+
+    visible_requests = select(Request.id).where(request_predicate(db, user))
+    visible_tasks = select(Task.id).where(task_predicate(db, user))
+    visible_clients = select(Counterparty.id).where(client_predicate(db, user))
+    blocked_orders = select(SupplierOrderLine.order_id).join(Execution, Execution.id == SupplierOrderLine.execution_id).where(Execution.request_id.not_in(visible_requests))
+    visible_calendar = select(CalendarEntry.id).where(
+        or_(CalendarEntry.request_id.in_(visible_requests), CalendarEntry.request_id.is_(None) & (
+            True if can(db, user, 'approvals.decide') else or_(CalendarEntry.author_id == user.id, CalendarEntry.responsible_id == user.id))),
+        or_(CalendarEntry.supplier_order_id.is_(None), CalendarEntry.supplier_order_id.not_in(blocked_orders)))
+    visible_reviews = select(WorkflowReview.id).where(
+        or_(WorkflowReview.request_id.is_(None), WorkflowReview.request_id.in_(visible_requests)),
+        or_(WorkflowReview.kind != 'task', WorkflowReview.entity_id.in_(visible_tasks)),
+        or_(WorkflowReview.kind != 'calendar', WorkflowReview.entity_id.in_(visible_calendar)))
+    return [or_(Notification.entity_type != kind, Notification.entity_id.in_(ids)) for kind, ids in (
+        ('request', visible_requests), ('task', visible_tasks), ('counterparty', visible_clients),
+        ('calendar_entry', visible_calendar), ('workflow_review', visible_reviews))]
+
+
 @router.get('/notifications')
 def notifications(read: bool | None = None, page: int = 1, page_size: int = 25,
                   user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
-    statement = select(Notification).where(Notification.user_id == user.id)
-    
-    from app.crm.models import Counterparty, Task
-    visible_clients = select(Counterparty.id).where(client_predicate(db, user))
-    statement = statement.where(
-        or_(
-            Notification.entity_type != 'task',
-            Notification.entity_id.in_(select(Task.id).where(task_predicate(db, user)))
-        ),
-        or_(
-            Notification.entity_type != 'counterparty',
-            Notification.entity_id.in_(visible_clients)
-        )
-    )
-    
+    guards = notification_scope(db, user)
+    statement = select(Notification).where(Notification.user_id == user.id, *guards)
     if read is not None:
         statement = statement.where(Notification.read.is_(read))
     result = paginate(db, statement.order_by(Notification.created_at.desc(), Notification.id), page, page_size)
-    # Notification titles contain no financial data; access is checked again when following the object link.
     result['unread'] = db.scalar(select(func.count()).select_from(Notification).where(
-        Notification.user_id == user.id, Notification.read.is_(False),
-        or_(
-            Notification.entity_type != 'task',
-            Notification.entity_id.in_(select(Task.id).where(task_predicate(db, user)))
-        ),
-        or_(
-            Notification.entity_type != 'counterparty',
-            Notification.entity_id.in_(visible_clients)
-        )
-    )) or 0
+        Notification.user_id == user.id, Notification.read.is_(False), *guards)) or 0
     return result
 
 
 @router.post('/notifications/{entity_id}/read')
 def read_notification(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
-    row = db.scalar(select(Notification).where(Notification.id == entity_id, Notification.user_id == user.id).with_for_update())
+    row = db.scalar(select(Notification).where(Notification.id == entity_id, Notification.user_id == user.id, *notification_scope(db, user)).with_for_update())
     if row is None:
         raise DomainError('NOT_FOUND', 'Уведомление не найдено', 404)
     row.read = True
