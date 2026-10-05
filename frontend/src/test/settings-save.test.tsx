@@ -86,6 +86,7 @@ describe('settings save on HTTP origins', () => {
             email: 'irina@example.com',
             password: 'long-test-password',
             role_ids: ['role-sales'],
+            own_requests_only: false,
           },
         }),
       ),

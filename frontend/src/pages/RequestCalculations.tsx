@@ -47,6 +47,9 @@ const detailLabels: Record<string, string> = {
   duty: 'Пошлина, ₽',
   duty_per_unit: 'Пошлина за единицу, ₽',
   customs_fee: 'Таможенный сбор, ₽',
+  customs_fee_1: 'Сбор 1 — по шкале, ₽',
+  customs_fee_2: 'Сбор 2 — колонки, ₽',
+  customs_fee_per_unit: 'Сбор за единицу, ₽',
   general_expenses: 'Прочие расходы, ₽',
   expenses_total: 'Все распределённые расходы, ₽',
   cash_expenses: 'Денежные расходы, ₽',
@@ -352,12 +355,20 @@ function CalculationEditor({
     String(previousAdjustment.service_fee_percent || '0'),
   );
   const [vatDeductible, setVatDeductible] = useState(
-    Boolean(previousInput.vat_deductible ?? previousSnapshot.vat_deductible),
+    Boolean(previousInput.vat_deductible ?? previousSnapshot.vat_deductible ?? true),
   );
   const [deliveryDays, setDeliveryDays] = useState(
-    String((Object.prototype.hasOwnProperty.call(previousInput, 'delivery_days')
-      ? previousInput.delivery_days : previousSnapshot.delivery_days) ?? ''),
+    String(
+      (Object.prototype.hasOwnProperty.call(previousInput, 'delivery_days')
+        ? previousInput.delivery_days
+        : previousSnapshot.delivery_days) ?? '',
+    ),
   );
+  const [deliveryRequired, setDeliveryRequired] = useState(
+    Boolean(previousInput.delivery_required ?? true),
+  );
+  const [deliveryCity, setDeliveryCity] = useState(String(previousInput.delivery_city || ''));
+  const tariffs = useApi<Page>('/delivery-tariffs');
   const [preview, setPreview] = useState<Entity>();
   const [showDetails, setShowDetails] = useState(false);
   const [attempted, setAttempted] = useState(false);
@@ -398,26 +409,60 @@ function CalculationEditor({
         (profile.definition as Entity | undefined)?.methodology === 'itemized_v2',
     ) || [];
   const selectedProfile = profileOptions.find((profile) => profile.id === profileId);
+  const hasImportSelections = selectedRows.some(
+    (row) => !row.calculation_type || row.calculation_type === 'IMPORT',
+  );
+  const profileHydrationKey = `${profileId}:${hasImportSelections}`;
   useEffect(() => {
-    if (!selectedProfile || hydratedProfileId === profileId || waveExpenses.loading) return;
-    const defaults = ((selectedProfile.definition as Entity).default_expenses || []) as Entity[];
-    const shared = waveExpenses.data?.expenses;
-    const previousExpenses = Array.isArray(previousInput.expenses) && profileId ===
-      String(previousInput.profile_id || previousSnapshot.profile_id || previous?.profile_id || '')
-      ? previousInput.expenses as Entity[] : undefined;
+    if (
+      !selectedProfile ||
+      hydratedProfileId === profileHydrationKey ||
+      waveExpenses.loading ||
+      quotes.loading
+    )
+      return;
+    const defaults = (
+      ((selectedProfile.definition as Entity).default_expenses || []) as Entity[]
+    ).filter((expense) => hasImportSelections || expense.scope === 'REQUEST');
+    const shared = hasImportSelections ? waveExpenses.data?.expenses : undefined;
+    const previousExpenses =
+      Array.isArray(previousInput.expenses) &&
+      profileId ===
+        String(
+          previousInput.profile_id || previousSnapshot.profile_id || previous?.profile_id || '',
+        )
+        ? (previousInput.expenses as Entity[])
+        : undefined;
     const requestExpenses = (previousExpenses || defaults).filter((row) => row.scope === 'REQUEST');
     setExpenses(
       (shared === null || shared === undefined
         ? previousExpenses || defaults
         : waveExpenses.data?.source_calculation_id
           ? [...shared, ...requestExpenses]
-          : [...defaults.filter((row) => row.scope !== 'REQUEST' && row.stage !== 'INTERNATIONAL_LOGISTICS'),
-            ...requestExpenses, ...shared]
+          : [
+              ...defaults.filter(
+                (row) => row.scope !== 'REQUEST' && row.stage !== 'INTERNATIONAL_LOGISTICS',
+              ),
+              ...requestExpenses,
+              ...shared,
+            ]
       ).map(expenseFromReference),
     );
-    setHydratedProfileId(profileId);
-  }, [selectedProfile, profileId, hydratedProfileId, waveExpenses.loading, waveExpenses.data,
-    previousInput.expenses, previousInput.profile_id, previousSnapshot.profile_id, previous?.profile_id]);
+    setHydratedProfileId(profileHydrationKey);
+  }, [
+    selectedProfile,
+    profileId,
+    hydratedProfileId,
+    waveExpenses.loading,
+    waveExpenses.data,
+    quotes.loading,
+    hasImportSelections,
+    profileHydrationKey,
+    previousInput.expenses,
+    previousInput.profile_id,
+    previousSnapshot.profile_id,
+    previous?.profile_id,
+  ]);
   const profileRates = ((selectedProfile?.definition as Entity | undefined)?.exchange_rates ||
     []) as Rate[];
   const serverError = command.error instanceof ApiError ? command.error : undefined;
@@ -426,14 +471,19 @@ function CalculationEditor({
     ? Object.values(selections)[serverSelectionIndex]?.quote_item_id
     : undefined;
   const errors: string[] = [];
-  if (!request.wave_id) errors.push('Руководитель должен назначить волну поставки в заявке.');
+  if (
+    !request.wave_id &&
+    selectedRows.some((row) => !row.calculation_type || row.calculation_type === 'IMPORT')
+  )
+    errors.push('Руководитель должен назначить волну поставки в заявке.');
   if (waveExpenses.loading) errors.push('Загружаются расходы волны.');
   if (waveExpenses.error)
     errors.push(
       'Не удалось загрузить расходы волны. Проверьте тариф поставщика и повторно откройте расчёт.',
     );
   if (!profileId) errors.push('Не выбран профиль расчёта.');
-  if (profileId && hydratedProfileId !== profileId) errors.push('Загружаются расходы профиля.');
+  if (profileId && hydratedProfileId !== profileHydrationKey)
+    errors.push('Загружаются расходы профиля.');
   if (!Object.keys(selections).length) errors.push('Выберите хотя бы одну позицию квоты.');
   if (Object.keys(selections).length > selectedRows.length)
     errors.push('Часть выбранных квот не загружена. Откройте их в списке и повторите выбор.');
@@ -546,9 +596,15 @@ function CalculationEditor({
           rates: [],
           expenses,
           vat_deductible: vatDeductible,
+          delivery_required: deliveryRequired,
+          delivery_city: deliveryCity || null,
           ...(deliveryDays !== '' ? { delivery_days: Number(deliveryDays) } : {}),
           ...(save && preview && ((preview.snapshot || preview) as Entity).wave_distribution
-            ? { expected_wave_digest: (((preview.snapshot || preview) as Entity).wave_distribution as Entity).digest }
+            ? {
+                expected_wave_digest: (
+                  ((preview.snapshot || preview) as Entity).wave_distribution as Entity
+                ).digest,
+              }
             : {}),
           payment_terms: {
             prepayment_percent: prepayment,
@@ -603,6 +659,8 @@ function CalculationEditor({
     serviceFeePercent,
     vatDeductible,
     deliveryDays,
+    deliveryRequired,
+    deliveryCity,
     requestVersion: request.version,
     waveId: request.wave_id,
     selectedRows: selectedRows.map((row) => row.id),
@@ -632,6 +690,10 @@ function CalculationEditor({
     sale_total: 'Цена продажи, ₽',
     profit: 'Прибыль, ₽',
     total: 'Итого, ₽',
+    profitability_percent: 'Рентабельность, %',
+    margin_percent: 'Маржа, %',
+    customs_fee_1: 'Сбор 1 — обычные товары, ₽',
+    customs_fee_2: 'Сбор 2 — колонки, ₽',
   };
   return (
     <Modal title={previous ? 'Новая версия расчёта' : 'Новый расчёт'} wide onClose={close}>
@@ -721,7 +783,12 @@ function CalculationEditor({
                 max="3650"
                 step="1"
                 aria-label="Общий срок поставки, дней"
-                value={deliveryDays}
+                value={
+                  deliveryDays ||
+                  (selectedRows.length
+                    ? String(Math.max(...selectedRows.map((row) => Number(row.delivery_days || 0))))
+                    : '')
+                }
                 placeholder="По срокам выбранных квот"
                 onChange={(event) => {
                   setDeliveryDays(event.target.value);
@@ -733,6 +800,37 @@ function CalculationEditor({
                 квот.
               </small>
             </label>
+            <label className="field">
+              <input
+                type="checkbox"
+                checked={!deliveryRequired}
+                onChange={(e) => {
+                  setDeliveryRequired(!e.target.checked);
+                  invalidate();
+                }}
+              />{' '}
+              Доставка не требуется
+            </label>
+            {deliveryRequired && (
+              <label className="field">
+                Город доставки — СДЭК ТМ-35, до 15 кг
+                <select
+                  value={deliveryCity}
+                  onChange={(e) => {
+                    setDeliveryCity(e.target.value);
+                    invalidate();
+                  }}
+                >
+                  <option value="">Определить по юридическому адресу клиента</option>
+                  {tariffs.data?.items.map((row) => (
+                    <option key={row.id} value={String(row.city)}>
+                      {String(row.city)} — {decimal(row.amount)} ₽ + НДС
+                    </option>
+                  ))}
+                </select>
+                <small>Если город не распознан, выберите его вручную.</small>
+              </label>
+            )}
           </section>
           <section className="calculation-section">
             <div className="section-heading">
@@ -1411,6 +1509,25 @@ function CalculationEditor({
               </div>
               {totals && (
                 <DetailPairs
+                  formulas={{
+                    'Закупка, ₽': 'Цена закупки × количество × курс валюты',
+                    'Пошлина, ₽':
+                      'Импорт: таможенная стоимость × ставка группы. Колонки: 0%. DAP: закупка × 5%. РФ: 0.',
+                    'Таможенный сбор, ₽':
+                      'Сбор 1 по шкале от таможенной стоимости обычных товаров + сбор 2: 73 800 ₽ только на колонки.',
+                    'Ввозной НДС, ₽':
+                      '(Таможенная стоимость + пошлина) × ставка НДС; сбор в базу НДС не входит.',
+                    'Себестоимость, ₽':
+                      'Закупка + расходы + пошлина + сбор + финансирование + бонусы; ввозной НДС включается при отключённом вычете.',
+                    'Прибыль, ₽': 'Продажа без НДС − себестоимость',
+                    'Рентабельность, %': 'Прибыль / себестоимость × 100%',
+                    'Маржа, %': 'Прибыль / продажа без НДС × 100%',
+                    'НДС продажи, ₽':
+                      'Продажа без НДС × ставка НДС с учётом округления цены за штуку',
+                    'Цена продажи, ₽': 'Продажа без НДС + НДС продажи',
+                    'Потребность в средствах, ₽':
+                      'Закупка + денежные расходы + пошлина + сбор + ввозной НДС + финансирование и бонусы',
+                  }}
                   values={Object.fromEntries(
                     Object.entries(totals)
                       .filter(([key]) => key in resultLabels)

@@ -58,7 +58,7 @@ def filter_profile_definition(definition: dict, *, purchase: bool, reward: bool,
     if not (purchase and reward and profit):
         definition.pop("constants", None)
         definition.pop("formulas", None)
-        for field in ("customs_rules", "customs_fee_brackets", "financing_annual_rate", "default_markup_coefficient"):
+        for field in ("customs_rules", "customs_fee_brackets", "customs_fee_overrides", "financing_annual_rate", "default_markup_coefficient"):
             definition.pop(field, None)
     return definition
 
@@ -112,7 +112,7 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
                         "bonus_withdrawal_percent", "bonus_withdrawal_fee", "additional_service_fee",
                     ))
                 if can_profit:
-                    allowed.update(("cost", "profit", "margin", "markup_amount", "profitability_percent"))
+                    allowed.update(("cost", "profit", "margin", "markup_amount", "profitability_percent", "margin_percent"))
                 line["detail"] = {key: value for key, value in line["detail"].items() if key in allowed}
 
     if "totals" in snapshot and not all_finances:
@@ -122,7 +122,7 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
         if can_reward:
             allowed.update(("internal_bonus", "service_fee"))
         if can_profit:
-            allowed.update(("cost", "profit", "markup_amount", "profitability_percent"))
+            allowed.update(("cost", "profit", "markup_amount", "profitability_percent", "margin_percent"))
         snapshot["totals"] = {key: value for key, value in snapshot["totals"].items() if key in allowed}
 
     if not can_calculations:
@@ -275,6 +275,7 @@ def selection_from_saved_line(line: dict, request_id: str, quantity=None, input_
         "packing": {"display_name": line.get("packing") or line["product"].get("packaging", "")},
         "product_group": deepcopy(line["product_group"]),
         "currency_code": line["purchase_currency"],
+        "calculation_type": line.get("calculation_type", "IMPORT"),
         "markup_coefficient": detail.get("markup_coefficient"),
         "bonus_coefficient": detail.get("bonus_coefficient"),
         "weight": str(dec(input_selection["weight"]) * quantity / original_quantity) if (input_selection or {}).get("weight") is not None else None,
@@ -375,7 +376,7 @@ def wave_financial_digest(selections: list[dict], expenses: list[dict], profile:
     basis = sorted([{
         "id": row["quote_item"]["id"], "quantity": str(dec(row["quote_item"]["quantity"])),
         "purchase_rub": str(dec(row.get("_purchase_rub", "0"))),
-        "group": row["product_group"]["slug"], "weight": str(dec(row.get("weight") or "0")),
+        "group": row["product_group"]["slug"], "calculation_type": row.get("calculation_type", "IMPORT"), "weight": str(dec(row.get("weight") or "0")),
     } for row in selections], key=lambda row: row["id"])
     # Fixed decimal spelling is canonical: 2 and 2.000000 represent one plan.
     for row in basis:
@@ -392,6 +393,7 @@ def wave_financial_digest(selections: list[dict], expenses: list[dict], profile:
                    "expenses": [row for row in expenses if row.get("scope", "WAVE") == "WAVE"],
                    "customs_rules": profile.get("customs_rules"),
                    "customs_fee_brackets": profile.get("customs_fee_brackets"),
+                   "customs_fee_overrides": profile.get("customs_fee_overrides"),
                    "vat_rate": profile.get("vat_rate"), "rounding": profile.get("rounding"),
                    "dated_bracket_day": date.today().isoformat() if any(
                        bracket.get("valid_from") or bracket.get("valid_to")
@@ -463,6 +465,7 @@ def wave_financial_summary(db, wave_id: str) -> dict:
     summary.update(status="partial" if unknown_quantity else "current", provisional=bool(unknown_quantity),
                    source_calculation_id=source_id,
                    digest=wave_financial_digest(selections, expenses or [], profile, unknown_quantity, rates))
+    summary["actual"] = wave_actual_summary(db, wave_id, profile, expenses or [], rates)
     return summary
 
 
@@ -613,6 +616,7 @@ def itemized_selection(db, request_id: str, selection, index: int) -> dict:
         "packing": serialize(packing),
         "product_group": serialize(group),
         "currency_code": currency.code,
+        "calculation_type": (db.get(Counterparty, quote.supplier_id).details or {}).get("calculation_type", "IMPORT"),
         "markup_coefficient": str(selection.markup_coefficient) if selection.markup_coefficient is not None else None,
         "bonus_coefficient": str(selection.bonus_coefficient) if selection.bonus_coefficient is not None else None,
         "weight": str(selection.weight) if selection.weight is not None else None,
@@ -634,6 +638,8 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             "PROFILE_NOT_EFFECTIVE", "Выберите активный опубликованный профиль, действующий на дату расчёта"
         )
     itemized = profile.definition.get("methodology") == "itemized_v2"
+    if data.vat_deductible is None:
+        data = data.model_copy(update={"vat_deductible": itemized})
     if itemized:
         if data.internal_adjustment or any(selection.bonus_coefficient is not None
                                            for selection in data.selections):
@@ -641,8 +647,6 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         if not all(selection.quote_item_id for selection in data.selections):
             error("QUOTE_ITEM_REQUIRED", "Для выбранной методики используйте позиции табличной квоты", field="selections")
         country = db.get(Country, profile.definition.get("import_country_id"))
-        if not country or not country.active:
-            error("IMPORT_COUNTRY_REQUIRED", "Выберите действующую страну ввоза из справочника", field="profile_id")
         try:
             profile_rates = [Rate.model_validate(rate).model_dump(mode="json") for rate in profile.definition.get("exchange_rates", [])]
         except ValidationError:
@@ -653,22 +657,28 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             if not currency or not currency.active:
                 error("CURRENCY_REQUIRED", f"Валюта курса {rate['currency']} не найдена в справочнике", field=f"rates.{index}.currency")
         selections = [itemized_selection(db, request_id, selection, index) for index, selection in enumerate(data.selections)]
-        if not req.wave_id:
-            error("WAVE_REQUIRED", "Руководитель должен назначить волну поставки до расчёта", field="wave_id")
-        wave = db.get(Wave, req.wave_id)
-        suppliers = {row["quote_item"]["supplier_id"] for row in selections}
-        if not wave or suppliers != {wave.supplier_id}:
-            error("WAVE_SUPPLIER", "Выбранная волна должна быть открыта и относиться к поставщику всех позиций", field="wave_id")
-        advisory(db, f"wave:{wave.id}")
-        wave = lock(db, Wave, wave.id)
-        if wave.status not in ("planned", "assembling"):
-            error("WAVE_CLOSED", "Для расчёта выберите открытую волну поставки", field="wave_id")
-        selected_quote_ids = [row["quote_item"]["id"] for row in selections]
-        peer_selections, existing_quantity, existing_components = wave_selections(
-            db, wave.id, exclude_request_id=request_id, exclude_quote_ids=selected_quote_ids
-        )
+        importing = any(row['calculation_type'] == 'IMPORT' for row in selections)
+        if importing and (not country or not country.active):
+            error('IMPORT_COUNTRY_REQUIRED', 'Выберите действующую страну ввоза из справочника', field='profile_id')
+        wave = None
+        peer_selections, existing_quantity, existing_components = [], dec('0'), {}
+        wave_expenses, wave_expense_source = None, None
+        if importing:
+            if not req.wave_id:
+                error('WAVE_REQUIRED', 'Руководитель должен назначить волну поставки до расчёта', field='wave_id')
+            wave = db.get(Wave, req.wave_id)
+            suppliers = {row['quote_item']['supplier_id'] for row in selections}
+            if not wave or suppliers != {wave.supplier_id}:
+                error('WAVE_SUPPLIER', 'Волна должна относиться к поставщику всех выбранных позиций', field='wave_id')
+            advisory(db, f'wave:{wave.id}')
+            wave = lock(db, Wave, wave.id)
+            if wave.status not in ('planned', 'assembling'):
+                error('WAVE_CLOSED', 'Для расчёта выберите открытую волну', field='wave_id')
+            peer_selections, existing_quantity, existing_components = wave_selections(
+                db, wave.id, exclude_request_id=request_id,
+                exclude_quote_ids=[row['quote_item']['id'] for row in selections])
+            wave_expenses, wave_expense_source = latest_wave_expenses(db, wave.id)
         missing_basis = existing_quantity
-        wave_expenses, wave_expense_source = latest_wave_expenses(db, wave.id)
         if data.expenses is not None:
             effective_expenses = [expense.model_dump(mode="json") for expense in data.expenses]
         elif wave_expenses is not None:
@@ -677,10 +687,19 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             effective_expenses = wave_expenses + request_defaults
         else:
             effective_expenses = list(profile.definition.get("default_expenses", []))
-            default_logistics = supplier_logistics(db, wave.supplier_id)
+            default_logistics = supplier_logistics(db, wave.supplier_id) if wave else None
+            if not importing:
+                effective_expenses = [row for row in effective_expenses if row.get("scope") == "REQUEST"]
             if default_logistics:
                 effective_expenses = [row for row in effective_expenses
                                       if row.get("stage") != "INTERNATIONAL_LOGISTICS"] + [default_logistics]
+        from app.business.routes import delivery_expense
+        delivery = delivery_expense(db, req, data.delivery_city, data.delivery_required)
+        effective_expenses = [row for row in effective_expenses if not row.get('name', '').startswith('Доставка СДЭК до 15 кг:') and row.get('name') != 'НДС доставки СДЭК']
+        if delivery:
+            delivery_vat = (dec(delivery['amount']) * dec(profile.definition['vat_rate']) / 100).quantize(dec('.01'))
+            effective_expenses += [delivery, {**delivery, 'name': 'НДС доставки СДЭК', 'amount': str(delivery_vat),
+                                             'include_in_cost': not data.vat_deductible, 'basis': 'НДС тарифа СДЭК'}]
         validate_unknown_wave_basis(profile.definition, effective_expenses, missing_basis)
         effective_profile = deepcopy(profile.definition)
         effective_profile["vat_deduction_mode"] = data.vat_deductible
@@ -697,18 +716,21 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             wave_existing_components=existing_components,
             wave_existing_selections=peer_selections,
         )
-        snapshot["wave"] = {"id": wave.id, "number": wave.number, "supplier_id": wave.supplier_id,
-                            "existing_quantity": str(existing_quantity),
-                            "expense_source_calculation_id": wave_expense_source}
-        digest_rows = [selection_from_saved_line(line, request_id) for line in snapshot["lines"]]
-        for index, row in enumerate(digest_rows):
-            row["weight"] = selections[index].get("weight")
-        snapshot["wave"]["financial_digest"] = wave_financial_digest(
-            [*digest_rows, *peer_selections], effective_expenses, effective_profile, existing_quantity, rates)
-        snapshot["wave_distribution"]["digest"] = digest({
-            "financial_digest": snapshot["wave"]["financial_digest"],
-            "wave_revision": wave_revision_digest(db, wave),
-        })
+        if wave:
+            snapshot["wave"] = {"id": wave.id, "number": wave.number, "supplier_id": wave.supplier_id,
+                                "existing_quantity": str(existing_quantity),
+                                "expense_source_calculation_id": wave_expense_source}
+            digest_rows = [selection_from_saved_line(line, request_id) for line in snapshot["lines"]]
+            for index, row in enumerate(digest_rows):
+                row["weight"] = selections[index].get("weight")
+            snapshot["wave"]["financial_digest"] = wave_financial_digest(
+                [*digest_rows, *peer_selections], effective_expenses, effective_profile, existing_quantity, rates)
+            snapshot["wave_distribution"]["digest"] = digest({
+                "financial_digest": snapshot["wave"]["financial_digest"],
+                "wave_revision": wave_revision_digest(db, wave),
+            })
+        else:
+            snapshot['wave_distribution']['digest'] = digest({'selections': selections, 'expenses': effective_expenses, 'profile': effective_profile})
         snapshot["vat_deductible"] = data.vat_deductible
         snapshot["delivery_days"] = data.delivery_days if data.delivery_days is not None else max(
             (line.get("delivery_days") or 0 for line in snapshot["lines"]), default=0)
@@ -738,6 +760,8 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         if quote.revision != selection.quote_revision:
             error("QUOTE_REVISION_CONFLICT", "Редакция квоты изменилась", 409)
         check_quote(db, quote, require_verified=False)
+        if (db.get(Counterparty, quote.supplier_id).details or {}).get('calculation_type', 'IMPORT') != 'IMPORT':
+            error('PROFILE_METHOD', 'Для DAP и закупок в РФ используйте табличные квоты и профиль новой методики')
         product = db.get(Product, quote.product_id)
         validate_quantity(quote, product, selection.quantity, selection.unit)
         if quote.sample and not profile.definition["allow_samples"]:
@@ -782,7 +806,7 @@ def sample_profile(db: DB, user: Actor):
 def sample_itemized_profile(db: DB, user: Actor):
     require_permission(db, user, "profiles.write")
     return {
-        "notice": "Выберите страну ввоза и дополните диапазоны таможенного сбора для сумм выше 500 000 ₽ перед публикацией.",
+        "notice": "Сбор 1: шкала 2026 года по обычным товарам. Сбор 2: 73 800 ₽ на колонки, пошлина 0%. Штаммы: пошлина 12%.",
         "definition": itemized_profile(),
     }
 
@@ -953,6 +977,8 @@ def save_calculation(request_id: str, data: CalculationIn, db: DB, user: Actor):
         )
         db.add(obj)
         db.flush()
+        from app.business.routes import review_calculation
+        review_calculation(db, user, obj)
         audit(
             db,
             user,
@@ -992,3 +1018,64 @@ def list_calculations(request_id: str, db: DB, user: Actor):
             ).all()
         ]
     }
+
+
+def wave_actual_summary(db, wave_id, profile, expenses, rates):
+    """Accepted sales keep their prices; only shared wave costs are redistributed."""
+    selections, accepted = {}, []
+    for allocation in db.scalars(select(WaveAllocation).where(WaveAllocation.wave_id == wave_id, WaveAllocation.active.is_(True))):
+        execution = db.get(Execution, allocation.execution_id)
+        proposal = db.get(CommercialDocument, execution.proposal_id)
+        if not proposal:
+            return {'status': 'incomplete', 'message': 'Для принятой позиции отсутствует исходный документ'}
+        calculation = db.get(Calculation, proposal.calculation_id)
+        line = next((line for line in calculation.snapshot.get('lines', []) if line['line_id'] == execution.line_id), None)
+        if not line:
+            return {'status': 'incomplete', 'message': 'Нет сохранённого расчёта принятой позиции'}
+        selection = selection_from_saved_line(line, execution.request_id, allocation.quantity)
+        if not selection:
+            return {'status': 'incomplete', 'message': 'Для старой позиции нет базы таможенной стоимости'}
+        key = line['quote_item_id']
+        if key in selections:
+            selections[key]['quote_item']['quantity'] = str(dec(selections[key]['quote_item']['quantity']) + allocation.quantity)
+            selections[key]['_purchase_rub'] = str(dec(selections[key]['_purchase_rub']) + dec(selection['_purchase_rub']))
+        else:
+            selections[key] = selection
+        accepted.append((allocation, line, calculation.snapshot, execution))
+    if not accepted:
+        return {'status': 'empty', 'message': 'В волну ещё не распределены принятые позиции'}
+    current = calculate_itemized(profile, list(selections.values()), expenses, rates)
+    current_lines = {line['line_id']: line for line in current['lines']}
+    sales = sale_net = costs = prepaid = deferred = dec('0')
+    for allocation, old, snapshot, execution in accepted:
+        quantity = allocation.quantity
+        factor = quantity / dec(old['quantity'])
+        detail = old['detail']
+        new = current_lines[old['quote_item_id']]
+        current_factor = quantity / dec(new['quantity'])
+        wave_names = {expense['name'] for expense in snapshot.get('resolved_expenses', snapshot.get('input', {}).get('expenses', []) or [])
+                      if expense.get('scope', 'WAVE') == 'WAVE' and expense.get('include_in_cost', True)}
+        old_shared = sum((dec(old.get('expense_details', {}).get(name, '0')) for name in wave_names), dec('0'))
+        old_vat = dec('0') if snapshot.get('vat_deductible', snapshot.get('profile', {}).get('vat_deduction_mode', True)) else dec(detail.get('import_vat', '0'))
+        new_vat = dec('0') if snapshot.get('vat_deductible', snapshot.get('profile', {}).get('vat_deduction_mode', True)) else dec(new['detail']['import_vat'])
+        old_base = (dec(detail['cost']) - old_shared - dec(detail['customs_fee']) - dec(detail['duty']) - old_vat) * factor
+        new_shared = dec(new['detail']['international_logistics']) + dec(new['detail']['general_expenses'])
+        costs += old_base + (new_shared + dec(new['detail']['customs_fee']) + dec(new['detail']['duty']) + new_vat) * current_factor
+        # Execution amounts preserve document rounding, including partial acceptance.
+        execution_factor = quantity / execution.quantity
+        total = dec(execution.snapshot['total']) * execution_factor
+        net = dec(execution.snapshot['net']) * execution_factor
+        sales += total
+        sale_net += net
+        terms = snapshot.get('payment_terms') or {}
+        prepaid += total * dec(terms.get('prepayment_percent', '100')) / 100
+        deferred += total * dec(terms.get('deferred_percent', '0')) / 100
+    profit = sale_net - costs
+    return {key: format(value.quantize(dec('.01')), 'f') for key, value in {
+        'sales': sales, 'sale_net': sale_net, 'cost': costs, 'profit': profit,
+        'prepayment_total': prepaid, 'deferred_total': deferred,
+        'profitability_percent': profit / costs * 100 if costs else dec('0'),
+        'margin_percent': profit / sale_net * 100 if sale_net else dec('0'),
+    }.items()} | {'status': 'current', 'customs_fee_1': current['wave_distribution']['customs_fee_1'],
+                 'customs_fee_2': current['wave_distribution']['customs_fee_2'],
+                 'basis': 'Принятые и распределённые позиции: цены документов и текущие общие расходы; финансирование и бонусы по сохранённому расчёту'}

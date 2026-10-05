@@ -278,7 +278,7 @@ class NomenclaturePatch(Input):
 
 
 class QuoteItemInput(Input):
-    source_request_item_id: str
+    source_request_item_id: str | None = None
     nomenclature_id: str
     packing_id: str
     quantity: Decimal = Field(gt=0, max_digits=24, decimal_places=6)
@@ -309,7 +309,7 @@ class QuoteSheetInput(Input):
 
     @model_validator(mode='after')
     def no_duplicate_source_rows(self):
-        source_ids = [item.source_request_item_id for item in self.items if item.source_request_item_id]
-        if len(source_ids) != len(set(source_ids)):
-            raise ValueError('Одна позиция заявки не может повторяться в одной квоте')
+        identities = [(item.source_request_item_id, item.nomenclature_id, item.packing_id) for item in self.items]
+        if len(identities) != len(set(identities)):
+            raise ValueError('Одинаковое предложение повторяется в одной квоте')
         return self

@@ -61,21 +61,30 @@ function sellerDetails(row: Entity): string {
   return values.length ? values.join(' · ') : 'Не заполнены';
 }
 const userFields: Field[] = [
+  { name: 'own_requests_only', label: 'Показывать только собственные заявки', type: 'checkbox' },
   { name: 'name', label: 'Имя сотрудника', required: true },
   { name: 'email', label: 'Рабочая почта', type: 'email', required: true },
   { name: 'password', label: 'Начальный пароль', type: 'password', minLength: 12, required: true },
   { name: 'role_ids', label: 'Роли', type: 'multiselect', source: '/admin/roles' },
 ];
 const calculationLabels: Record<string, string> = {
-  FIXED: 'Фиксированная сумма', PERCENTAGE: 'Процент',
-  BRACKET: 'По диапазону', MANUAL: 'Ручной ввод',
+  FIXED: 'Фиксированная сумма',
+  PERCENTAGE: 'Процент',
+  BRACKET: 'По диапазону',
+  MANUAL: 'Ручной ввод',
 };
 const distributionLabels: Record<string, string> = {
-  BY_QUANTITY: 'По количеству', BY_PURCHASE_VALUE: 'По закупочной стоимости',
-  EQUALLY_BY_POSITION: 'Поровну по строкам', BY_WEIGHT: 'По весу', MANUAL: 'Вручную',
+  BY_QUANTITY: 'По количеству',
+  BY_PURCHASE_VALUE: 'По закупочной стоимости',
+  EQUALLY_BY_POSITION: 'Поровну по строкам',
+  BY_WEIGHT: 'По весу',
+  MANUAL: 'Вручную',
 };
 const baseLabels: Record<string, string> = {
-  PURCHASE: 'Закупка', CUSTOMS_BASE: 'Таможенная стоимость', DUTY: 'Пошлина', COST: 'Себестоимость',
+  PURCHASE: 'Закупка',
+  CUSTOMS_BASE: 'Таможенная стоимость',
+  DUTY: 'Пошлина',
+  COST: 'Себестоимость',
 };
 export function Settings() {
   const auth = useAuth();
@@ -101,6 +110,7 @@ export function Settings() {
       : []),
     ...(auth.can('finance.calculations.read') ? [['profiles', 'Финансовые профили']] : []),
     ...(auth.can('admin.settings') ? [['settings', 'Правила работы']] : []),
+    ...(auth.can('catalog.read') ? [['tariffs', 'Доставка СДЭК']] : []),
     ...(auth.can('audit.read') ? [['audit', 'Аудит']] : []),
     ...(auth.can('admin.settings') ? [['jobs', 'Фоновые операции']] : []),
     ['account', 'Мой аккаунт'],
@@ -174,21 +184,49 @@ export function Settings() {
             title="Виды расходов"
             description="Создавайте статьи для профилей и расчётов. Суммы и способы распределения можно изменить для конкретной сделки."
             endpoint="/expense-types"
-            action={auth.can('profiles.write') ? <Button onClick={() => setCreatingExpense(true)}><Plus size={16} /> Добавить вид расхода</Button> : undefined}
-            refreshKey={expenseRevision} onSelect={setExpenseType}
+            action={
+              auth.can('profiles.write') ? (
+                <Button onClick={() => setCreatingExpense(true)}>
+                  <Plus size={16} /> Добавить вид расхода
+                </Button>
+              ) : undefined
+            }
+            refreshKey={expenseRevision}
+            onSelect={setExpenseType}
             columns={[
               { key: 'name', label: 'Название' },
-              { key: 'calculation_type', label: 'Тип', render: (row) => calculationLabels[String(row.calculation_type)] || String(row.calculation_type) },
+              {
+                key: 'calculation_type',
+                label: 'Тип',
+                render: (row) =>
+                  calculationLabels[String(row.calculation_type)] || String(row.calculation_type),
+              },
               { key: 'default_value', label: 'По умолчанию' },
               { key: 'currency_code', label: 'Валюта' },
-              { key: 'distribution_method', label: 'Распределение', render: (row) => distributionLabels[String(row.distribution_method)] || String(row.distribution_method) },
+              {
+                key: 'distribution_method',
+                label: 'Распределение',
+                render: (row) =>
+                  distributionLabels[String(row.distribution_method)] ||
+                  String(row.distribution_method),
+              },
             ]}
           />
           <Collection
             title="Отключённые виды расходов"
-            endpoint="/expense-types?active=false" canCreate={false}
-            refreshKey={expenseRevision} onSelect={setExpenseType}
-            columns={[{ key: 'name', label: 'Название' }, { key: 'calculation_type', label: 'Тип', render: (row) => calculationLabels[String(row.calculation_type)] || String(row.calculation_type) }]}
+            endpoint="/expense-types?active=false"
+            canCreate={false}
+            refreshKey={expenseRevision}
+            onSelect={setExpenseType}
+            columns={[
+              { key: 'name', label: 'Название' },
+              {
+                key: 'calculation_type',
+                label: 'Тип',
+                render: (row) =>
+                  calculationLabels[String(row.calculation_type)] || String(row.calculation_type),
+              },
+            ]}
           />
           <Section
             title="Настраиваемая финансовая модель"
@@ -233,7 +271,8 @@ export function Settings() {
                 ? (r) => {
                     setSelected(r);
                     setProfileMode(
-                      (r.definition as Record<string, unknown> | undefined)?.methodology === 'itemized_v2'
+                      (r.definition as Record<string, unknown> | undefined)?.methodology ===
+                        'itemized_v2'
                         ? 'itemized_v2'
                         : 'legacy_formula',
                     );
@@ -278,42 +317,100 @@ export function Settings() {
           />
         </>
       )}
-      {currentTab === 'profiles' && expenseType && <Section title="Вид расхода">
-        <div className="form-body">
-          <DetailPairs values={{
-            Название: expenseType.name,
-            Состояние: expenseType.active ? 'Действует' : 'Отключён',
-            'Тип расчёта': calculationLabels[String(expenseType.calculation_type)] || expenseType.calculation_type,
-            'Значение по умолчанию': expenseType.default_value,
-            Валюта: expenseType.currency_code,
-            Распределение: distributionLabels[String(expenseType.distribution_method)] || expenseType.distribution_method,
-            Этап: expenseType.stage === 'INTERNATIONAL_LOGISTICS' ? 'Международная логистика' : 'Общий расход',
-            ...(expenseType.percent_base ? { 'База начисления': baseLabels[String(expenseType.percent_base)] || expenseType.percent_base } : {}),
-            'В себестоимости': expenseType.include_in_cost ? 'Да' : 'Нет',
-            'В денежной потребности': expenseType.include_in_cash ? 'Да' : 'Нет',
-          }} />
-          {Array.isArray(expenseType.brackets) && expenseType.brackets.length > 0 && <div className="expense-bracket-summary">
-            <strong>Диапазоны расходов</strong>
-            <ul>{(expenseType.brackets as Record<string, unknown>[]).map((range, index) => <li key={index}>
-              От {String(range.from_amount)} до {range.to_amount == null ? 'без верхней границы' : String(range.to_amount)} — {String(range.fee)} {String(expenseType.currency_code || '')}
-              {range.valid_from ? ` · с ${String(range.valid_from)}` : null}
-              {range.valid_to ? ` по ${String(range.valid_to)}` : null}
-            </li>)}</ul>
-          </div>}
-          <div className="inline-actions"><Button variant="secondary" onClick={() => setExpenseType(undefined)}>Закрыть</Button>
-            {auth.can('profiles.write') && <Button variant="secondary" onClick={() => {
-              void command.run(`/expense-types/${expenseType.id}`, { version: expenseType.version, active: !expenseType.active }, 'PATCH')
-                .then(() => { setExpenseType(undefined); setExpenseRevision((value) => value + 1); })
-                .catch(setError);
-            }}>{expenseType.active ? 'Отключить' : 'Включить'}</Button>}
+      {currentTab === 'profiles' && expenseType && (
+        <Section title="Вид расхода">
+          <div className="form-body">
+            <DetailPairs
+              values={{
+                Название: expenseType.name,
+                Состояние: expenseType.active ? 'Действует' : 'Отключён',
+                'Тип расчёта':
+                  calculationLabels[String(expenseType.calculation_type)] ||
+                  expenseType.calculation_type,
+                'Значение по умолчанию': expenseType.default_value,
+                Валюта: expenseType.currency_code,
+                Распределение:
+                  distributionLabels[String(expenseType.distribution_method)] ||
+                  expenseType.distribution_method,
+                Этап:
+                  expenseType.stage === 'INTERNATIONAL_LOGISTICS'
+                    ? 'Международная логистика'
+                    : 'Общий расход',
+                ...(expenseType.percent_base
+                  ? {
+                      'База начисления':
+                        baseLabels[String(expenseType.percent_base)] || expenseType.percent_base,
+                    }
+                  : {}),
+                'В себестоимости': expenseType.include_in_cost ? 'Да' : 'Нет',
+                'В денежной потребности': expenseType.include_in_cash ? 'Да' : 'Нет',
+              }}
+            />
+            {Array.isArray(expenseType.brackets) && expenseType.brackets.length > 0 && (
+              <div className="expense-bracket-summary">
+                <strong>Диапазоны расходов</strong>
+                <ul>
+                  {(expenseType.brackets as Record<string, unknown>[]).map((range, index) => (
+                    <li key={index}>
+                      От {String(range.from_amount)} до{' '}
+                      {range.to_amount == null ? 'без верхней границы' : String(range.to_amount)} —{' '}
+                      {String(range.fee)} {String(expenseType.currency_code || '')}
+                      {range.valid_from ? ` · с ${String(range.valid_from)}` : null}
+                      {range.valid_to ? ` по ${String(range.valid_to)}` : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="inline-actions">
+              <Button variant="secondary" onClick={() => setExpenseType(undefined)}>
+                Закрыть
+              </Button>
+              {auth.can('profiles.write') && (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    void command
+                      .run(
+                        `/expense-types/${expenseType.id}`,
+                        { version: expenseType.version, active: !expenseType.active },
+                        'PATCH',
+                      )
+                      .then(() => {
+                        setExpenseType(undefined);
+                        setExpenseRevision((value) => value + 1);
+                      })
+                      .catch(setError);
+                  }}
+                >
+                  {expenseType.active ? 'Отключить' : 'Включить'}
+                </Button>
+              )}
+            </div>
           </div>
-        </div>
-      </Section>}
-      {currentTab === 'profiles' && creatingExpense && <ExpenseTypeEditor
-        onClose={() => setCreatingExpense(false)}
-        onSuccess={() => { setCreatingExpense(false); setExpenseRevision((value) => value + 1); }}
-      />}
+        </Section>
+      )}
+      {currentTab === 'profiles' && creatingExpense && (
+        <ExpenseTypeEditor
+          onClose={() => setCreatingExpense(false)}
+          onSuccess={() => {
+            setCreatingExpense(false);
+            setExpenseRevision((value) => value + 1);
+          }}
+        />
+      )}
       {currentTab === 'settings' && <WorkingRulesEditor />}
+      {currentTab === 'tariffs' && (
+        <Collection
+          title="Доставка из Москвы — ТМ-35, до 15 кг"
+          endpoint="/delivery-tariffs"
+          pageSize={100}
+          columns={[
+            { key: 'city', label: 'Город' },
+            { key: 'amount', label: 'Стоимость без НДС, ₽' },
+          ]}
+        />
+      )}
       {currentTab === 'audit' && (
         <Collection
           title="Журнал аудита"
@@ -408,31 +505,35 @@ export function Settings() {
           }}
         />
       )}
-      {editing && currentTab === 'profiles' && (
-        profileMode === 'itemized_v2' ? <ItemizedProfileEditor
-          initial={selected}
-          onClose={() => {
-            setEditing(false);
-            setSelected(undefined);
-          }}
-          onSuccess={() => {
-            setEditing(false);
-            setSelected(undefined);
-            setRevision((v) => v + 1);
-          }}
-        /> : <FinancialProfileEditor
-          initial={selected}
-          onClose={() => {
-            setEditing(false);
-            setSelected(undefined);
-          }}
-          onSuccess={() => {
-            setEditing(false);
-            setSelected(undefined);
-            setRevision((v) => v + 1);
-          }}
-        />
-      )}
+      {editing &&
+        currentTab === 'profiles' &&
+        (profileMode === 'itemized_v2' ? (
+          <ItemizedProfileEditor
+            initial={selected}
+            onClose={() => {
+              setEditing(false);
+              setSelected(undefined);
+            }}
+            onSuccess={() => {
+              setEditing(false);
+              setSelected(undefined);
+              setRevision((v) => v + 1);
+            }}
+          />
+        ) : (
+          <FinancialProfileEditor
+            initial={selected}
+            onClose={() => {
+              setEditing(false);
+              setSelected(undefined);
+            }}
+            onSuccess={() => {
+              setEditing(false);
+              setSelected(undefined);
+              setRevision((v) => v + 1);
+            }}
+          />
+        ))}
     </>
   );
 }

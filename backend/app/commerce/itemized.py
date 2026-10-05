@@ -17,7 +17,19 @@ def _money(value: Decimal, rounding: str) -> Decimal:
 
 
 def _string(value: Decimal) -> str:
-    return str(value)
+    return format(value, "f")
+
+
+def customs_fee_brackets_2026():
+    limits = [('200000', '1231'), ('450000', '2462'), ('1200000', '4924'),
+              ('2700000', '13541'), ('4200000', '18465'), ('5500000', '21344'),
+              ('10000000', '49240'), (None, '73860')]
+    lower, result = Decimal('0'), []
+    for upper, fee in limits:
+        result.append({'from_amount': str(lower), 'to_amount': upper, 'fee': fee, 'valid_from': '2026-01-01'})
+        if upper:
+            lower = Decimal(upper) + Decimal('0.01')
+    return result
 
 
 def _bracket_amount(brackets: list[dict], basis: Decimal, *, field: str) -> Decimal:
@@ -67,6 +79,14 @@ def validate_itemized_profile(profile: dict) -> None:
     if not 0 <= dec(profile.get("bonus_withdrawal_percent", "16")) <= 100:
         error("BONUS_WITHDRAWAL", "Комиссия за вывод бонуса должна быть от 0 до 100%")
     _rate_map(profile.get("exchange_rates") or [], [])
+    overrides = profile.get('customs_fee_overrides') or []
+    if not isinstance(overrides, list) or any(not isinstance(row, dict) for row in overrides):
+        error('PROFILE_CUSTOMS_FEE', 'Особые сборы должны быть списком правил товарных групп')
+    override_groups = [row.get('product_group_slug') for row in overrides]
+    if len(set(override_groups)) != len(overrides) or any(not group for group in override_groups):
+        error('CUSTOMS_FEE_OVERRIDE', 'Проверьте группы фиксированного таможенного сбора')
+    if any(dec(row.get('amount', '0')) < 0 for row in overrides):
+        error('CUSTOMS_FEE_OVERRIDE', 'Таможенный сбор не может быть отрицательным')
     rules = profile.get("customs_rules") or []
     if not rules:
         error("CUSTOMS_RULE_REQUIRED", "Настройте таможенные правила по товарным группам", field="customs_rules")
@@ -191,6 +211,11 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         packing = selection["packing"]["display_name"]
         currency = selection["currency_code"]
         group = selection["product_group"]["slug"]
+        mode = selection.get('calculation_type', 'IMPORT')
+        if mode not in ('IMPORT', 'DAP', 'RUSSIA'):
+            error('SUPPLIER_CALCULATION_TYPE', 'В карточке поставщика указан неизвестный тип расчёта')
+        if mode == 'RUSSIA' and currency != 'RUB':
+            error('RUSSIA_CURRENCY', 'Для перепродажи внутри РФ закупка должна быть в RUB')
         quantity = dec(quote["quantity"])
         price = dec(quote["unit_price"])
         if quantity <= 0 or price < 0:
@@ -207,6 +232,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         rows.append({
             "id": quote["id"], "source": selection, "quantity": quantity, "weight": dec(selection.get("weight") or "0"),
             "currency": currency, "group": group, "markup_coefficient": coefficient,
+            'calculation_type': mode,
             "bonus_coefficient": bonus_coefficient,
             "purchase_foreign": foreign, "exchange_rate": exchange_rate,
             "purchase_rub": purchase_rub,
@@ -317,7 +343,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             apply_expense(expense)
 
     rules = {rule["product_group_slug"]: rule for rule in profile["customs_rules"]}
-    groups = {row["group"] for row in rows}
+    groups = {row["group"] for row in rows if row["calculation_type"] == "IMPORT"}
     missing = groups - rules.keys()
     if missing:
         error("CUSTOMS_RULE_REQUIRED", f"Не удалось определить таможенное правило для группы {sorted(missing)[0]}", field="customs_rules")
@@ -329,10 +355,13 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         value = dec(rule.get("value", "0"))
         if rule["type"] == "PERCENTAGE":
             for row in group_rows:
-                row["duty"] = _money(row["customs_base"] * value / 100, rounding)
+                row["duty"] = _money(row["customs_base"] * value / 100, rounding) if row['calculation_type'] == 'IMPORT' else Decimal('0')
         elif rule["type"] == "FIXED_GROUP":
             # The old CRM charges this amount once for all columns in the
             # calculation and divides it by their quantity.
+            group_rows = [row for row in group_rows if row['calculation_type'] == 'IMPORT']
+            if not group_rows:
+                continue
             group_quantity = sum(row["quantity"] for row in group_rows)
             parts = distribute(_money(value, rounding),
                                {row["id"]: row["quantity"] for row in group_rows},
@@ -340,12 +369,43 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             for row in group_rows:
                 row["duty"] = parts[row["id"]]
                 row["fixed_group_quantity"] = group_quantity
-    customs_basis = sum(row["customs_base"] for row in rows) + existing["purchase_rub"] + existing["international_logistics"]
-    fee = _money(_bracket_amount(profile["customs_fee_brackets"], customs_basis, field="customs_fee_brackets"), rounding)
-    fee_parts, existing_fee_share = shared_by_quantity(fee)
+    for row in rows:
+        if row['calculation_type'] == 'DAP':
+            row['duty'] = _money(row['purchase_rub'] * Decimal('0.05'), rounding)
+        elif row['calculation_type'] == 'RUSSIA':
+            row['duty'] = Decimal('0')
+    import_rows = [row for row in rows if row['calculation_type'] == 'IMPORT']
+    customs_basis = sum((row['customs_base'] for row in import_rows), Decimal('0')) + existing['purchase_rub'] + existing['international_logistics']
+    overrides = {rule['product_group_slug']: dec(rule['amount']) for rule in profile.get('customs_fee_overrides', [])}
+    if wave_existing_quantity and overrides:
+        error('WAVE_BASIS_REQUIRED', 'Для двух видов сбора нужен состав всех позиций волны с товарными группами')
+    ordinary_rows = [row for row in import_rows if row['group'] not in overrides]
+    ordinary_basis = sum((row['customs_base'] for row in ordinary_rows), Decimal('0')) + existing['purchase_rub'] + existing['international_logistics']
+    bracket_fee = (_money(_bracket_amount(profile['customs_fee_brackets'], _money(ordinary_basis, rounding), field='customs_fee_brackets'), rounding)
+                   if ordinary_rows or wave_existing_quantity else Decimal('0'))
+    fee_bases = {row['id']: row['quantity'] for row in ordinary_rows}
+    if wave_existing_quantity:
+        fee_bases['__wave_existing__'] = wave_existing_quantity
+    parts = distribute(bracket_fee, fee_bases, Decimal('0.01'), rounding) if fee_bases else {}
+    fixed_fee = Decimal('0')
+    fixed_parts = {}
+    for group, group_fee in overrides.items():
+        group_rows = [row for row in import_rows if row['group'] == group]
+        if not group_rows:
+            continue
+        amount = _money(group_fee, rounding)
+        fixed_fee += amount
+        group_parts = distribute(amount, {row['id']: row['quantity'] for row in group_rows}, Decimal('0.01'), rounding)
+        parts.update(group_parts)
+        fixed_parts.update(group_parts)
+    fee = bracket_fee + fixed_fee
+    fee_parts = {row['id']: parts.get(row['id'], Decimal('0')) for row in rows}
+    existing_fee_share = parts.get('__wave_existing__', Decimal('0'))
     existing["customs_fee"] += existing_fee_share
     for row in rows:
         row["customs_fee"] = fee_parts[row["id"]]
+        row['customs_fee_1'] = Decimal('0') if row['id'] in fixed_parts else row['customs_fee']
+        row['customs_fee_2'] = fixed_parts.get(row['id'], Decimal('0'))
     for expense in expenses:
         if expense.get("stage", "GENERAL") != "INTERNATIONAL_LOGISTICS":
             apply_expense(expense)
@@ -383,18 +443,30 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         quote = source["quote_item"]
         qty = row["quantity"]
         incoming_vat = _money((row["customs_base"] + row["duty"]) * vat_rate, rounding)
+        mode = row['calculation_type']
+        if mode != 'IMPORT':
+            incoming_vat = Decimal('0')
         expenses_total = row["international_logistics"] + row["general_expenses"] + row["customs_fee"]
         clean_cost = row["customs_base"] + row["duty"] + (Decimal("0") if deduct_vat else incoming_vat)
+        if mode == 'DAP':
+            clean_cost = _money((row['purchase_rub'] + row['duty']) * (Decimal('1') + vat_rate), rounding) + row['international_logistics']
+        elif mode == 'RUSSIA':
+            clean_cost = row['purchase_rub']
+        markup_base = clean_cost + (row["general_expenses"] if mode == "DAP" else Decimal("0"))
         cost_before_financing = clean_cost + row["general_expenses"] + row["customs_fee"]
+        if mode == 'RUSSIA':
+            cost_before_financing += row['international_logistics']
         financed_amount = _money(cost_before_financing * deferred / 100, rounding)
         financing_cost = _money(financed_amount * annual_rate * Decimal(days) / day_basis, rounding)
         cost_before_adjustment = cost_before_financing + financing_cost
         # In the supplied workbook, markup applies to the clean landed cost;
         # shared expenses are added afterwards, before the per-line bonus.
         pre_bonus_sale_net = (
-            clean_cost * row["markup_coefficient"]
-            + row["general_expenses"] + row["customs_fee"] + financing_cost
+            markup_base * row["markup_coefficient"]
+            + (row["general_expenses"] if mode != "DAP" else Decimal("0")) + row["customs_fee"] + financing_cost
         )
+        if mode == 'RUSSIA':
+            pre_bonus_sale_net += row['international_logistics']
         internal_bonus = _money(pre_bonus_sale_net * (row["bonus_coefficient"] - 1), rounding)
         if adjustment_enabled and row["id"] in selected_ids:
             if adjustment_type == "PERCENTAGE":
@@ -425,12 +497,15 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         profit = sale_net - cost
         vat_payable = max(Decimal("0"), sale_tax - (incoming_vat if deduct_vat else Decimal("0")))
         cash_need = row["purchase_rub"] + row["cash_expenses"] + row["customs_fee"] + row["duty"] + incoming_vat + financing_cost + internal_bonus + service_fee
+        if mode == 'DAP':
+            cash_need += _money((row['purchase_rub'] + row['duty']) * vat_rate, rounding)
         detail = {
             "purchase_foreign": row["purchase_foreign"], "exchange_rate": row["exchange_rate"],
             "purchase_rub": row["purchase_rub"], "international_logistics": row["international_logistics"],
             "customs_base": row["customs_base"], "duty": row["duty"], "customs_fee": row["customs_fee"],
             "duty_per_unit": row["duty"] / qty,
             "customs_fee_per_unit": row["customs_fee"] / qty,
+            'customs_fee_1': row['customs_fee_1'], 'customs_fee_2': row['customs_fee_2'],
             "fixed_group_quantity": row.get("fixed_group_quantity", Decimal("0")),
             "general_expenses": row["general_expenses"], "expenses_total": expenses_total,
             "cash_expenses": row["cash_expenses"],
@@ -447,7 +522,8 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "sale_net": sale_net, "sale_tax": sale_tax,
             "sale_total": sale_total, "profit": profit, "vat_payable": vat_payable,
             "cash_need": cash_need, "sale_unit_gross": unit_gross,
-            "profitability_percent": profit / sale_net * 100 if sale_net else Decimal("0"),
+            "profitability_percent": profit / cost * 100 if cost else Decimal("0"),
+            "margin_percent": profit / sale_net * 100 if sale_net else Decimal("0"),
             "expense_share_percent": expenses_total / cost * 100 if cost else Decimal("0"),
             "investment_efficiency_percent": profit / cash_need * 100 if cash_need else Decimal("0"),
         }
@@ -458,11 +534,13 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             "quote_item_id": row["id"], "quote_id": quote["quote_id"],
             "product": {
                 "name": name, "article": source["nomenclature"].get("article"),
+                "manufacturer": source["nomenclature"].get("manufacturer"),
                 "cas": source["nomenclature"].get("cas"), "packaging": packing,
             },
             "description": f"{name} {packing}", "packing": packing,
             "supplier_id": quote["supplier_id"], "product_group": source["product_group"],
-            "customs_rule": rules[row["group"]],
+            'calculation_type': mode,
+            "customs_rule": rules[row["group"]] if mode == "IMPORT" else {"type": "PERCENTAGE" if mode == "DAP" else "NONE", "value": "5" if mode == "DAP" else "0"},
             "quantity": _string(qty), "unit": "pcs", "purchase_currency": row["currency"],
             "delivery_days": quote.get("delivery_days"),
             "net": _string(sale_net), "tax": _string(sale_tax), "total": _string(sale_total),
@@ -474,7 +552,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         })
     total_keys = (
         "purchase_rub", "international_logistics", "customs_base", "duty", "clean_cost", "pre_bonus_sale_net",
-        "customs_fee", "general_expenses", "expenses_total", "cash_expenses", "import_vat", "cost_before_financing",
+        "customs_fee", "customs_fee_1", "customs_fee_2", "general_expenses", "expenses_total", "cash_expenses", "import_vat", "cost_before_financing",
         "financed_amount", "financing_cost", "internal_bonus", "service_fee", "cost", "markup_amount",
         "sale_net", "sale_tax", "sale_total", "profit", "vat_payable", "cash_need",
     )
@@ -484,10 +562,11 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     totals.update(net=totals["sale_net"], tax=totals["sale_tax"], total=totals["sale_total"])
     if dec(totals["cost"]):
         totals["markup_coefficient"] = _string(dec(totals["sale_net"]) / dec(totals["cost"]))
-        totals["profitability_percent"] = _string(dec(totals["profit"]) / dec(totals["sale_net"]) * 100)
+        totals["profitability_percent"] = _string(dec(totals["profit"]) / dec(totals["cost"]) * 100)
         totals["expense_share_percent"] = _string(dec(totals["expenses_total"]) / dec(totals["cost"]) * 100)
     else:
         totals.update(markup_coefficient="0", profitability_percent="0", expense_share_percent="0")
+    totals["margin_percent"] = _string(dec(totals["profit"]) / dec(totals["sale_net"]) * 100 if dec(totals["sale_net"]) else Decimal("0"))
     if dec(totals["cash_need"]):
         totals["investment_efficiency_percent"] = _string(dec(totals["profit"]) / dec(totals["cash_need"]) * 100)
     else:
@@ -500,6 +579,8 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
                               "total_quantity": _string(wave_total_quantity),
                               "existing_customs_fee_share": _string(existing_fee_share + sum(dec(line["detail"]["customs_fee"]) for line in wave_lines if line["line_id"] not in selected_ids)),
                               "customs_fee": _string(fee),
+                              'customs_fee_1': _string(bracket_fee), 'customs_fee_2': _string(fixed_fee),
+                              'progressive_customs_value': _string(ordinary_basis),
                               "customs_value": _string(customs_basis),
                               "import_vat": _string(sum(dec(line["detail"]["import_vat"]) for line in wave_lines)),
                               "expenses_total": _string(sum(dec(line["detail"]["expenses_total"]) for line in wave_lines) + existing_fee_share + existing["international_logistics"] + existing["general_expenses"]),
@@ -508,7 +589,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
                                                "description": line["description"],
                                                "customs_value": line["detail"]["customs_base"],
                                                "quantity": line["quantity"],
-                                               **{key: line["detail"][key] for key in ("customs_base", "duty", "customs_fee", "customs_fee_per_unit", "international_logistics", "general_expenses", "expenses_total", "import_vat")},
+                                               **{key: line["detail"][key] for key in ("customs_base", "duty", "customs_fee", "customs_fee_1", "customs_fee_2", "customs_fee_per_unit", "international_logistics", "general_expenses", "expenses_total", "import_vat")},
                                                "expense_details": line["expense_details"]}
                                               for line, row in zip(wave_lines, rows)]},
         "internal_adjustment": internal_adjustment,
@@ -522,7 +603,7 @@ def itemized_profile() -> dict:
     return {
         "methodology": "itemized_v2", "management_currency": "RUB", "sale_currency": "RUB",
         "currency_precision": {"RUB": 2}, "rounding": "half_up", "import_country_id": None,
-        "vat_rate": "22", "vat_deduction_mode": False,
+        "vat_rate": "22", "vat_deduction_mode": True,
         "financing_annual_rate": "0", "day_basis": 365, "financing_start_event": "delivery",
         "default_markup_coefficient": "1.5",
         "default_bonus_coefficient": "1",
@@ -532,10 +613,12 @@ def itemized_profile() -> dict:
         "customs_rules": [
             {"product_group_slug": "reference_standards", "type": "PERCENTAGE", "value": "5"},
             {"product_group_slug": "reagents", "type": "PERCENTAGE", "value": "5"},
-            {"product_group_slug": "columns", "type": "FIXED_GROUP", "value": "73800"},
-            {"product_group_slug": "lab_glassware", "type": "NONE", "value": "0"},
-            {"product_group_slug": "other", "type": "NONE", "value": "0"},
+            {"product_group_slug": "columns", "type": "NONE", "value": "0"},
+            {"product_group_slug": "strains", "type": "PERCENTAGE", "value": "12"},
+            {"product_group_slug": "lab_glassware", "type": "PERCENTAGE", "value": "5"},
+            {"product_group_slug": "other", "type": "PERCENTAGE", "value": "5"},
         ],
-        "customs_fee_brackets": [{"from_amount": "0", "to_amount": "500000", "fee": "4997"}],
+        "customs_fee_brackets": customs_fee_brackets_2026(),
+        "customs_fee_overrides": [{"product_group_slug": "columns", "amount": "73800"}],
         "tax_category": "НДС 22%", "template": {"title": "Коммерческое предложение", "show_cas": True, "show_manufacturer": False},
     }

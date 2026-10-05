@@ -17,6 +17,7 @@ from app.core.models import AuthSession, PermissionGrant, User, UserRole
 password_hasher = PasswordHasher()
 
 PERMISSIONS = {
+    'procurement.write': 'Заказы поставщикам',
     'requests.read': 'Просмотр заявок', 'requests.write': 'Изменение заявок', 'requests.assign': 'Переназначение заявок',
     'clients.read': 'Просмотр контрагентов', 'clients.write': 'Изменение контрагентов', 'calls.write': 'Обзвон',
     'tasks.read': 'Просмотр задач', 'tasks.write': 'Изменение задач', 'catalog.read': 'Просмотр каталога', 'catalog.write': 'Изменение каталога',
@@ -68,6 +69,8 @@ def request_predicate(db: Session, user: User, permission: str = 'requests.read'
     from app.crm.models import Request as CRMRequest
     from app.crm.models import RequestMember
     scope = scope_for(db, user, permission)
+    if user.own_requests_only:
+        return CRMRequest.owner_id == user.id if scope else False
     if scope == 'all':
         return True
     if scope in ('own', 'shared'):

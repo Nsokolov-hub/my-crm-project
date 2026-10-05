@@ -111,6 +111,10 @@ def schedule_reminders(db: Session, now: datetime | None = None) -> int:
 
 def dispatch(db: Session, event: OutboxEvent) -> None:
     payload = event.payload
+    if event.kind == 'supplier.mail':
+        from app.business.worker import send_mail
+        send_mail(db, event)
+        return
     if event.kind == 'file.scan':
         row = db.scalar(select(FileRecord).where(FileRecord.id == payload['file_id']).with_for_update())
         if row is None:
@@ -202,6 +206,13 @@ def process_events(db: Session, limit: int = 25, now: datetime | None = None) ->
                         row.scanned_at = None
                         row.version += 1
                         audit(db, None, 'file', row.id, 'scan_failed', after={'status': row.status})
+                elif event.kind == "supplier.mail":
+                    from app.business.models import SupplierMail
+                    mail = db.get(SupplierMail, event.payload.get("mail_id"))
+                    if mail:
+                        mail.status = "failed"
+                        mail.version += 1
+                        notify(db, mail.author_id, f"supplier-mail-failed:{mail.id}", "Не удалось отправить запрос поставщику", "request", mail.request_id)
                 elif event.kind == 'import.confirm':
                     batch = db.scalar(select(ImportBatch).where(ImportBatch.id == event.payload.get('batch_id'))
                                       .with_for_update().execution_options(populate_existing=True))
@@ -226,6 +237,8 @@ def run_once(*, reminders: bool = True, limit: int = 25) -> dict[str, int]:
     if reminders:
         with SessionLocal.begin() as db:
             schedule_reminders(db)
+            from app.business.worker import reminders as business_reminders
+            business_reminders(db)
     with SessionLocal.begin() as db:
         return process_events(db, limit=limit)
 

@@ -85,7 +85,7 @@ ALIASES = {
     "unit_price": ["цена", "цена за единицу", "unit price", "price"],
     "currency": ["валюта", "currency"],
     "delivery_days": ["срок поставки, дней", "срок поставки", "delivery days"],
-    "product_group": ["товарная группа", "группа товаров", "группа", "product group", "product_group"],
+    "product_group": ["товарная группа", "группа товаров", "группа", "код группы", "product group", "product_group"],
 }
 UNITS = {
     "шт": "pcs",
@@ -274,7 +274,7 @@ def quote_plan(db, request_id, columns, rows, mapping):
     items = list(
         db.scalars(
             select(RequestItem)
-            .where(RequestItem.request_id == request_id, RequestItem.archived.is_(False))
+            .where(RequestItem.request_id == request_id, RequestItem.archived.is_(False), RequestItem.quote_only.is_(False))
             .order_by(RequestItem.created_at, RequestItem.id)
         )
     )
@@ -299,7 +299,7 @@ def quote_plan(db, request_id, columns, rows, mapping):
     product_groups = {group.id: group for group in db.scalars(select(ProductGroup))}
     group_names = defaultdict(dict)
     for group in product_groups.values():
-        for reference in (group.name, group.slug):
+        for reference in (group.name, group.slug, str(group.internal_code)):
             group_names[group_reference(reference)][group.id] = group
 
     def resolve_group(reference):
@@ -315,7 +315,6 @@ def quote_plan(db, request_id, columns, rows, mapping):
 
     seen = set()
     new_definitions = {}
-    source_choices = {}
     plan = []
     for i, raw in enumerate(rows, 2):
         values = values_for(columns, raw, mapping)
@@ -359,12 +358,10 @@ def quote_plan(db, request_id, columns, rows, mapping):
                     or n
                     and item.nomenclature_id == n.id
                 ]
-                if len(candidates) != 1:
-                    raise ValueError("Укажите номер позиции заявки: по артикулу нельзя выбрать одну строку")
-                source = candidates[0]
-            if source.nomenclature_id and (not n or source.nomenclature_id != n.id):
-                raise ValueError("Номенклатура отличается от выбранной позиции заявки")
-            identity = (s.id, source.id)
+                if len(candidates) > 1:
+                    raise ValueError("Укажите номер позиции заявки: найдено несколько строк")
+                source = candidates[0] if candidates else RequestItem(quantity=Decimal(data["quantity"]), unit="pcs")
+            identity = (s.id, source.id, article.casefold(), data.get("packing_value"), data.get("packing_unit"))
             if identity in seen:
                 raise ValueError("Позиция заявки повторяется для одного поставщика")
             seen.add(identity)
@@ -415,8 +412,6 @@ def quote_plan(db, request_id, columns, rows, mapping):
                 data["packing_value"], data["packing_unit"] = (
                     (str(packing.value), packing.unit) if packing else ("1", "pcs")
                 )
-            if source.packing_id and (not packing or source.packing_id != packing.id):
-                raise ValueError("Фасовка отличается от выбранной позиции заявки")
             data["packing_id"] = packing.id if packing else None
             source_quantity = source.quantity
             if source_quantity is not None and source.unit and source.unit != "pcs":
@@ -434,11 +429,6 @@ def quote_plan(db, request_id, columns, rows, mapping):
                 whole=True,
                 places=6,
             )
-            choice = (article.casefold(), Decimal(data["packing_value"]), data["packing_unit"])
-            if source_choices.setdefault(source.id, choice) != choice:
-                raise ValueError(
-                    "Для одной позиции поставщики указали разные товары или фасовки. Разделите позиции заявки"
-                )
             if not n:
                 definition = {
                     key: data.get(key)
@@ -566,7 +556,7 @@ def quote_template(request_id: str, user: User = Depends(current_user), db: Sess
     rows = []
     items = db.scalars(
         select(RequestItem)
-        .where(RequestItem.request_id == request_id, RequestItem.archived.is_(False))
+        .where(RequestItem.request_id == request_id, RequestItem.archived.is_(False), RequestItem.quote_only.is_(False))
         .order_by(RequestItem.created_at, RequestItem.id)
     )
     for index, item in enumerate(items, 1):
@@ -590,12 +580,12 @@ def quote_template(request_id: str, user: User = Depends(current_user), db: Sess
     sheet = book.active
     sheet.title = "Квоты"
     directory = book.create_sheet("Товарные группы")
-    directory.append(["Товарная группа", "Код группы"])
+    directory.append(["Товарная группа", "Код группы", "Системный код"])
     groups = list(
         db.scalars(select(ProductGroup).where(ProductGroup.active.is_(True)).order_by(ProductGroup.name))
     )
     for group in groups:
-        directory.append([group.name, group.slug])
+        directory.append([group.name, str(group.internal_code), group.slug])
     for row in directory:
         for cell in row:
             cell.data_type = "s"
@@ -658,7 +648,8 @@ def confirm(
             (
                 row
                 for row in previous
-                if row.file_metadata["sha256"] == batch.file_metadata["sha256"]
+                if (row.file_metadata["sha256"] == batch.file_metadata["sha256"]
+                    or (batch.kind == "items" and row.columns == batch.columns and row.rows == batch.rows))
                 and {key: value for key, value in row.mapping.items() if value}
                 == {key: value for key, value in batch.mapping.items() if value}
             ),
@@ -729,7 +720,14 @@ def confirm(
                     packing_id = p.id
                     new_packings[packing_key] = packing_id
                     audit(db, user, "packing", p.id, "imported", after=serialize(p))
-                source = db.get(RequestItem, data["source_request_item_id"])
+                source = db.get(RequestItem, data["source_request_item_id"]) if data["source_request_item_id"] else None
+                if source is None:
+                    source = RequestItem(request_id=request_id, description=data.get("name") or data["article"],
+                                         nomenclature_id=n_id, packing_id=packing_id,
+                                         product_group_id=data["product_group_id"], quantity=Decimal(data["quantity"]),
+                                         unit="pcs", quote_only=True)
+                    db.add(source)
+                    db.flush()
                 if source.id not in updated_sources and (
                     not source.nomenclature_id
                     or not source.packing_id
@@ -761,12 +759,6 @@ def confirm(
                     )
                     audit(db, user, "request_item", source.id, "structured", before, serialize(source))
                     updated_sources.add(source.id)
-                if source.nomenclature_id != n_id or source.packing_id != packing_id:
-                    raise DomainError(
-                        "IMPORT_SOURCE_CONFLICT",
-                        "Поставщики указали разные товары или фасовки для одной позиции. Разделите позиции заявки",
-                        422,
-                    )
                 groups[data["supplier_id"]].append(
                     QuoteItemInput(
                         source_request_item_id=source.id,

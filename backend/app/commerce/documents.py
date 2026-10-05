@@ -110,7 +110,8 @@ def customer_line(line: dict, template: dict) -> dict:
             product["name"],
             product.get("purity"),
             product.get("packaging"),
-            product.get("manufacturer") if template.get("show_manufacturer") else None,
+            product.get("manufacturer"),
+            f"Арт. {product['article']}" if product.get("article") else None,
         )
         if value
     )
@@ -154,7 +155,9 @@ def base_snapshot(
         "calculation_number": calculation.snapshot.get("calculation_number"),
         "calculation_version": calculation.snapshot.get("version_number"),
         "delivery_days": calculation.snapshot.get("delivery_days"),
+        "payment_terms": calculation.snapshot.get("payment_terms", {}),
         "seller": {"id": seller.id, "name": seller.name, "details": seller.details},
+        "bank_details": {**(seller.details or {}), **((client.details or {}).get("seller_bank_details") or {})},
         "client": {"id": client.id, "name": client.name, "details": client.details, "tax_id": client.tax_id},
         "currency": profile["sale_currency"],
         "lines": lines,
@@ -181,6 +184,8 @@ def issue_proposal(request_id: str, data: ProposalIn, db: DB, user: Actor):
         calc = db.get(Calculation, data.calculation_id)
         if not calc or calc.request_id != request_id:
             error("CALCULATION_REQUIRED", "Для выпуска КП нужен сохранённый расчёт этой заявки")
+        from app.business.routes import require_calculation_approved
+        require_calculation_approved(db, calc)
         if data.valid_until < date.today():
             error("DOCUMENT_EXPIRED", "Срок действия документа уже истёк")
         if data.previous_id:

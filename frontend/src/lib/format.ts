@@ -1,10 +1,26 @@
 import type { Entity } from './types';
 export const stageLabels: Record<string, string> = {
+  prepayment: 'Предоплата',
+  deferred: 'Отсрочка',
+  other: 'Прочее',
+  weekly: 'Еженедельно',
+  monthly: 'Ежемесячно',
+  none: 'Не повторять',
+  calendar: 'Платёж',
+  task: 'Задача',
   new: 'Новая',
   clarification: 'Уточнение',
   collecting_quotes: 'Сбор квот',
   quotes: 'Сбор квот',
   calculation: 'Расчёт',
+  quote_given: 'Квота дана',
+  queued: 'В очереди отправки',
+  failed: 'Ошибка отправки',
+  completion_pending: 'Закрытие на согласовании',
+  waiting: 'Ожидаем',
+  delivery: 'Доставка',
+  income: 'Приход',
+  expense: 'Расход',
   proposal_sent: 'КП отправлено',
   composition_agreed: 'Состав согласован',
   accepted: 'Состав согласован',
@@ -71,6 +87,7 @@ export const stages = [
   'new',
   'clarification',
   'collecting_quotes',
+  'quote_given',
   'calculation',
   'proposal_sent',
   'composition_agreed',
@@ -101,7 +118,10 @@ export function date(value: unknown, withTime = false) {
 }
 export function decimal(value: unknown) {
   if (value === null || value === undefined || value === '') return '—';
-  const [whole, fraction] = String(value).split('.');
+  const raw = String(value);
+  if (/e/i.test(raw) && Number.isFinite(Number(raw)))
+    return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 8 }).format(Number(raw));
+  const [whole, fraction] = raw.split('.');
   return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}${fraction ? ',' + fraction.replace(/0+$/, '') : ''}`.replace(
     /,$/,
     '',

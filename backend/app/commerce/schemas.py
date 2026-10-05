@@ -108,6 +108,7 @@ class ProfileDefinition(Input):
     tax_category: str = ""
     customs_rules: list[dict] = Field(default_factory=list)
     customs_fee_brackets: list[dict] = Field(default_factory=list)
+    customs_fee_overrides: list[dict] = Field(default_factory=list)
     vat_rate: Nonnegative = Decimal("22")
     vat_deduction_mode: bool = True
     financing_annual_rate: Nonnegative = Decimal("0")
@@ -237,6 +238,8 @@ class ExpenseTypePatch(Input):
 
 
 class CalculationIn(Command):
+    delivery_city: str | None = Field(default=None, max_length=150)
+    delivery_required: bool = False
     request_version: int = Field(ge=1)
     profile_id: str
     selections: list[Selection] = Field(min_length=1, max_length=100)
@@ -246,7 +249,7 @@ class CalculationIn(Command):
     payment_terms: dict = Field(default_factory=dict)
     previous_id: str | None = None
     reason: str = ""
-    vat_deductible: bool = False
+    vat_deductible: bool | None = None
     delivery_days: int | None = Field(default=None, ge=0, le=3650)
     expected_wave_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 

@@ -30,7 +30,8 @@ export function RequestFulfillment({ requestId }: { requestId: string }) {
           {
             key: 'item_id',
             label: 'Позиция',
-            render: (r) => String((r.snapshot as Entity)?.description || r.item_id),
+            render: (r) =>
+              String(r.description || (r.snapshot as Entity)?.description || r.item_id),
           },
           { key: 'quantity', label: 'Принято', render: (r) => `${decimal(r.quantity)} ${r.unit}` },
           { key: 'allocated', label: 'В волнах', render: (r) => decimal(r.allocated) },
@@ -325,9 +326,37 @@ function WaveFinancialSummary({ summary }: { summary: Entity }) {
   }));
   return (
     <section className="calculation-section">
-    <h3>Текущие расходы волны</h3>
-    {summary.status === 'unconfigured' && <p className="info-note">Для предварительных расходов нужен опубликованный профиль расчёта с тарифами волны.</p>}
-    {summary.status === 'partial' && <p className="info-note">Для части ранее принятых позиций нет сохранённой базы. Доступные расходы распределены по известному количеству.</p>}
+      <h3>Текущие расходы волны</h3>
+      {Boolean(summary.actual) && (
+        <>
+          <h4>Фактическая рентабельность принятого состава</h4>
+          <p>
+            {String((summary.actual as Entity).basis || (summary.actual as Entity).message || '')}
+          </p>
+          <DetailPairs
+            values={{
+              'Продажа с НДС, ₽': decimal((summary.actual as Entity).sales),
+              'Себестоимость, ₽': decimal((summary.actual as Entity).cost),
+              'Прибыль, ₽': decimal((summary.actual as Entity).profit),
+              'Рентабельность, %': decimal((summary.actual as Entity).profitability_percent),
+              'Предоплата по заказам, ₽': decimal((summary.actual as Entity).prepayment_total),
+              'Отсрочка по заказам, ₽': decimal((summary.actual as Entity).deferred_total),
+            }}
+          />
+        </>
+      )}
+
+      {summary.status === 'unconfigured' && (
+        <p className="info-note">
+          Для предварительных расходов нужен опубликованный профиль расчёта с тарифами волны.
+        </p>
+      )}
+      {summary.status === 'partial' && (
+        <p className="info-note">
+          Для части ранее принятых позиций нет сохранённой базы. Доступные расходы распределены по
+          известному количеству.
+        </p>
+      )}
       {Boolean(summary.provisional) && (
         <p className="info-note">
           Волна пока пустая. Минимальные расходы предварительные и пересчитаются при добавлении
@@ -344,6 +373,8 @@ function WaveFinancialSummary({ summary }: { summary: Entity }) {
           'Количество, шт.': decimal(summary.total_quantity),
           'Таможенная стоимость, ₽': decimal(summary.customs_value),
           'Таможенный сбор, ₽': decimal(summary.customs_fee),
+          'Сбор 1 — обычные товары, ₽': decimal(summary.customs_fee_1),
+          'Сбор 2 — колонки, ₽': decimal(summary.customs_fee_2),
           'Ввозной НДС, ₽': decimal(summary.import_vat),
           'Общие расходы, ₽': decimal(summary.expenses_total),
         }}

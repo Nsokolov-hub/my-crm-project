@@ -1,0 +1,812 @@
+[
+  {
+    "city": "Абакан",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "11835",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Архангельск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8590",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Астрахань",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8345",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Барнаул",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "10625",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Белгород",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6240",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Благовещенск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "13410",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Братск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "11835",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Брянск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "5215",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Великий Новгород",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6240",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Владивосток",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "13410",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Владикавказ",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8590",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Владимир",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "4170",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Волгоград",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Вологда",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6240",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Воронеж",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6240",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Горно-Алтайск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "11835",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Грозный",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "10625",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Екатеринбург",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8345",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Иваново",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "4170",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Ижевск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Иркутск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "11835",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Йошкар-Ола",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Казань",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Калининград",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "21325",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Калуга",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "4170",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Кемерово",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "10625",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Киров",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Кострома",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "4170",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Краснодар",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Красноярск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "10625",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Курган",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8590",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Курск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6240",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Липецк",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "5215",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Магнитогорск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8590",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Майкоп",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8590",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Махачкала",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "10625",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Москва",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "4000",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Мурманск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8590",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Набережные Челны",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8345",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Надым",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "13410",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Назрань",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "13410",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Нальчик",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8590",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Нарьян-Мар",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "13410",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Нижневартовск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "11835",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Нижний Новгород",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "4170",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Новокузнецк",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "10625",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Новороссийск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8345",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Новосибирск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "10625",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Ноябрьск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "13410",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Омск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "10625",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Орел",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "5215",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Оренбург",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8590",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Пенза",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6240",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Пермь",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8345",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Петрозаводск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Псков",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Пятигорск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8590",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Ростов-на-Дону",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Рязань",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "4170",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Салехард",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "15655",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Самара",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Санкт-Петербург",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "4170",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Саранск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Саратов",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Симферополь",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8345",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Смоленск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "5215",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Сочи",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8345",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Ставрополь",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8345",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Сургут",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "11835",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Сыктывкар",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "10625",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Тамбов",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "5215",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Тверь",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "4170",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Тольятти",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Томск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "10625",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Тула",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "4170",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Тюмень",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "10625",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Улан-Удэ",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "11835",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Ульяновск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Уфа",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8345",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Ухта",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "13410",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Хабаровск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "13410",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Ханты-Мансийск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "11835",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Чебоксары",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6240",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Челябинск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "8345",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Череповец",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "6955",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Черкесск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "10625",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Чита",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "11835",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Элиста",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "10625",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Южно-Сахалинск",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "14790",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  },
+  {
+    "city": "Ярославль",
+    "origin": "Москва",
+    "box": "ТМ-35",
+    "max_weight_kg": 15,
+    "amount": "4170",
+    "vat_included": false,
+    "source": "Расчет_стоимости_по_городам_СДЭК_ТЕРМО.pdf"
+  }
+]

@@ -5,6 +5,7 @@ import { Badge, Button, DetailPairs, ErrorBox, Modal, PageHeading } from '../com
 import { download } from '../lib/api';
 import { date, decimal } from '../lib/format';
 import type { Entity } from '../lib/types';
+import { WorkflowApprovals } from './Business';
 import { ApprovalDecision } from './Fulfillment';
 const names = { documents: 'Документы', payments: 'Оплаты', approvals: 'Согласования' };
 export function Registry({ kind }: { kind: keyof typeof names }) {
@@ -16,6 +17,7 @@ export function Registry({ kind }: { kind: keyof typeof names }) {
     <>
       <PageHeading title={names[kind]} description="Общий реестр доступных вам заявок." />
       <ErrorBox error={error} />
+      {kind === 'approvals' && <WorkflowApprovals />}
       <Collection
         title={names[kind]}
         endpoint={`/${kind}`}

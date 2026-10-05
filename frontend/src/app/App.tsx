@@ -12,6 +12,7 @@ import { Catalog } from '../pages/Catalog';
 import { Waves } from '../pages/Fulfillment';
 import { Chats, Notifications } from '../pages/Communication';
 import { Registry } from '../pages/Registry';
+import { PaymentCalendar, SupplierOrders, EmployeeAbsences } from '../pages/Business';
 import { Settings, Guide } from '../pages/Settings';
 
 function AuthenticatedApp() {
@@ -32,6 +33,9 @@ function AuthenticatedApp() {
         <Route path="documents" element={<Registry kind="documents" />} />
         <Route path="payments" element={<Registry kind="payments" />} />
         <Route path="approvals" element={<Registry kind="approvals" />} />
+        <Route path="payment-calendar" element={<PaymentCalendar />} />
+        <Route path="supplier-orders" element={<SupplierOrders />} />
+        <Route path="employee-absences" element={<EmployeeAbsences />} />
         <Route path="waves" element={<Waves />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="chats" element={<Chats />} />

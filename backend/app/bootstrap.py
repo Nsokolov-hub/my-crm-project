@@ -14,10 +14,10 @@ from app.core.service import audit
 
 ROLE_GRANTS = {
     'Администратор': ('admin.users admin.settings settings.dictionaries.write settings.system.write settings.commerce.write audit.read clients.read catalog.read chats.use files.upload tasks.read tasks.write', 'all'),
-    'Руководитель': ('requests.read requests.write requests.assign clients.read clients.write tasks.read tasks.write calls.write catalog.read approvals.submit approvals.decide waves.write analytics.read exports.download chats.use files.upload', 'all'),
+    'Руководитель': ('calculations.write finance.purchase.read finance.calculations.read finance.reward.read finance.profit.read procurement.write requests.read requests.write requests.assign clients.read clients.write tasks.read tasks.write calls.write catalog.read approvals.submit approvals.decide waves.write analytics.read exports.download chats.use files.upload', 'all'),
     'Владелец расчётов': ('requests.read clients.read catalog.read quotes.write finance.purchase.read finance.calculations.read finance.reward.read finance.profit.read calculations.write profiles.write templates.write exports.download chats.use files.upload', 'all'),
-    'Менеджер продаж': ('requests.read requests.write clients.read clients.write calls.write tasks.read tasks.write catalog.read documents.write payments.write approvals.submit exports.download imports.write analytics.read chats.use files.upload', 'own'),
-    'Закупщик': ('requests.read clients.read clients.write catalog.read catalog.write quotes.write finance.purchase.read exports.download tasks.read tasks.write chats.use files.upload', 'all'),
+    'Менеджер продаж': ('calculations.write finance.purchase.read finance.calculations.read finance.reward.read finance.profit.read quotes.write requests.read requests.write clients.read clients.write calls.write tasks.read tasks.write catalog.read documents.write payments.write approvals.submit exports.download imports.write analytics.read chats.use files.upload', 'own'),
+    'Закупщик': ('procurement.write requests.read clients.read clients.write catalog.read catalog.write quotes.write finance.purchase.read exports.download tasks.read tasks.write chats.use files.upload', 'all'),
     'Логист': ('requests.read clients.read catalog.read waves.write tasks.read tasks.write chats.use files.upload', 'all'),
     'Финансовый контролёр': ('requests.read clients.read payments.write payments.confirm analytics.read exports.download tasks.read tasks.write chats.use files.upload', 'all'),
 }

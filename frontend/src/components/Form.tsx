@@ -248,7 +248,7 @@ function FieldControl({
           onChange={(e) => onChange(e.target.checked)}
         />
       ) : field.type === 'counterparty-details' ? (
-        <CounterpartyDetailsEditor value={value} onChange={onChange} />
+        <CounterpartyDetailsEditor kind={field.placeholder} value={value} onChange={onChange} />
       ) : field.type === 'select' && field.source ? (
         <DirectorySelect field={field} value={value} error={error} onChange={onChange} />
       ) : field.type === 'select' || field.type === 'multiselect' ? (
@@ -345,7 +345,7 @@ export function RecordForm({
   transform?: (values: Record<string, unknown>) => Record<string, unknown>;
   deriveValues?: (values: Record<string, unknown>, changedField: string) => Record<string, unknown>;
   submitLabel?: string;
-  note?: string;
+  note?: React.ReactNode;
 }) {
   const [values, setValues] = useState<Record<string, unknown>>(() =>
     Object.fromEntries(
@@ -428,12 +428,31 @@ export function RecordForm({
             {fields.map((field) => (
               <FieldControl
                 key={field.name}
-                field={field}
+                field={
+                  field.name === 'entity_id'
+                    ? {
+                        ...field,
+                        label: 'Выберите связанный объект',
+                        type: 'select',
+                        required: Boolean(values.entity_type),
+                        source: (
+                          {
+                            request: '/requests',
+                            counterparty: '/counterparties',
+                            wave: '/waves',
+                          } as Record<string, string>
+                        )[String(values.entity_type || '')],
+                      }
+                    : field.type === 'counterparty-details'
+                      ? { ...field, placeholder: String(values.kind || 'client') }
+                      : field
+                }
                 value={values[field.name]}
                 error={errors[field.name]}
                 onChange={(value) => {
                   setValues((v) => {
                     const next = { ...v, [field.name]: value };
+                    if (field.name === 'entity_type') next.entity_id = null;
                     return deriveValues ? deriveValues(next, field.name) : next;
                   });
                   setDirty(true);

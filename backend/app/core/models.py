@@ -24,6 +24,7 @@ class User(Entity):
     name: Mapped[str] = mapped_column(String(200))
     password_hash: Mapped[str] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    own_requests_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default='false')
     mfa_secret: Mapped[str | None] = mapped_column(Text)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     mfa_last_step: Mapped[int] = mapped_column(Integer, default=-1)
