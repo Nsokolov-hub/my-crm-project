@@ -104,17 +104,14 @@ def issued_invoice_lines(db, execution_id: str) -> list[dict]:
 
 def customer_line(line: dict, template: dict) -> dict:
     product = line["product"]
-    description = " · ".join(
-        str(value)
-        for value in (
-            product["name"],
-            product.get("purity"),
-            product.get("packaging"),
-            product.get("manufacturer"),
-            f"Арт. {product['article']}" if product.get("article") else None,
-        )
-        if value
-    )
+    group = line.get("product_group") or {}
+    product_type = {"reference_standards": "Стандартный образец", "standards": "Стандартный образец",
+                    "columns": "Колонка", "reagents": "Реактив", "strains": "Штамм"}.get(group.get("slug"), group.get("name", ""))
+    description = " ".join(str(value) for value in (
+        product_type, product["name"],
+        "(" + str(product["packaging"]).strip("() ") + ")" if product.get("packaging") else None,
+        f"Арт. {product['article']}" if product.get("article") else None,
+    ) if value)
     return {
         "line_id": line["line_id"],
         "item_id": line["item_id"],
@@ -149,6 +146,10 @@ def base_snapshot(
     )
     return {
         "title": title,
+        "kind": kind,
+        "signature": {"name": (seller.details or {}).get("Подписант", ""),
+                      "position": (seller.details or {}).get("Должность подписанта", "")},
+        "price_includes_vat": calculation.snapshot.get("algorithm_version") == "itemized-v2",
         "number": number,
         "date": date.today().isoformat(),
         "request_number": request.number,
@@ -157,7 +158,7 @@ def base_snapshot(
         "delivery_days": calculation.snapshot.get("delivery_days"),
         "payment_terms": calculation.snapshot.get("payment_terms", {}),
         "seller": {"id": seller.id, "name": seller.name, "details": seller.details},
-        "bank_details": {**(seller.details or {}), **((client.details or {}).get("seller_bank_details") or {})},
+        **({"bank_details": {**(seller.details or {}), **((client.details or {}).get("seller_bank_details") or {})}} if kind == "invoice" else {}),
         "client": {"id": client.id, "name": client.name, "details": client.details, "tax_id": client.tax_id},
         "currency": profile["sale_currency"],
         "lines": lines,
@@ -277,8 +278,8 @@ def accept_proposal(proposal_id: str, data: AcceptanceIn, db: DB, user: Actor):
                 if not quote_item or not item or item.request_id != doc.request_id or item.archived:
                     error("PROPOSAL_LINE", "Исходная позиция заявки недоступна")
                 supplier_id = quote_item.supplier_id
-                if source["unit"] != "pcs" or selected.quantity > quote_item.quantity:
-                    error("QUOTE_AVAILABILITY", "Количество превышает объём выбранной квоты")
+                if source["unit"] != "pcs" or selected.quantity != selected.quantity.to_integral_value():
+                    error("PACKING_QUANTITY", "Количество фасовок должно быть целым числом")
                 quote_id = None
                 quote_item_id = quote_item.id
             else:
@@ -304,7 +305,7 @@ def accept_proposal(proposal_id: str, data: AcceptanceIn, db: DB, user: Actor):
                 Decimal("0"),
             )
             requested = convert(selected.quantity, source["unit"], item.unit)
-            if accepted + requested > item.quantity:
+            if not itemized and accepted + requested > item.quantity:
                 error("ACCEPTANCE_EXCEEDED", "Сумма принятых количеств превышает потребность")
             if not profile.get("allow_multiple_suppliers", True) and any(
                 (
@@ -315,7 +316,9 @@ def accept_proposal(proposal_id: str, data: AcceptanceIn, db: DB, user: Actor):
                 if ex.cancelled_quantity < ex.quantity
             ):
                 error("MULTIPLE_SUPPLIERS", "Профиль запрещает несколько поставщиков по одной потребности")
-            if not profile.get("allow_partial_acceptance", True) and requested != item.quantity - accepted:
+            if not profile.get("allow_partial_acceptance", True) and requested != (
+                dec(source["quantity"]) if itemized else item.quantity - accepted
+            ):
                 error("PARTIAL_ACCEPTANCE", "Профиль требует принятия полного остатка потребности")
             same_line = [
                 ex.snapshot for ex in existing if ex.proposal_id == doc.id and ex.line_id == selected.line_id

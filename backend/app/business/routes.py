@@ -696,7 +696,7 @@ def order_positions(
         Execution.request_id.in_(select(CRMRequest.id).where(request_predicate(db, user)))
     )
     if not ordered:
-        query = query.where(Execution.quantity > Execution.cancelled_quantity)
+        query = query.where(Execution.quantity > Execution.cancelled_quantity, Execution.procurement_at.is_not(None))
     items = []
     for ex in db.scalars(query.order_by(Execution.created_at)):
         line = db.scalar(select(SupplierOrderLine).where(SupplierOrderLine.execution_id == ex.id))
@@ -749,6 +749,8 @@ def order_create(data: OrderIn, db: DB, user: Actor):
                 select(SupplierOrderLine.id).where(SupplierOrderLine.execution_id == ex.id)
             ):
                 error("ORDER_POSITION_USED", "Позиция отменена или уже заказана", 409)
+            if ex.procurement_at is None:
+                error("PROCUREMENT_HANDOFF_REQUIRED", "Сначала согласуйте и передайте позицию в закупки")
             row = order_candidate(db, ex)
             row["unit_price"] = str(dec(data.prices.get(entity_id, row["unit_price"])))
             if dec(row["unit_price"]) < 0:

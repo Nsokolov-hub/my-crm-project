@@ -672,11 +672,21 @@ export function Notifications() {
         ) : list.data?.items.length ? (
           <div className="notification-list">
             {list.data.items.map((row) => (
-              <article key={row.id}>
+              <article key={row.id} className={`notification-card ${row.read ? 'read' : 'unread'}`}>
                 <span className="notification-icon">
                   <Bell size={20} />
                 </span>
                 <div>
+                  <div className="notification-meta">
+                    <span>
+                      {row.entity_type === 'request'
+                        ? 'Заявка'
+                        : row.entity_type === 'chat'
+                          ? 'Сообщение'
+                          : 'Рабочее событие'}
+                    </span>
+                    {!row.read && <Badge value="Новое" tone="purple" />}
+                  </div>
                   <Link to={target(row)}>{String(row.title)}</Link>
                   <small>{date(row.created_at, true)}</small>
                 </div>

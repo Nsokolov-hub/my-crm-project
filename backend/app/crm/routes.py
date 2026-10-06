@@ -69,6 +69,7 @@ from app.crm.schemas import (
     RequestInput,
     RequestPatch,
     SellerInput,
+    SellerUpdate,
     ShareInput,
     StartItemsInput,
     TaskInput,
@@ -1206,6 +1207,8 @@ def quote_item_view(db: Session, row: QuoteItem, show_purchase: bool = True) -> 
         'request_number': request.number,
         'supplier_request_id': sheet.supplier_request_id,
         'nomenclature_name': nomenclature.name,
+        'article': nomenclature.article,
+        'request_quantity': db.get(RequestItem, row.source_request_item_id).quantity if row.source_request_item_id else None,
         'packing_name': packing.display_name,
         'product_group_id': nomenclature.product_group_id,
         'product_group_name': group.name if group else None,
@@ -1299,17 +1302,21 @@ def quote_item_history(
 
 @router.get('/requests/{entity_id}/quote-items')
 def request_quote_items(
-    entity_id: str, page: int = Query(1, ge=1), page_size: int = Query(100, ge=1, le=100), ids: str = '',
+    entity_id: str, page: int = Query(1, ge=1), page_size: int = Query(100, ge=1, le=100), ids: str = '', load_all: bool = Query(False, alias="all"),
     user: User = Depends(current_user), db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     check_request(db, user, entity_id)
     stmt = select(QuoteItem).join(QuoteSheet, QuoteSheet.id == QuoteItem.quote_id).where(QuoteSheet.request_id == entity_id)
     if ids:
         selected_ids = [value.strip() for value in ids.split(',') if value.strip()]
-        if len(selected_ids) > 100:
-            raise DomainError('QUOTE_SELECTION_LIMIT', 'Выберите не более 100 позиций квоты', 422, 'ids')
+        if len(selected_ids) > 10000:
+            raise DomainError('QUOTE_SELECTION_LIMIT', 'Выберите не более 10 000 позиций квоты', 422, 'ids')
         stmt = stmt.where(QuoteItem.id.in_(selected_ids))
-    result = paginate(db, stmt.order_by(QuoteItem.created_at.desc(), QuoteItem.id.desc()), page, page_size)
+    if ids or load_all:
+        selected_rows = db.scalars(stmt.order_by(QuoteItem.created_at.desc(), QuoteItem.id.desc()).limit(10000)).all()
+        result = {"items": [serialize(row) for row in selected_rows], "total": len(selected_rows), "page": 1, "page_size": len(selected_rows)}
+    else:
+        result = paginate(db, stmt.order_by(QuoteItem.created_at.desc(), QuoteItem.id.desc()), page, page_size)
     show_purchase = has_request_permission(db, user, entity_id, 'finance.purchase.read')
     result['items'] = [quote_item_view(db, db.get(QuoteItem, item['id']), show_purchase) for item in result['items']]
     return result
@@ -1410,6 +1417,10 @@ def create_quote_sheet(
             parent.commercial_stage = 'quote_given'
             parent.version += 1
             audit(db, user, 'request', parent.id, 'quote_given', before={'commercial_stage': before_stage}, after={'commercial_stage': parent.commercial_stage})
+        batch_id = db.info.get("quote_import_batch")
+        notify(db, parent.owner_id, f"quote-import:{batch_id}" if batch_id else f"quote-sheet:{sheet.id}",
+               (f"Загружены квоты по заявке №{parent.number}" if batch_id else f"По заявке №{parent.number} добавлена квота {sheet.number}"),
+               "request", parent.id)
         result = quote_sheet_view(db, sheet)
         audit(db, user, 'quote_sheet', sheet.id, 'created', after=result)
         return result
@@ -1429,3 +1440,18 @@ def sellers(user: User = Depends(current_user), db: Session = Depends(get_db)) -
 def create_seller(body: SellerInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     require_permission(db, user, 'admin.settings')
     return save(db, user, Seller(**body.model_dump()), 'seller')
+
+
+@router.patch('/sellers/{entity_id}')
+def update_seller(entity_id: str, body: SellerUpdate, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    require_permission(db, user, 'admin.settings')
+    row = lock(db, Seller, entity_id)
+    check_version(row, body.version)
+    if row.archived:
+        raise DomainError('SELLER_ARCHIVED', 'Организация находится в архиве', 422)
+    before = serialize(row)
+    for field, value in body.model_dump(exclude={'version'}).items():
+        setattr(row, field, value)
+    row.version += 1
+    audit(db, user, 'seller', row.id, 'update', before=before, after=serialize(row))
+    return serialize(row)

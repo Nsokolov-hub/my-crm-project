@@ -48,7 +48,8 @@ it('sends the selected VAT deduction mode and common delivery term in preview an
   const quote = {
     id: 'quote',
     nomenclature_name: 'Стандарт',
-    quantity: '2',
+    quantity: '1',
+    request_quantity: '2',
     currency_code: 'RUB',
     product_group_slug: 'standards',
     unit_price: '100',
@@ -121,12 +122,18 @@ it('sends the selected VAT deduction mode and common delivery term in preview an
     target: { value: 'profile' },
   });
   expect(screen.getByLabelText('Расчёт с вычетом НДС')).toBeChecked();
+  expect(screen.getByLabelText('Количество Стандарт')).toHaveValue('2');
+  fireEvent.change(screen.getByLabelText('Количество Стандарт'), { target: { value: '3' } });
   fireEvent.change(screen.getByLabelText('Общий срок поставки, дней'), { target: { value: '35' } });
   await waitFor(() =>
     expect(api).toHaveBeenCalledWith(
       '/requests/request/calculations/preview',
       expect.objectContaining({
-        body: expect.objectContaining({ vat_deductible: true, delivery_days: 35 }),
+        body: expect.objectContaining({
+          vat_deductible: true,
+          delivery_days: 35,
+          selections: [expect.objectContaining({ quote_item_id: 'quote', quantity: '3' })],
+        }),
       }),
     ),
   );
@@ -211,7 +218,7 @@ it('refreshes shared wave costs in a new version while retaining request costs a
       return { snapshot: { lines: [], totals: {}, wave: { financial_digest: 'b'.repeat(64) } } };
     if (path.split('?')[0].endsWith('/calculations')) return { items: [previous] };
     if (path.endsWith('/wave-expenses'))
-      return { expenses: [shared, airport], source_calculation_id: 'peer-new' };
+      return { expenses: [shared, airport], source_calculation_id: null, complete_budget: true };
     if (path.includes('/quote-items'))
       return {
         items: [
@@ -233,7 +240,11 @@ it('refreshes shared wave costs in a new version while retaining request costs a
             id: 'profile',
             name: 'Профиль',
             status: 'published',
-            definition: { methodology: 'itemized_v2', default_expenses: [], exchange_rates: [] },
+            definition: {
+              methodology: 'itemized_v2',
+              default_expenses: [shared, airport],
+              exchange_rates: [],
+            },
           },
         ],
       };

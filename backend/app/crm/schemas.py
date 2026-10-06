@@ -212,6 +212,10 @@ class SellerInput(Input):
     details: dict[str, Any] = {}
 
 
+class SellerUpdate(SellerInput):
+    version: int = Field(ge=1)
+
+
 class ShareInput(Input):
     version: int
     member_ids: list[str]
@@ -305,7 +309,7 @@ class QuoteItemInput(Input):
 class QuoteSheetInput(Input):
     supplier_id: str
     supplier_request_id: str | None = None
-    items: list[QuoteItemInput] = Field(min_length=1, max_length=100)
+    items: list[QuoteItemInput] = Field(min_length=1, max_length=10000)
 
     @model_validator(mode='after')
     def no_duplicate_source_rows(self):

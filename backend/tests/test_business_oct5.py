@@ -232,6 +232,11 @@ def test_domestic_calculation_order_export_and_calendar_source(crm):  # noqa: F8
             "lines": [{"line_id": calculation["snapshot"]["lines"][0]["line_id"], "quantity": "1"}],
         },
     )
+    assert crm["client"].get("/api/v1/supplier-orders/positions").json()["items"] == []
+    review = cmd(crm, f"/requests/{req['id']}/approvals", {
+        "execution_ids": [accepted["executions"][0]["id"]], "reviewer_id": crm["admin"].id,
+    })
+    cmd(crm, f"/approvals/{review['id']}/decision", {"version": review["version"], "decision": "approved"})
     positions = crm["client"].get("/api/v1/supplier-orders/positions").json()["items"]
     assert positions[0]["manufacturer"] == "Aozeal"
     assert positions[0]["article"] == "A123"
@@ -590,11 +595,7 @@ def test_actual_wave_preserves_sale_and_reallocates_changed_shared_budget(crm): 
         f"/approvals/{approval['id']}/decision",
         {"version": approval["version"], "decision": "approved", "reason": "Подтверждённый заказ"},
     )
-    cmd(
-        crm,
-        f"/waves/{req['wave_id']}/allocations",
-        {"execution_id": execution["id"], "approval_id": approval["id"], "quantity": "1"},
-    )
+    assert crm["client"].get("/api/v1/waves").json()["items"][0]["allocations"][0]["execution_id"] == execution["id"]
     from app.commerce.financial import wave_actual_summary
 
     with crm["sessions"]() as db:

@@ -16,7 +16,7 @@ from app.core.security import (
     require_permission,
 )
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
-from app.crm.models import Counterparty, QuoteItem, RequestItem, Task
+from app.crm.models import Counterparty, ProductGroup, QuoteItem, RequestItem, Task
 from app.crm.models import Request as CRMRequest
 
 from .calculator import convert, dec, digest
@@ -30,6 +30,7 @@ from .models import (
     Quote,
     Wave,
     WaveAllocation,
+    WaveForecast,
 )
 from .payments import funding_for_execution
 from .procurement import DB, Actor, check_quote
@@ -42,6 +43,8 @@ from .schemas import (
     ExecutionReviseIn,
     FulfillmentIn,
     TransferIn,
+    WaveBudgetIn,
+    WaveForecastIn,
     WaveIn,
     WaveUpdate,
 )
@@ -316,8 +319,8 @@ def revise_execution(execution_id: str, data: ExecutionReviseIn, db: DB, user: A
 
         quantity = dec(data.quantity)
         if current.quote_item_id:
-            if current.unit != "pcs" or quantity > quote.quantity:
-                error("QUOTE_AVAILABILITY", "Количество превышает объём выбранной квоты")
+            if quantity <= 0 or quantity != quantity.to_integral_value():
+                error("PACKING_QUANTITY", "Количество фасовок должно быть целым числом больше нуля")
         else:
             validate_quantity(quote, product, quantity, current.unit)
         if not item.quantity or not item.unit:
@@ -337,10 +340,12 @@ def revise_execution(execution_id: str, data: ExecutionReviseIn, db: DB, user: A
             Decimal("0"),
         )
         requested = convert(quantity, current.unit, item.unit)
-        if accepted + requested > item.quantity:
+        if not current.quote_item_id and accepted + requested > item.quantity:
             error("ACCEPTANCE_EXCEEDED", "Сумма принятых количеств превышает потребность")
         profile = calc.snapshot["profile"]
-        if not profile.get("allow_partial_acceptance", True) and requested != item.quantity - accepted:
+        if not profile.get("allow_partial_acceptance", True) and requested != (
+            dec(source["quantity"]) if current.quote_item_id else item.quantity - accepted
+        ):
             error("PARTIAL_ACCEPTANCE", "Профиль требует принятия полного остатка потребности")
         # Count only the latest member of each revision chain. Historical
         # snapshots remain intact without consuming the same quantity twice.
@@ -537,6 +542,29 @@ def decide_approval(approval_id: str, data: DecisionIn, db: DB, user: Actor):
                     "sale_confirmed",
                     after={"sale_confirmed_at": req.sale_confirmed_at},
                 )
+            for execution, approved_line in zip(executions, current["lines"], strict=True):
+                execution.procurement_at = utcnow()
+                execution.financing_deficit = dec(approved_line["funding"]["ratio"]) < dec(approved_line["funding_ratio"])
+                execution.version += 1
+            if req.wave_id:
+                advisory(db, f"wave:{req.wave_id}")
+                wave = lock(db, Wave, req.wave_id)
+                if wave.status not in OPEN_WAVES:
+                    error("WAVE_CLOSED", "Для передачи в закупки выберите открытую волну")
+                for execution in executions:
+                    quote = check_execution_quote(db, execution)
+                    if wave.supplier_id != quote.supplier_id:
+                        error("WAVE_SUPPLIER", "Волна не соответствует поставщику подтверждённых позиций")
+                    allocated = sum((row.quantity for row in db.scalars(select(WaveAllocation).where(
+                        WaveAllocation.execution_id == execution.id, WaveAllocation.active.is_(True)
+                    ))), Decimal("0"))
+                    remaining = execution.quantity - execution.cancelled_quantity - allocated
+                    if remaining > 0:
+                        db.add(WaveAllocation(wave_id=wave.id, execution_id=execution.id,
+                                              approval_id=approval.id, quantity=remaining))
+                        audit(db, user, "execution", execution.id, "procurement_handoff",
+                              after={"wave_id": wave.id, "quantity": str(remaining)})
+                wave.version += 1
             req.version += 1
             recalculate_fulfillment(db, req.id)
         approval.status, approval.reason = data.decision, data.reason
@@ -613,10 +641,14 @@ def wave_view(db, user, wave: Wave) -> dict:
     allocations = db.scalars(
         select(WaveAllocation)
         .join(Execution, Execution.id == WaveAllocation.execution_id)
-        .where(WaveAllocation.wave_id == wave.id, Execution.request_id.in_(accessible))
+        .where(WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True), Execution.request_id.in_(accessible))
     ).all()
     supplier = db.get(Counterparty, wave.supplier_id) if wave.supplier_id else None
     value = serialize(wave)
+    value.pop("budget_expenses", None)
+    value.pop("budget_rates", None)
+    forecasts = db.scalars(select(WaveForecast).where(WaveForecast.wave_id == wave.id).order_by(WaveForecast.created_at)).all()
+    value["forecasts"] = [{**serialize(row), "product_group_name": db.get(ProductGroup, row.product_group_id).name} for row in forecasts]
     for prefix in ("close", "departure", "arrival"):
         year, week, _ = getattr(wave, f"{prefix}_date").isocalendar()
         value[f"{prefix}_year"] = getattr(wave, f"{prefix}_year") or year
@@ -625,7 +657,7 @@ def wave_view(db, user, wave: Wave) -> dict:
     if all(can(db, user, code) for code in ("finance.purchase.read", "finance.calculations.read")):
         from .financial import wave_financial_summary, wave_selections
         peers, _, _ = wave_selections(db, wave.id)
-        finance_requests = {row["_request_id"] for row in peers}
+        finance_requests = {row["_request_id"] for row in peers if row.get("_request_id")}
         finance_requests.update(db.scalars(select(Execution.request_id).join(
             WaveAllocation, WaveAllocation.execution_id == Execution.id).where(
             WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True))).all())
@@ -638,6 +670,12 @@ def wave_view(db, user, wave: Wave) -> dict:
             except DomainError as exc:
                 value["financial_summary"] = {"status": "error", "error": exc.message, "code": exc.code,
                                               "provisional": True, "allocations": []}
+    if value["financial_summary"] is not None:
+        value["budget_expenses"] = wave.budget_expenses
+        value["budget_rates"] = wave.budget_rates
+    else:
+        for row in value["forecasts"]:
+            row.pop("unit_price_rub", None)
     return {**value, "supplier_name": supplier.name if supplier else None,
             "allocations": [allocation_view(db, row) for row in allocations]}
 
@@ -702,6 +740,10 @@ def update_wave(wave_id: str, data: WaveUpdate, db: DB, user: Actor):
         if data.status and data.status != wave.status:
             if data.status not in WAVE_TRANSITIONS[wave.status]:
                 error("WAVE_TRANSITION", "Этот переход состояния волны недопустим")
+            if data.status in ("closed", "shipped", "arrived", "completed") and db.scalar(
+                select(WaveForecast.id).where(WaveForecast.wave_id == wave.id, WaveForecast.active.is_(True))
+            ):
+                error("WAVE_FORECAST_ACTIVE", "Отключите плановые позиции перед закрытием состава волны")
             if data.status == "cancelled":
                 if any(event_totals(db, row.id)["shipped"] > 0 for row in allocations):
                     error(
@@ -784,6 +826,7 @@ def allocate_wave(wave_id: str, data: AllocateWaveIn, db: DB, user: Actor):
         allocated = sum((row.quantity for row in allocations), Decimal("0"))
         if allocated + data.quantity > execution.quantity - execution.cancelled_quantity:
             error("WAVE_OVERALLOCATED", "Количество превышает нераспределённый согласованный остаток")
+        execution.procurement_at = execution.procurement_at or utcnow()
         obj = WaveAllocation(
             wave_id=wave.id, execution_id=execution.id, approval_id=approval.id, quantity=data.quantity
         )
@@ -930,3 +973,75 @@ def record_event(allocation_id: str, data: FulfillmentIn, db: DB, user: Actor):
         data.model_dump(mode="json"),
         operation,
     )
+
+
+def check_wave_finances(db, user, wave):
+    require_permission(db, user, "waves.write")
+    for permission in ("finance.purchase.read", "finance.calculations.read"):
+        require_permission(db, user, permission)
+        for request_id in db.scalars(select(Execution.request_id).join(
+            WaveAllocation, WaveAllocation.execution_id == Execution.id).where(
+            WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True))).unique():
+            check_request(db, user, request_id, permission)
+
+
+@router.put("/waves/{wave_id}/forecasts")
+def save_wave_forecast(wave_id: str, data: WaveForecastIn, db: DB, user: Actor):
+    def operation():
+        advisory(db, f"wave:{wave_id}")
+        wave = lock(db, Wave, wave_id)
+        check_wave_finances(db, user, wave)
+        check_version(wave, data.version)
+        if wave.status not in OPEN_WAVES:
+            error("WAVE_CLOSED", "Прогноз можно изменить только в открытой волне")
+        group = db.get(ProductGroup, data.product_group_id)
+        if not group or not group.active:
+            error("PRODUCT_GROUP_REQUIRED", "Выберите действующую товарную группу")
+        row = db.scalar(select(WaveForecast).where(WaveForecast.wave_id == wave.id,
+                                                   WaveForecast.product_group_id == group.id))
+        before = serialize(row) if row else None
+        values = data.model_dump(exclude={"idempotency_key", "version"})
+        if row:
+            for field, value in values.items():
+                setattr(row, field, value)
+            row.author_id = user.id
+            row.version += 1
+        else:
+            row = WaveForecast(wave_id=wave.id, author_id=user.id, **values)
+            db.add(row)
+        wave.version += 1
+        db.flush()
+        from .financial import wave_financial_summary
+        wave_financial_summary(db, wave.id)
+        audit(db, user, "wave_forecast", row.id, "update" if before else "create", before=before,
+              after=serialize(row), reason=data.reason)
+        return wave_view(db, user, wave)
+    return idem(db, user, data.idempotency_key, f"wave-forecast:{wave_id}", data.model_dump(mode="json"), operation)
+
+
+@router.put("/waves/{wave_id}/budget")
+def save_wave_budget(wave_id: str, data: WaveBudgetIn, db: DB, user: Actor):
+    def operation():
+        advisory(db, f"wave:{wave_id}")
+        wave = lock(db, Wave, wave_id)
+        check_wave_finances(db, user, wave)
+        check_version(wave, data.version)
+        if wave.status not in OPEN_WAVES:
+            error("WAVE_CLOSED", "Бюджет можно изменить только в открытой волне")
+        from .models import CalculationProfile
+        profile = db.get(CalculationProfile, data.profile_id)
+        if not profile or profile.status != "published" or profile.definition.get("methodology") != "itemized_v2":
+            error("PROFILE_REQUIRED", "Выберите опубликованный профиль новой методики")
+        if any(row.scope != "WAVE" for row in data.expenses):
+            error("WAVE_BUDGET_SCOPE", "Бюджет волны содержит только общие расходы")
+        before = {"expenses": wave.budget_expenses, "rates": wave.budget_rates, "profile_id": wave.budget_profile_id}
+        wave.budget_expenses = [row.model_dump(mode="json") for row in data.expenses]
+        wave.budget_rates = [row.model_dump(mode="json") for row in data.rates] or profile.definition.get("exchange_rates", [])
+        wave.budget_profile_id = profile.id
+        wave.version += 1
+        from .financial import wave_financial_summary
+        wave_financial_summary(db, wave.id)  # Validate allocation, FX and forecast bases before committing.
+        audit(db, user, "wave", wave.id, "budget", before=before,
+              after={"expenses": wave.budget_expenses, "rates": wave.budget_rates, "profile_id": profile.id}, reason=data.reason)
+        return wave_view(db, user, wave)
+    return idem(db, user, data.idempotency_key, f"wave-budget:{wave_id}", data.model_dump(mode="json"), operation)

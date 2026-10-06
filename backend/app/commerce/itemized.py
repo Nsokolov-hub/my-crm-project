@@ -248,6 +248,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     allocations = []
     selected_rows = [row for row in rows if row["id"] in selected_ids]
     selected_quantity = sum(row["quantity"] for row in selected_rows)
+    forecast_quantity = sum(row["quantity"] for row in rows if row["source"].get("_forecast"))
     peer_quantity = sum(row["quantity"] for row in rows if row["id"] not in selected_ids)
     wave_total_quantity = selected_quantity + peer_quantity + wave_existing_quantity
     existing = {key: dec(wave_existing_components.get(key, "0")) for key in (
@@ -590,7 +591,9 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     return {
         "lines": output, "totals": totals, "currency": "RUB", "management_currency": "RUB",
         "expense_allocations": allocations, "rates": rates, "profile": profile,
-        "wave_distribution": {"existing_quantity": _string(wave_existing_quantity + peer_quantity),
+        "wave_distribution": {"existing_quantity": _string(wave_existing_quantity + sum(row["quantity"] for row in rows if row["id"] not in selected_ids and not row["source"].get("_forecast"))),
+                              "real_quantity": _string(wave_existing_quantity + sum(row["quantity"] for row in rows if row["id"] not in selected_ids and not row["source"].get("_forecast"))),
+                              "forecast_quantity": _string(forecast_quantity),
                               "selected_quantity": _string(selected_quantity),
                               "total_quantity": _string(wave_total_quantity),
                               "existing_customs_fee_share": _string(existing_fee_share + sum(dec(line["detail"]["customs_fee"]) for line in wave_lines if line["line_id"] not in selected_ids)),
@@ -602,6 +605,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
                               "expenses_total": _string(sum(dec(line["detail"]["expenses_total"]) for line in wave_lines) + existing_fee_share + existing["international_logistics"] + existing["general_expenses"]),
                               "allocations": [{"quote_item_id": line["line_id"],
                                                "request_id": row["source"].get("_request_id"),
+                                               "forecast": bool(row["source"].get("_forecast")),
                                                "description": line["description"],
                                                "customs_value": line["detail"]["customs_base"],
                                                "quantity": line["quantity"],

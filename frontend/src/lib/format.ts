@@ -127,6 +127,16 @@ export function decimal(value: unknown) {
     '',
   );
 }
+export function metric(value: unknown): string {
+  if (value == null || value === '') return '—';
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? new Intl.NumberFormat('ru-RU', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(number)
+    : '—';
+}
 export function display(value: unknown): string {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? 'Да' : 'Нет';
@@ -135,6 +145,8 @@ export function display(value: unknown): string {
   return stageLabels[String(value)] || String(value);
 }
 export function label(row: Entity): string {
+  if (row.departure_week && row.departure_year && row.number)
+    return `${row.number} · ${row.supplier_name || ''} · Неделя ${row.departure_week}, ${row.departure_year}`;
   if (row.internal_code && row.name) return `${row.internal_code} · ${row.name}`;
   return String(
     row.name || row.title || row.number || row.description || row.email || row.id.slice(0, 8),
