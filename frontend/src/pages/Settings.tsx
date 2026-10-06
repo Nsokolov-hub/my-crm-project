@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../app/Auth';
+import { RecordForm } from '../components/Form';
 import { Collection } from '../components/Collection';
 import { ExpenseTypeEditor } from '../components/ExpenseTypeEditor';
 import { FinancialProfileEditor } from '../components/FinancialProfileEditor';
@@ -29,6 +30,8 @@ const sellerFields: Field[] = [
   { name: 'bank', label: 'Банк' },
   { name: 'bank_account', label: 'Расчётный счёт' },
   { name: 'bank_code', label: 'БИК' },
+  { name: 'signatory_name', label: 'ФИО подписанта' },
+  { name: 'signatory_position', label: 'Должность подписанта' },
 ];
 const sellerDetailFields = {
   tax_id: 'ИНН',
@@ -37,6 +40,8 @@ const sellerDetailFields = {
   bank: 'Банк',
   bank_account: 'Расчётный счёт',
   bank_code: 'БИК',
+  signatory_name: 'Подписант',
+  signatory_position: 'Должность подписанта',
 };
 function sellerBody(values: Record<string, unknown>): Record<string, unknown> {
   const details = Object.fromEntries(
@@ -89,6 +94,7 @@ const baseLabels: Record<string, string> = {
 export function Settings() {
   const auth = useAuth();
   const [tab, setTab] = useState('organization');
+  const [seller, setSeller] = useState<Entity>();
   const [selected, setSelected] = useState<Entity>();
   const [editing, setEditing] = useState(false);
   const [profileMode, setProfileMode] = useState<'itemized_v2' | 'legacy_formula'>('itemized_v2');
@@ -147,11 +153,45 @@ export function Settings() {
           transform={sellerBody}
           createLabel="Добавить организацию"
           canCreate={auth.can('admin.settings')}
+          refreshKey={revision}
+          onSelect={auth.can('admin.settings') ? setSeller : undefined}
           columns={[
             { key: 'name', label: 'Название' },
             { key: 'currency', label: 'Валюта' },
             { key: 'details', label: 'Реквизиты', render: sellerDetails },
           ]}
+        />
+      )}
+      {seller && (
+        <RecordForm
+          title="Изменить организацию и подписанта"
+          endpoint={`/sellers/${seller.id}`}
+          method="PATCH"
+          fields={sellerFields}
+          initial={{
+            ...seller,
+            ...Object.fromEntries(
+              Object.entries(sellerDetailFields).map(([key, label]) => [
+                key,
+                (seller.details as Record<string, unknown>)?.[label] || '',
+              ]),
+            ),
+          }}
+          transform={(values) => ({
+            ...sellerBody(values),
+            details: {
+              ...(seller.details as Record<string, unknown>),
+              ...(sellerBody(values).details as Record<string, unknown>),
+              Подписант: String(values.signatory_name || ''),
+              'Должность подписанта': String(values.signatory_position || ''),
+            },
+            version: seller.version,
+          })}
+          onClose={() => setSeller(undefined)}
+          onSuccess={() => {
+            setSeller(undefined);
+            setRevision((value) => value + 1);
+          }}
         />
       )}
       {currentTab === 'users' && (

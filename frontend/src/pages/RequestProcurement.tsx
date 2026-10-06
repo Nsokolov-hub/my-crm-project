@@ -608,13 +608,14 @@ function QuoteSheetEditor({
           <Button
             type="button"
             variant="secondary"
-            disabled={rows.length >= 100}
+            disabled={rows.length >= 10000}
             onClick={() => setRows((current) => [...current, blankQuoteRow(nextKey.current++)])}
           >
             <Plus size={15} /> Добавить строку
           </Button>
           <p className="quote-sheet-count">
-            Строк: {rows.length}. Можно ввести до 100 позиций в одной квоте.
+            Строк: {rows.length}. Количество строк не связано с исходным запросом; до 10 000 позиций
+            в одной квоте.
           </p>
         </div>
         <div className="modal-footer">

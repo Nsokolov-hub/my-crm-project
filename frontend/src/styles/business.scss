@@ -86,3 +86,68 @@
 .notification-list article {
   border-left: 4px solid #7a5acc;
 }
+
+.notification-list {
+  display: grid;
+  gap: 12px;
+}
+
+.notification-list .notification-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid #e5e7ee;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 3px 14px #25334a08;
+}
+
+.notification-list .notification-card.unread {
+  border-left: 4px solid #7657c9;
+  background: #fbfaff;
+}
+
+.notification-list .notification-card > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.notification-card .notification-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: #efeafa;
+  color: #7657c9;
+}
+
+.notification-card .notification-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  color: #687283;
+  font-size: 12px;
+}
+
+.notification-card a {
+  display: block;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.notification-card small {
+  display: block;
+  margin-top: 6px;
+  color: #778191;
+}
+
+@media (width <= 700px) {
+  .notification-list .notification-card {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 16px;
+  }
+}

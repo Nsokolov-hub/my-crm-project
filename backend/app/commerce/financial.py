@@ -36,6 +36,7 @@ from .models import (
     Quote,
     Wave,
     WaveAllocation,
+    WaveForecast,
 )
 from .procurement import DB, Actor, check_quote, product_view, validate_quantity
 from .schemas import CalculationIn, Expense, ExpenseTypeIn, ExpenseTypePatch, ProfileIn, Rate, RequestWaveIn
@@ -139,9 +140,11 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
         visible_allocations = []
         for allocation in distribution.get("allocations", []):
             peer_id = allocation.get("request_id")
-            if peer_id and all(has_request_permission(db, user, peer_id, permission) for permission in (
-                "requests.read", "finance.purchase.read", "finance.calculations.read",
-            )):
+            visible = allocation.get("forecast", False) or (peer_id and all(
+                has_request_permission(db, user, peer_id, permission)
+                for permission in ("requests.read", "finance.purchase.read", "finance.calculations.read")
+            ))
+            if visible:
                 visible_allocations.append(allocation)
                 visible_quote_ids.add(allocation.get("quote_item_id"))
         distribution["allocations"] = visible_allocations
@@ -186,7 +189,7 @@ def calculation_view(db, user, calculation: Calculation) -> dict:
             try:
                 current = wave_financial_summary(db, wave_id)
                 result["wave_current_digest"] = current.get("digest")
-                result["wave_stale"] = snapshot["wave"].get("financial_digest") != current.get("digest")
+                result["wave_stale"] = snapshot["wave"].get("revision_digest") != wave_revision_digest(db, db.get(Wave, wave_id))
             except DomainError as exc:
                 result["wave_stale"] = True
                 result["wave_recalculation_error"] = exc.message
@@ -208,25 +211,9 @@ def latest_calculation(db, request_id: str) -> Calculation | None:
 
 
 def latest_wave_expenses(db, wave_id: str) -> tuple[list[dict] | None, str | None]:
-    """Use the latest saved budget for the wave, never a preview or a different wave."""
-    calculations = db.scalars(
-        select(Calculation)
-        .where(Calculation.snapshot["wave"]["id"].as_string() == wave_id)
-        .order_by(Calculation.created_at.desc(), Calculation.id.desc())
-    )
-    for calculation in calculations:
-        snapshot = calculation.snapshot
-        if snapshot.get("algorithm_version") != "itemized-v2":
-            continue
-        expenses = snapshot.get("resolved_expenses")
-        if expenses is None:
-            # Older saved calculations did not persist resolved profile defaults.
-            expenses = (snapshot.get("input") or {}).get("expenses")
-            if not expenses:
-                continue
-        return [row for row in normalize_logistics_expenses(expenses)
-                if row.get("scope", "WAVE") == "WAVE"], calculation.id
-    return None, None
+    """Shared budgets are explicit wave data; saving a quotation cannot replace them."""
+    wave = db.get(Wave, wave_id)
+    return (deepcopy(wave.budget_expenses), None) if wave and wave.budget_expenses is not None else (None, None)
 
 
 def existing_wave_components(db, wave_id: str, selected_quote_ids: list[str]) -> tuple:
@@ -287,57 +274,65 @@ def selection_from_saved_line(line: dict, request_id: str, quantity=None, input_
     }
 
 
-def wave_selections(db, wave_id: str, *, exclude_request_id=None, exclude_quote_ids=()) -> tuple:
-    """Latest planned selections plus allocated accepted lines not present in that plan."""
-    result = {}
-    requests = db.scalars(select(CRMRequest).where(CRMRequest.wave_id == wave_id, CRMRequest.archived.is_(False))).all()
-    for request in requests:
-        if request.id == exclude_request_id:
-            continue
-        calculation = latest_calculation(db, request.id)
-        if not calculation or (calculation.snapshot.get("wave") or {}).get("id") != wave_id:
-            continue
-        inputs = {row.get("quote_item_id"): row for row in (calculation.snapshot.get("input") or {}).get("selections", [])}
-        for line in calculation.snapshot.get("lines", []):
-            quote_id = line.get("quote_item_id")
-            if quote_id in exclude_quote_ids:
-                continue
-            selection = selection_from_saved_line(line, request.id, input_selection=inputs.get(quote_id))
-            if selection:
-                result[quote_id] = selection
-    unknown_quantity = dec("0")
-    components = {"purchase_rub": dec("0"), "duty": dec("0")}
-    allocated = {}
-    allocations = db.scalars(select(WaveAllocation).where(
+def wave_selections(db, wave_id: str, *, exclude_request_id=None, exclude_quote_ids=(), replacement_quantities=None) -> tuple:
+    """Only active procurement allocations belong to the real wave composition."""
+    result, unknown_quantity = [], dec("0")
+    replacements = dict(replacement_quantities or {})
+    for allocation in db.scalars(select(WaveAllocation).where(
         WaveAllocation.wave_id == wave_id, WaveAllocation.active.is_(True)
-    )).all()
-    for allocation in allocations:
+    ).order_by(WaveAllocation.id)):
         execution = db.get(Execution, allocation.execution_id)
-        if not execution or execution.quote_item_id in exclude_quote_ids:
+        if not execution or execution.quantity <= execution.cancelled_quantity:
             continue
-        quote_id = execution.quote_item_id
-        if quote_id in result:
+        quantity = allocation.quantity
+        # Recalculating an already accepted line replaces its own quantity in the scenario.
+        # Other executions and any excess allocated quantity must still be counted.
+        if execution.request_id == exclude_request_id and execution.quote_item_id in replacements:
+            removed = min(quantity, replacements[execution.quote_item_id])
+            quantity -= removed
+            replacements[execution.quote_item_id] -= removed
+        if not quantity:
             continue
         proposal = db.get(CommercialDocument, execution.proposal_id)
         calculation = db.get(Calculation, proposal.calculation_id) if proposal else None
         line = next((row for row in (calculation.snapshot.get("lines", []) if calculation else [])
                      if row.get("line_id") == execution.line_id), None)
         input_selection = next((row for row in (calculation.snapshot.get("input") or {}).get("selections", [])
-                                if row.get("quote_item_id") == quote_id), None) if calculation else None
-        selection = selection_from_saved_line(line, execution.request_id, allocation.quantity, input_selection) if line else None
+                                if row.get("quote_item_id") == execution.quote_item_id), None) if calculation else None
+        selection = selection_from_saved_line(line, execution.request_id, quantity, input_selection) if line else None
         if not selection:
-            unknown_quantity += allocation.quantity
+            unknown_quantity += quantity
             continue
-        if quote_id in allocated:
-            previous = allocated[quote_id]
-            previous["quote_item"]["quantity"] = str(dec(previous["quote_item"]["quantity"]) + allocation.quantity)
-            previous["_purchase_rub"] = str(dec(previous["_purchase_rub"]) + dec(selection["_purchase_rub"]))
-            if previous.get("weight") is not None or selection.get("weight") is not None:
-                previous["weight"] = str(dec(previous.get("weight") or "0") + dec(selection.get("weight") or "0"))
-        else:
-            allocated[quote_id] = selection
-    result.update(allocated)
-    return list(result.values()), unknown_quantity, components
+        # Allocations, not quote IDs, are unique: partial executions can share a quotation.
+        selection["quote_item"]["id"] = "allocation:" + allocation.id
+        selection["_execution_id"] = execution.id
+        result.append(selection)
+    return result, unknown_quantity, {}
+
+
+def forecast_selections(db, wave: Wave, selections: list[dict]) -> list[dict]:
+    quantities = {}
+    for row in selections:
+        group_id = row["product_group"]["id"]
+        quantities[group_id] = quantities.get(group_id, dec("0")) + dec(row["quote_item"]["quantity"])
+    result = []
+    for forecast in db.scalars(select(WaveForecast).where(WaveForecast.wave_id == wave.id, WaveForecast.active.is_(True))):
+        group = db.get(ProductGroup, forecast.product_group_id)
+        quantity = max(dec("0"), forecast.target_quantity - quantities.get(group.id, dec("0")))
+        if not quantity:
+            continue
+        result.append({
+            "quote_item": {"id": "forecast:" + forecast.id, "quote_id": forecast.id,
+                           "supplier_id": wave.supplier_id, "quantity": str(quantity),
+                           "unit_price": str(forecast.unit_price_rub), "delivery_days": 0},
+            "nomenclature": {"name": "Прогноз — " + group.name},
+            "packing": {"display_name": "плановые единицы"},
+            "product_group": serialize(group), "currency_code": "RUB", "calculation_type": "IMPORT",
+            "_forecast": True, "_exchange_rate": "1",
+            "_purchase_rub": str(forecast.unit_price_rub * quantity),
+            "weight": str(forecast.weight_per_unit * quantity),
+        })
+    return result
 
 
 def fee_is_independent_of_unknown_value(profile: dict) -> bool:
@@ -362,16 +357,13 @@ def validate_unknown_wave_basis(profile: dict, expenses: list[dict], unknown_qua
 
 def wave_revision_digest(db, wave: Wave) -> str:
     """A preview guard also detects another request replacing the common FX/budget."""
-    members = []
-    for request in db.scalars(select(CRMRequest).where(CRMRequest.wave_id == wave.id, CRMRequest.archived.is_(False))):
-        calculation = latest_calculation(db, request.id)
-        members.append((request.id, calculation.id if calculation else None))
-    _, budget_source = latest_wave_expenses(db, wave.id)
     allocations = [(row.id, row.version, format(row.quantity.normalize(), "f")) for row in db.scalars(
         select(WaveAllocation).where(WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True))
     )]
-    return digest({"wave_version": wave.version, "members": sorted(members),
-                   "allocations": sorted(allocations), "budget_source": budget_source})
+    forecasts = [serialize(row) for row in db.scalars(select(WaveForecast).where(WaveForecast.wave_id == wave.id).order_by(WaveForecast.id))]
+    return digest({"wave_version": wave.version, "allocations": sorted(allocations),
+                   "forecasts": forecasts, "budget": wave.budget_expenses, "rates": wave.budget_rates,
+                   "profile_id": wave.budget_profile_id})
 
 
 def wave_financial_digest(selections: list[dict], expenses: list[dict], profile: dict, unknown_quantity="0", rates=None) -> str:
@@ -405,14 +397,12 @@ def wave_financial_digest(selections: list[dict], expenses: list[dict], profile:
 
 
 def wave_financial_summary(db, wave_id: str) -> dict:
-    calculations = db.scalars(select(Calculation).where(
-        Calculation.snapshot["wave"]["id"].as_string() == wave_id
-    ).order_by(Calculation.created_at.desc(), Calculation.id.desc())).all()
-    latest = next((row for row in calculations if row.snapshot.get("algorithm_version") == "itemized-v2"), None)
-    if latest:
-        profile = deepcopy(latest.snapshot["profile"])
+    wave = db.get(Wave, wave_id)
+    configured = db.get(CalculationProfile, wave.budget_profile_id) if wave.budget_profile_id else None
+    if configured:
+        profile = deepcopy(configured.definition)
         expenses, source_id = latest_wave_expenses(db, wave_id)
-        rates = latest.snapshot.get("rates") or []
+        rates = wave.budget_rates or profile.get("exchange_rates") or []
     else:
         published = db.scalar(select(CalculationProfile).where(
             CalculationProfile.status == "published", CalculationProfile.effective_from <= date.today(),
@@ -432,6 +422,10 @@ def wave_financial_summary(db, wave_id: str) -> dict:
         source_id = None
     selections, unknown_quantity, components = wave_selections(db, wave_id)
     validate_unknown_wave_basis(profile, expenses or [], unknown_quantity)
+    real_quantity = sum((dec(row["quote_item"]["quantity"]) for row in selections), unknown_quantity)
+    if unknown_quantity and db.scalar(select(WaveForecast.id).where(WaveForecast.wave_id == wave.id, WaveForecast.active.is_(True))):
+        error("WAVE_BASIS_REQUIRED", "Для прогноза необходимо восстановить группы ранее принятых позиций")
+    selections += forecast_selections(db, wave, selections)
     if not selections:
         from .itemized import _bracket_amount, _money, _rate_map
         fee = _money(_bracket_amount(profile["customs_fee_brackets"], dec("0"), field="customs_fee_brackets"), profile.get("rounding", "half_up"))
@@ -455,6 +449,7 @@ def wave_financial_summary(db, wave_id: str) -> dict:
             if expense.get("include_in_cost", True):
                 provisional_expenses += _money(amount, profile.get("rounding", "half_up"))
         return {"status": "provisional", "provisional": True, "total_quantity": str(unknown_quantity),
+                "real_quantity": str(real_quantity), "forecast_quantity": "0",
                 "customs_value": "0", "customs_fee": str(fee), "import_vat": "0", "expenses_total": str(provisional_expenses),
                 "allocations": [], "source_calculation_id": source_id,
                 "digest": wave_financial_digest([], expenses or [], profile, unknown_quantity, rates)}
@@ -462,6 +457,8 @@ def wave_financial_summary(db, wave_id: str) -> dict:
     calculated = calculate_itemized(profile, selections, expenses or [], rates,
                                     wave_existing_quantity=unknown_quantity, wave_existing_components=components)
     summary = calculated["wave_distribution"]
+    summary["real_quantity"] = str(real_quantity)
+    summary["selected_quantity"] = "0"
     for row in summary["allocations"]:
         request = db.get(CRMRequest, row.get("request_id")) if row.get("request_id") else None
         row["request_number"] = request.number if request else None
@@ -499,10 +496,18 @@ def request_wave_expenses(request_id: str, db: DB, user: Actor):
     expenses, source_id = latest_wave_expenses(db, request.wave_id)
     if expenses is None:
         wave = db.get(Wave, request.wave_id)
+        profile = db.scalar(select(CalculationProfile).where(
+            CalculationProfile.status == "published", CalculationProfile.effective_from <= date.today(),
+            (CalculationProfile.effective_until.is_(None)) | (CalculationProfile.effective_until >= date.today()),
+            CalculationProfile.definition["methodology"].as_string() == "itemized_v2",
+        ).order_by(CalculationProfile.created_at.desc(), CalculationProfile.id.desc()).limit(1))
+        expenses = [row for row in normalize_logistics_expenses(profile.definition.get("default_expenses", []))
+                    if row.get("scope", "WAVE") == "WAVE"] if profile else None
         default_logistics = supplier_logistics(db, wave.supplier_id) if wave else None
         if default_logistics:
-            expenses = [default_logistics]
-    return {"expenses": expenses, "source_calculation_id": source_id}
+            expenses = [row for row in expenses or [] if row.get("stage") != "INTERNATIONAL_LOGISTICS"] + [default_logistics]
+    return {"expenses": expenses, "source_calculation_id": source_id, "complete_budget": expenses is not None,
+            "wave_version": db.get(Wave, request.wave_id).version}
 
 
 def expense_type_view(db, row: ExpenseType) -> dict:
@@ -613,8 +618,11 @@ def itemized_selection(db, request_id: str, selection, index: int) -> dict:
     group = db.get(ProductGroup, nomenclature.product_group_id) if nomenclature.product_group_id else None
     if not group:
         error("PRODUCT_GROUP_REQUIRED", f"У позиции {nomenclature.name} {packing.display_name} не определена товарная группа", field=f"selections.{index}.quote_item_id")
+    quote_data = serialize(quote)
+    if selection.quantity is not None:
+        quote_data["quantity"] = str(selection.quantity)
     return {
-        "quote_item": serialize(quote),
+        "quote_item": quote_data,
         "nomenclature": serialize(nomenclature),
         "packing": serialize(packing),
         "product_group": serialize(group),
@@ -679,7 +687,10 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
                 error('WAVE_CLOSED', 'Для расчёта выберите открытую волну', field='wave_id')
             peer_selections, existing_quantity, existing_components = wave_selections(
                 db, wave.id, exclude_request_id=request_id,
-                exclude_quote_ids=[row['quote_item']['id'] for row in selections])
+                replacement_quantities={row["quote_item"]["id"]: dec(row["quote_item"]["quantity"]) for row in selections})
+            if existing_quantity and db.scalar(select(WaveForecast.id).where(WaveForecast.wave_id == wave.id, WaveForecast.active.is_(True))):
+                error("WAVE_BASIS_REQUIRED", "Для прогноза необходимо восстановить группы ранее принятых позиций")
+            peer_selections += forecast_selections(db, wave, [*selections, *peer_selections])
             wave_expenses, wave_expense_source = latest_wave_expenses(db, wave.id)
         missing_basis = existing_quantity
         if data.expenses is not None:
@@ -723,7 +734,8 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         if wave:
             snapshot["wave"] = {"id": wave.id, "number": wave.number, "supplier_id": wave.supplier_id,
                                 "existing_quantity": str(existing_quantity),
-                                "expense_source_calculation_id": wave_expense_source}
+                                "expense_source_calculation_id": wave_expense_source,
+                                "revision_digest": wave_revision_digest(db, wave)}
             digest_rows = [selection_from_saved_line(line, request_id) for line in snapshot["lines"]]
             for index, row in enumerate(digest_rows):
                 row["weight"] = selections[index].get("weight")
@@ -1036,15 +1048,14 @@ def wave_actual_summary(db, wave_id, profile, expenses, rates):
         line = next((line for line in calculation.snapshot.get('lines', []) if line['line_id'] == execution.line_id), None)
         if not line:
             return {'status': 'incomplete', 'message': 'Нет сохранённого расчёта принятой позиции'}
-        selection = selection_from_saved_line(line, execution.request_id, allocation.quantity)
+        input_selection = next((row for row in (calculation.snapshot.get("input") or {}).get("selections", [])
+                                if row.get("quote_item_id") == execution.quote_item_id), None)
+        selection = selection_from_saved_line(line, execution.request_id, allocation.quantity, input_selection)
         if not selection:
             return {'status': 'incomplete', 'message': 'Для старой позиции нет базы таможенной стоимости'}
-        key = line['quote_item_id']
-        if key in selections:
-            selections[key]['quote_item']['quantity'] = str(dec(selections[key]['quote_item']['quantity']) + allocation.quantity)
-            selections[key]['_purchase_rub'] = str(dec(selections[key]['_purchase_rub']) + dec(selection['_purchase_rub']))
-        else:
-            selections[key] = selection
+        key = "allocation:" + allocation.id
+        selection["quote_item"]["id"] = key
+        selections[key] = selection
         accepted.append((allocation, line, calculation.snapshot, execution))
     if not accepted:
         return {'status': 'empty', 'message': 'В волну ещё не распределены принятые позиции'}
@@ -1055,7 +1066,7 @@ def wave_actual_summary(db, wave_id, profile, expenses, rates):
         quantity = allocation.quantity
         factor = quantity / dec(old['quantity'])
         detail = old['detail']
-        new = current_lines[old['quote_item_id']]
+        new = current_lines['allocation:' + allocation.id]
         current_factor = quantity / dec(new['quantity'])
         wave_names = {expense['name'] for expense in normalize_logistics_expenses(
             snapshot.get('resolved_expenses', snapshot.get('input', {}).get('expenses', []) or []))

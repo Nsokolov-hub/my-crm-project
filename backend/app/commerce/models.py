@@ -170,6 +170,7 @@ class Execution(Entity, Base):
     accepted_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     revision: Mapped[int] = mapped_column(default=1)
     financing_deficit: Mapped[bool] = mapped_column(Boolean, default=False)
+    procurement_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     previous_id: Mapped[str | None] = mapped_column(ForeignKey("executions.id"))
     cancel_reason: Mapped[str | None] = mapped_column(Text)
 
@@ -245,6 +246,25 @@ class Wave(Entity, Base):
     arrival_week: Mapped[int | None]
     arrival_year: Mapped[int | None]
     details: Mapped[dict] = mapped_column(JSON, default=dict)
+    budget_profile_id: Mapped[str | None] = mapped_column(ForeignKey("calculation_profiles.id"))
+    budget_expenses: Mapped[list | None] = mapped_column(JSON)
+    budget_rates: Mapped[list | None] = mapped_column(JSON)
+
+
+class WaveForecast(Entity, Base):
+    __tablename__ = "wave_forecasts"
+    __table_args__ = (
+        UniqueConstraint("wave_id", "product_group_id"),
+        CheckConstraint("target_quantity > 0 AND unit_price_rub > 0 AND weight_per_unit >= 0"),
+    )
+    wave_id: Mapped[str] = mapped_column(ForeignKey("waves.id"), index=True)
+    product_group_id: Mapped[str] = mapped_column(ForeignKey("product_groups.id"))
+    target_quantity: Mapped[Decimal] = mapped_column(Numeric(24, 0))
+    unit_price_rub: Mapped[Decimal] = mapped_column(Numeric(24, 8))
+    weight_per_unit: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    author_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    reason: Mapped[str] = mapped_column(Text)
 
 
 class WaveAllocation(Entity, Base):

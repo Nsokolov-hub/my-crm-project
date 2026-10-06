@@ -6,12 +6,17 @@ import { Badge, Button, DataTable, DetailPairs, ErrorBox, Modal } from '../compo
 import { ApiError } from '../lib/api';
 import { displayCalculationMetrics } from '../lib/calculations';
 import { normalizeLogisticsExpense } from '../lib/logistics';
-import { date, decimal, label } from '../lib/format';
+import { date, decimal, label, metric } from '../lib/format';
 import { useApi, useCommand, useDirtyProtection } from '../lib/hooks';
 import type { Entity, Page } from '../lib/types';
 import { waveWeekLabel } from '../lib/waves';
 
-type Selection = { quote_item_id: string; markup_coefficient: string; bonus_coefficient?: string };
+type Selection = {
+  quantity?: string;
+  quote_item_id: string;
+  markup_coefficient: string;
+  bonus_coefficient?: string;
+};
 type Rate = {
   currency: string;
   management_per_unit: string;
@@ -61,7 +66,7 @@ const detailLabels: Record<string, string> = {
   import_vat: 'Ввозной НДС, ₽',
   import_vat_base: 'База ввозного НДС (ННБ), ₽',
   import_cost_with_vat: 'Таможенная стоимость с пошлиной и ввозным НДС, ₽',
-  clean_cost: 'Чистая стоимость до наценки, ₽',
+  clean_cost: 'Стоимость с пошлиной и невозмещаемым НДС, ₽',
   pre_bonus_sale_net: 'Цена до бонуса без НДС, ₽',
   cost_before_financing: 'Себестоимость до финансирования, ₽',
   financed_amount: 'Финансируемая сумма, ₽',
@@ -115,11 +120,12 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
     <div className="calculation-breakdown">
       <h4>Общий расчёт по позициям</h4>
       <p>
-        Волна: {String(wave.number || '—')}. Общие расходы волны делятся на{' '}
+        Волна: {String(wave.number || '—')}. База распределения общих расходов волны:{' '}
         {decimal(distribution.total_quantity || 0)} шт. (
         {decimal(distribution.selected_quantity || 0)} шт. в этом расчёте +{' '}
-        {decimal(distribution.existing_quantity || 0)} шт. в других заказах волны). Доставка клиенту
-        делится на {decimal(distribution.selected_quantity || 0)} шт. этого расчёта.
+        {decimal(distribution.existing_quantity || 0)} шт. в закупках +{' '}
+        {decimal(distribution.forecast_quantity || 0)} шт. прогноза). Доставка клиенту делится на{' '}
+        {decimal(distribution.selected_quantity || 0)} шт. этого расчёта.
       </p>
       <DataTable<Entity>
         rows={rows}
@@ -144,7 +150,7 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
             render: (row: Entity) =>
               (row.detail as Entity | undefined)?.[key] == null
                 ? '—'
-                : decimal((row.detail as Entity)[key]),
+                : metric((row.detail as Entity)[key]),
           })),
         ]}
       />
@@ -179,7 +185,7 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
                 'База ввозного НДС (ННБ), ₽': 'Таможенная стоимость + таможенная пошлина',
                 'Ввозной НДС, ₽': 'ННБ × ставка НДС / 100. При вычете в цену до наценки не входит.',
                 'Таможенная стоимость с пошлиной и ввозным НДС, ₽': 'ННБ + ввозной НДС',
-                'Чистая стоимость до наценки, ₽':
+                'Стоимость с пошлиной и невозмещаемым НДС, ₽':
                   'Импорт с вычетом: ННБ. Без вычета: ННБ + ввозной НДС.',
                 'Цена до бонуса без НДС, ₽':
                   'Импорт: (таможенная стоимость + пошлина) × коэффициент + расходы + сбор + финансирование; НДС без вычета добавляется отдельно.',
@@ -201,14 +207,14 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
               values={Object.fromEntries(
                 Object.entries(displayCalculationMetrics(detail)).map(([key, value]) => [
                   detailLabels[key] || key,
-                  decimal(value),
+                  metric(value),
                 ]),
               )}
             />
             {Object.keys(expenses).length > 0 && (
               <DetailPairs
                 values={Object.fromEntries(
-                  Object.entries(expenses).map(([key, value]) => [key + ', ₽', decimal(value)]),
+                  Object.entries(expenses).map(([key, value]) => [key + ', ₽', metric(value)]),
                 )}
               />
             )}
@@ -343,22 +349,18 @@ function CalculationEditor({
     previousSnapshot.internal_adjustment ||
     {}) as Entity;
   const auth = useAuth();
-  const quotes = useApi<Page>('/requests/' + request.id + '/quote-items?page_size=100');
-  const initialQuotes = useApi<Page>(
-    initialIds.length
-      ? '/requests/' +
-          request.id +
-          '/quote-items?ids=' +
-          encodeURIComponent(initialIds.join(',')) +
-          '&page_size=100'
-      : null,
-  );
+  const quotes = useApi<Page>('/requests/' + request.id + '/quote-items?all=true');
+  const initialQuotes = useApi<Page>(null);
   const profiles = useApi<Page>('/profiles?page_size=100');
   const expenseTypes = useApi<Page>('/expense-types?active=true');
-  const waveExpenses = useApi<{ expenses: Entity[] | null; source_calculation_id: string | null }>(
-    request.wave_id ? `/requests/${request.id}/wave-expenses` : null,
-  );
+  const waveExpenses = useApi<{
+    expenses: Entity[] | null;
+    source_calculation_id: string | null;
+    complete_budget?: boolean;
+    wave_version?: number;
+  }>(request.wave_id ? `/requests/${request.id}/wave-expenses` : null);
   const command = useCommand();
+  const budgetCommand = useCommand();
   const [profileId, setProfileId] = useState(
     String(previousInput.profile_id || previousSnapshot.profile_id || previous?.profile_id || ''),
   );
@@ -370,6 +372,7 @@ function CalculationEditor({
           id,
           {
             quote_item_id: id,
+            ...(old?.quantity ? { quantity: String(old.quantity) } : {}),
             markup_coefficient: String(old?.markup_coefficient || '1.5'),
             ...(old?.bonus_coefficient ? { bonus_coefficient: String(old.bonus_coefficient) } : {}),
           },
@@ -434,6 +437,23 @@ function CalculationEditor({
     (row, index, all) => all.findIndex((candidate) => candidate.id === row.id) === index,
   );
   const selectedRows = rows.filter((row) => selections[row.id]);
+  useEffect(() => {
+    setSelections((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const row of [...(initialQuotes.data?.items || []), ...(quotes.data?.items || [])]) {
+        if (next[row.id] && next[row.id].quantity === undefined) {
+          next[row.id] = {
+            ...next[row.id],
+            quantity: String(row.request_quantity || row.quantity || '1'),
+          };
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [quotes.data, initialQuotes.data]);
+
   const neededCurrencies = [
     ...new Set(
       [
@@ -482,7 +502,7 @@ function CalculationEditor({
     setExpenses(
       (shared === null || shared === undefined
         ? previousExpenses || defaults
-        : waveExpenses.data?.source_calculation_id
+        : waveExpenses.data?.source_calculation_id || waveExpenses.data?.complete_budget
           ? [...shared, ...requestExpenses]
           : [
               ...defaults.filter(
@@ -541,6 +561,11 @@ function CalculationEditor({
       errors.push('Для позиции ' + title + ' отсутствует закупочная цена.');
     if (row.delivery_days == null)
       errors.push('Для позиции ' + title + ' не указан срок поставки.');
+    if (
+      !Number.isInteger(Number(selections[row.id].quantity)) ||
+      Number(selections[row.id].quantity) <= 0
+    )
+      errors.push('Количество фасовок позиции ' + title + ' должно быть целым числом больше нуля.');
     if (!validMarkup(selections[row.id].markup_coefficient))
       errors.push('Наценка позиции ' + title + ' должна быть не меньше 1.');
     if (
@@ -620,6 +645,7 @@ function CalculationEditor({
       if (checked)
         next[row.id] = {
           quote_item_id: row.id,
+          quantity: String(row.request_quantity || row.quantity || '1'),
           markup_coefficient: current[row.id]?.markup_coefficient || '1.5',
         };
       else delete next[row.id];
@@ -732,7 +758,7 @@ function CalculationEditor({
     customs_base: 'Таможенная стоимость, ₽',
     import_vat_base: 'База ввозного НДС (ННБ), ₽',
     import_vat: 'Ввозной НДС, ₽',
-    clean_cost: 'Чистая стоимость до наценки, ₽',
+    clean_cost: 'Стоимость с пошлиной и невозмещаемым НДС, ₽',
     markup_base: detailLabels.markup_base,
     cost_after_markup: detailLabels.cost_after_markup,
     cash_need: 'Денежные затраты на заказ, ₽',
@@ -749,7 +775,12 @@ function CalculationEditor({
     customs_fee_2: 'Сбор 2 — колонки, ₽',
   };
   return (
-    <Modal title={previous ? 'Новая версия расчёта' : 'Новый расчёт'} wide onClose={close}>
+    <Modal
+      title={previous ? 'Новая версия расчёта' : 'Новый расчёт'}
+      wide
+      className="calculation-modal"
+      onClose={close}
+    >
       <form
         noValidate
         onSubmit={(event) => {
@@ -853,7 +884,7 @@ function CalculationEditor({
                 квот.
               </small>
             </label>
-            <label className="field">
+            <label className="calculation-internal-toggle">
               <input
                 type="checkbox"
                 checked={!deliveryRequired}
@@ -889,7 +920,10 @@ function CalculationEditor({
             <div className="section-heading">
               <div>
                 <h3>Выбранные квоты и количества</h3>
-                <p>Закупочная цена, валюта, поставщик и количество переносятся из квоты.</p>
+                <p>
+                  Цена указана за одну фасовку. Количество продажи задайте здесь; оно не ограничено
+                  количеством квоты.
+                </p>
               </div>
               <span className="selection-count">Выбрано: {Object.keys(selections).length}</span>
             </div>
@@ -914,6 +948,9 @@ function CalculationEditor({
                             if (checked)
                               next[row.id] = {
                                 quote_item_id: row.id,
+                                quantity:
+                                  current[row.id]?.quantity ??
+                                  String(row.request_quantity || row.quantity || '1'),
                                 markup_coefficient: current[row.id]?.markup_coefficient || '1.5',
                               };
                             else delete next[row.id];
@@ -939,7 +976,14 @@ function CalculationEditor({
                   render: (row) => (
                     <span className="calculation-product">
                       <strong>{nameOf(row)}</strong>
-                      <Badge value="Квота" />
+                      <small>
+                        {String(row.product_group_name || '')} · {String(row.packing_name || '')} ·
+                        Арт. {String(row.article || '—')}
+                      </small>
+                      <small>
+                        {String(row.supplier_name || '—')} · {decimal(row.unit_price)}{' '}
+                        {currencyOf(row)} за шт. · Срок: {String(row.delivery_days ?? '—')} дней
+                      </small>
                       {row.id === serverSelectionId && (
                         <small className="field-error">{serverError?.message}</small>
                       )}
@@ -947,11 +991,34 @@ function CalculationEditor({
                     </span>
                   ),
                 },
-                { key: 'packing_name', label: 'Фасовка' },
-                { key: 'quantity', label: 'Кол-во', render: (row) => decimal(row.quantity) },
-                { key: 'unit_price', label: 'Закупка', render: (row) => decimal(row.unit_price) },
-                { key: 'currency_code', label: 'Валюта', render: currencyOf },
-                { key: 'supplier_name', label: 'Поставщик' },
+                {
+                  key: 'quantity',
+                  label: 'Количество, шт.',
+                  sortable: false,
+                  render: (row) =>
+                    selections[row.id] ? (
+                      <input
+                        className="calculation-markup"
+                        inputMode="numeric"
+                        aria-label={'Количество ' + nameOf(row)}
+                        value={selections[row.id].quantity ?? ''}
+                        aria-invalid={
+                          attempted &&
+                          (!Number.isInteger(Number(selections[row.id].quantity)) ||
+                            Number(selections[row.id].quantity) <= 0)
+                        }
+                        onChange={(event) => {
+                          setSelections((current) => ({
+                            ...current,
+                            [row.id]: { ...current[row.id], quantity: event.target.value },
+                          }));
+                          invalidate();
+                        }}
+                      />
+                    ) : (
+                      decimal(row.request_quantity || row.quantity)
+                    ),
+                },
                 {
                   key: 'markup',
                   label: 'Наценка',
@@ -980,6 +1047,18 @@ function CalculationEditor({
                     ) : (
                       '—'
                     ),
+                },
+                {
+                  key: 'sale_unit_price',
+                  label: 'Цена продажи за шт., ₽',
+                  render: (row) =>
+                    metric(outputLines.find((line) => line.quote_item_id === row.id)?.unit_price),
+                },
+                {
+                  key: 'sale_amount',
+                  label: 'Сумма, ₽',
+                  render: (row) =>
+                    metric(outputLines.find((line) => line.quote_item_id === row.id)?.total),
                 },
                 ...(auth.can('finance.reward.read')
                   ? [
@@ -1570,6 +1649,48 @@ function CalculationEditor({
               )}
             </section>
           )}
+          {Boolean(request.wave_id) && auth.can('waves.write') && Boolean(profileId) && (
+            <div className="inline-actions">
+              <Button
+                type="button"
+                variant="secondary"
+                busy={budgetCommand.busy}
+                disabled={!waveExpenses.data?.wave_version}
+                onClick={() => {
+                  void budgetCommand
+                    .run(
+                      `/waves/${request.wave_id}/budget`,
+                      {
+                        version: waveExpenses.data?.wave_version,
+                        profile_id: profileId,
+                        expenses: expenses.filter((row) => row.scope === 'WAVE'),
+                        rates: profileRates,
+                        reason: 'Сохранение общих расходов из формы расчёта',
+                      },
+                      'PUT',
+                    )
+                    .then(() => {
+                      waveExpenses.refresh();
+                      setHydratedProfileId('');
+                      invalidate();
+                    })
+                    .catch(() => {});
+                }}
+              >
+                Сохранить общие расходы в волну
+              </Button>
+              <small>Обновит бюджет для новых расчётов. Выпущенные КП сохраняют цены.</small>
+              <ErrorBox error={budgetCommand.error} />
+            </div>
+          )}
+          {preview && (
+            <p className="info-note">
+              В закупках: {decimal(waveDistribution.existing_quantity || 0)} шт. · В расчёте:{' '}
+              {decimal(waveDistribution.selected_quantity || 0)} шт. · Прогноз:{' '}
+              {decimal(waveDistribution.forecast_quantity || 0)} шт. · База:{' '}
+              {decimal(waveDistribution.total_quantity || 0)} шт.
+            </p>
+          )}
           {preview && (
             <section className="calculation-section calculation-result">
               <div className="section-heading">
@@ -1596,7 +1717,7 @@ function CalculationEditor({
                       '(Таможенная стоимость + пошлина) × ставка НДС; сбор в базу НДС не входит.',
                     'Таможенная стоимость, ₽': 'Закупка в рублях + международная логистика',
                     'База ввозного НДС (ННБ), ₽': 'Таможенная стоимость + пошлина',
-                    'Чистая стоимость до наценки, ₽':
+                    'Стоимость с пошлиной и невозмещаемым НДС, ₽':
                       'Импорт с вычетом: таможенная стоимость + пошлина. Без вычета добавляется ввозной НДС.',
                     'База наценки, ₽': 'Импорт: таможенная стоимость + таможенная пошлина',
                     'Цена с наценкой, ₽':
@@ -1621,8 +1742,8 @@ function CalculationEditor({
                   }}
                   values={Object.fromEntries(
                     Object.entries(displayCalculationMetrics(totals))
-                      .filter(([key]) => key in resultLabels)
-                      .map(([key, value]) => [resultLabels[key], decimal(value)]),
+                      .filter(([key]) => key in resultLabels && key !== 'clean_cost')
+                      .map(([key, value]) => [resultLabels[key], metric(value)]),
                   )}
                 />
               )}
@@ -1850,6 +1971,7 @@ export function RequestCalculations({
         <Modal
           title={'Версия расчёта №' + String(selected.version_number || '')}
           wide
+          className="calculation-modal"
           onClose={() => setSelected(undefined)}
         >
           <div className="form-body">

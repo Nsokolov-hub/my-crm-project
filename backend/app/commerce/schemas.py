@@ -175,10 +175,12 @@ class Selection(Input):
         if self.quote_id and (self.quote_revision is None or self.quantity is None or self.unit is None):
             raise ValueError("Для прежней квоты укажите редакцию, количество и единицу")
         if self.quote_item_id and (
-            self.quote_revision is not None or self.quantity is not None or self.unit is not None
+            self.quote_revision is not None or self.unit is not None
             or self.variables or self.mass is not None or self.volume is not None
         ):
-            raise ValueError("Количество, цену и фасовку позиции табличной квоты сервер берёт из квоты")
+            raise ValueError("Цену и фасовку позиции табличной квоты сервер берёт из квоты")
+        if self.quote_item_id and self.quantity is not None and self.quantity != self.quantity.to_integral_value():
+            raise ValueError("Количество фасовок должно быть целым числом")
         return self
 
 
@@ -242,7 +244,7 @@ class CalculationIn(Command):
     delivery_required: bool = False
     request_version: int = Field(ge=1)
     profile_id: str
-    selections: list[Selection] = Field(min_length=1, max_length=100)
+    selections: list[Selection] = Field(min_length=1, max_length=10000)
     rates: list[Rate] = Field(default_factory=list)
     expenses: list[Expense] | None = Field(default=None, max_length=30)
     internal_adjustment: dict = Field(default_factory=dict)
@@ -273,7 +275,7 @@ class AcceptanceLine(Input):
 
 
 class AcceptanceIn(VersionCommand):
-    lines: list[AcceptanceLine] = Field(min_length=1, max_length=100)
+    lines: list[AcceptanceLine] = Field(min_length=1, max_length=10000)
     reason: str = Field(min_length=3)
 
 
@@ -284,7 +286,7 @@ class InvoiceLine(Input):
 
 class InvoiceIn(Command):
     proposal_id: str
-    lines: list[InvoiceLine] = Field(min_length=1, max_length=100)
+    lines: list[InvoiceLine] = Field(min_length=1, max_length=10000)
     due_date: date
     terms: str = Field(min_length=1)
 
@@ -317,7 +319,7 @@ class PaymentReverseIn(VersionCommand):
 
 
 class ApprovalIn(Command):
-    execution_ids: list[str] = Field(min_length=1, max_length=100)
+    execution_ids: list[str] = Field(min_length=1, max_length=10000)
     reviewer_id: str
 
 
@@ -357,6 +359,22 @@ class WaveUpdate(VersionCommand):
     departure_year: int | None = Field(default=None, ge=1900, le=9998)
     arrival_week: int | None = Field(default=None, ge=1, le=53)
     arrival_year: int | None = Field(default=None, ge=1900, le=9998)
+    reason: str = Field(min_length=3)
+
+
+class WaveForecastIn(VersionCommand):
+    product_group_id: str
+    target_quantity: Annotated[Decimal, Field(gt=0, max_digits=24, decimal_places=0)]
+    unit_price_rub: Positive
+    weight_per_unit: Nonnegative = Decimal("0")
+    active: bool = True
+    reason: str = Field(min_length=3)
+
+
+class WaveBudgetIn(VersionCommand):
+    profile_id: str
+    expenses: list[Expense] = Field(max_length=30)
+    rates: list[Rate] = Field(default_factory=list, max_length=100)
     reason: str = Field(min_length=3)
 
 

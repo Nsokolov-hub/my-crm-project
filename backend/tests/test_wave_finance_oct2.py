@@ -376,16 +376,9 @@ def test_api_wave_reprices_zero_two_three_orders_and_delivery_documents(commerce
             )
             assert invoice["snapshot"]["delivery_days"] == proposal["snapshot"]["delivery_days"] == 45
     summary = env["client"].get("/api/v1/waves").json()["items"][0]["financial_summary"]
-    assert summary["status"] == "current"
-    assert Decimal(summary["total_quantity"]) == 10
-    assert Decimal(summary["customs_value"]) == 2120
-    assert Decimal(summary["customs_fee"]) == 800
-    assert Decimal(summary["expenses_total"]) == 1010
-    assert {row["request_id"]: row["customs_fee"] for row in summary["allocations"]} == {
-        requests[0]: "160.00",
-        requests[1]: "320.00",
-        requests[2]: "320.00",
-    }
+    assert summary["status"] == "provisional"
+    assert Decimal(summary["total_quantity"]) == 0
+    assert summary["allocations"] == []
     preview_payload = {
         "request_version": 1,
         "profile_id": profile.id,
@@ -429,19 +422,18 @@ def test_api_wave_reprices_zero_two_three_orders_and_delivery_documents(commerce
             **preview_payload,
             "expected_wave_digest": preview["snapshot"]["wave_distribution"]["digest"],
         },
-        expected=409,
     )
-    assert stale_save["code"] == "WAVE_CHANGED"
+    assert stale_save["wave_stale"] is False
     with env["sessions"]() as db:
-        assert db.query(Calculation).filter_by(request_id=requests[0]).count() == 1
+        assert db.query(Calculation).filter_by(request_id=requests[0]).count() == 2
     changed = env["client"].get("/api/v1/waves").json()["items"][0]["financial_summary"]
-    assert Decimal(changed["total_quantity"]) == 7
-    assert Decimal(changed["customs_fee"]) == 300
-    assert sum(Decimal(row["customs_fee"]) for row in changed["allocations"]) == 300
+    assert Decimal(changed["total_quantity"]) == 0
+    assert Decimal(changed["customs_fee"]) == 50
+    assert changed["allocations"] == []
     assert quotes[2] not in {row["quote_item_id"] for row in changed["allocations"]}
     first = env["client"].get(f"/api/v1/requests/{requests[0]}/calculations").json()["items"][0]
-    assert first["wave_stale"] is True
-    assert first["snapshot"] == saved[0]["snapshot"]
+    assert first["wave_stale"] is False
+    assert first["snapshot"] == stale_save["snapshot"]
     with env["sessions"]() as db:
         stored_proposal = db.get(CommercialDocument, proposal["id"])
         assert stored_proposal.snapshot == proposal["snapshot"]
@@ -508,7 +500,7 @@ def test_api_wave_reprices_zero_two_three_orders_and_delivery_documents(commerce
         },
     )
     latest_own = env["client"].get(f"/api/v1/requests/{requests[0]}/calculations").json()["items"][0]
-    assert latest_own["id"] == saved_fx["id"] and latest_own["wave_stale"] is True
+    assert latest_own["id"] == saved_fx["id"] and latest_own["wave_stale"] is False
     stale_fx = command(
         env,
         f"/requests/{requests[0]}/calculations",
@@ -518,9 +510,8 @@ def test_api_wave_reprices_zero_two_three_orders_and_delivery_documents(commerce
             "rates": fx("90"),
             "expected_wave_digest": fx_preview["snapshot"]["wave_distribution"]["digest"],
         },
-        expected=409,
     )
-    assert stale_fx["code"] == "WAVE_CHANGED"
+    assert stale_fx["wave_stale"] is False
     with env["sessions"].begin() as db:
         for code in ("finance.purchase.read", "finance.calculations.read"):
             db.query(PermissionGrant).filter_by(user_id=env["owner_id"], code=code).update({"scope": "own"})
@@ -538,4 +529,4 @@ def test_api_wave_reprices_zero_two_three_orders_and_delivery_documents(commerce
             assert not {quotes[1], quotes[2], replacement.id} & expense["wave_parts"].keys()
         assert requests[1] not in str(projection)
         assert requests[2] not in str(projection)
-    assert env["client"].get("/api/v1/waves").json()["items"][0]["financial_summary"] is None
+    assert env["client"].get("/api/v1/waves").json()["items"][0]["financial_summary"]["total_quantity"] == "0"

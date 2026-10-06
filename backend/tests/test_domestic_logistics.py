@@ -1,6 +1,7 @@
 """One airport pickup per wave and independent deliveries to each customer."""
 
 from copy import deepcopy
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -98,6 +99,15 @@ def test_two_clients_inherit_only_airport_pickup_and_keep_their_own_delivery(crm
     with crm["sessions"]() as db:
         original_snapshot = deepcopy(db.get(Calculation, first["id"]).snapshot)
 
+    proposal = cmd(crm, f"/requests/{req['id']}/proposals", {"calculation_id": first["id"],
+        "valid_until": (date.today() + timedelta(days=7)).isoformat(), "terms": "Отсрочка"})
+    accepted = cmd(crm, f"/proposals/{proposal['id']}/accept", {"version": proposal["version"], "reason": "Клиент подтвердил",
+        "lines": [{"line_id": first["snapshot"]["lines"][0]["line_id"], "quantity": "2"}]})
+    approval = cmd(crm, f"/requests/{req['id']}/approvals", {"execution_ids": [accepted["executions"][0]["id"]], "reviewer_id": crm["admin"].id})
+    cmd(crm, f"/approvals/{approval['id']}/decision", {"version": approval["version"], "decision": "approved"})
+    wave = crm["client"].get("/api/v1/waves").json()["items"][0]
+    cmd(crm, f"/waves/{wave['id']}/budget", {"version": wave["version"], "profile_id": data["profile_id"],
+        "expenses": [row for row in first["snapshot"]["resolved_expenses"] if row["scope"] == "WAVE"], "reason": "Общий бюджет"}, method="put")
     peer = request(crm)
     quote = post(crm, f"/requests/{peer['id']}/quote-sheets", {
         "supplier_id": supplier["id"], "items": [peer_item],
@@ -121,10 +131,11 @@ def test_two_clients_inherit_only_airport_pickup_and_keep_their_own_delivery(crm
     assert [(r["name"], r["amount"], r["stage"]) for r in budget["expenses"]] == [
         ("Логистика РФ", "1200", "DOMESTIC_LOGISTICS"),
     ]
+    data["request_version"] = crm["client"].get(f"/api/v1/requests/{req['id']}").json()["version"]
     fresh = cmd(crm, f"/requests/{req['id']}/calculations/preview", data)["snapshot"]
-    assert Decimal(fresh["wave_distribution"]["total_quantity"]) == 12
-    assert Decimal(fresh["totals"]["domestic_logistics"]) == 200
+    assert Decimal(fresh["wave_distribution"]["total_quantity"]) == 2
+    assert Decimal(fresh["totals"]["domestic_logistics"]) == 1200
     assert Decimal(fresh["totals"]["client_delivery"]) == 4500  # CDEK 4 000 + Moscow 500.
-    assert Decimal(fresh["totals"]["general_expenses"]) == 4700
+    assert Decimal(fresh["totals"]["general_expenses"]) == 5700
     with crm["sessions"]() as db:
         assert db.get(Calculation, first["id"]).snapshot == original_snapshot

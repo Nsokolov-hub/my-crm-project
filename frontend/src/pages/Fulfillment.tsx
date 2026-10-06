@@ -3,7 +3,7 @@ import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
 import { RecordForm } from '../components/Form';
 import { Badge, Button, DataTable, DetailPairs, Modal, PageHeading } from '../components/ui';
-import { date, decimal, nowLocal } from '../lib/format';
+import { date, decimal, nowLocal, metric } from '../lib/format';
 import { useApi } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
 import { waveWeekInitial, waveWeekLabel } from '../lib/waves';
@@ -105,7 +105,7 @@ export function RequestFulfillment({ requestId }: { requestId: string }) {
               }}
             />
             <div className="inline-actions">
-              <Button onClick={() => setExecutionAction('allocate')}>Распределить в волну</Button>
+              <Button onClick={() => setExecutionAction('allocate')}>Добавить в волну</Button>
               {auth.can('documents.write') && (
                 <>
                   <Button variant="secondary" onClick={() => setExecutionAction('revise')}>
@@ -197,7 +197,7 @@ function WaveAssignment({
                 .filter((w) => ['planned', 'assembling'].includes(String(w.status)))
                 .map((w) => (
                   <option key={w.id} value={w.id}>
-                    {String(w.number)} · {String(w.route)}
+                    {String(w.number)} · {String(w.route)} · {waveWeekLabel(w, 'departure')}
                   </option>
                 ))}
             </select>
@@ -254,7 +254,7 @@ export function ApprovalDecision({
           type: 'select',
           required: true,
           options: [
-            { value: 'approved', label: 'Согласовать' },
+            { value: 'approved', label: 'Согласовать и передать в закупки' },
             { value: 'returned', label: 'Вернуть на доработку' },
             { value: 'rejected', label: 'Отклонить' },
           ],
@@ -266,7 +266,7 @@ export function ApprovalDecision({
           help: 'Обязательно при возврате и отклонении.',
         },
       ]}
-      note="Решение относится к конкретной версии состава и не распространяется на последующие изменения."
+      note="Согласование передаёт подтверждённые позиции в закупки и назначенную волну. Оплата может поступить позже по условиям заказа."
       onClose={onClose}
       onSuccess={onSuccess}
     />
@@ -338,10 +338,8 @@ function WaveFinancialSummary({ summary }: { summary: Entity }) {
               'Продажа с НДС, ₽': decimal((summary.actual as Entity).sales),
               'Себестоимость, ₽': decimal((summary.actual as Entity).cost),
               'Валовая прибыль, ₽': decimal((summary.actual as Entity).profit),
-              'Рентабельность, %': decimal((summary.actual as Entity).profitability_percent),
-              'Доходность затрат, %': decimal(
-                (summary.actual as Entity).cost_profitability_percent,
-              ),
+              'Рентабельность, %': metric((summary.actual as Entity).profitability_percent),
+              'Доходность затрат, %': metric((summary.actual as Entity).cost_profitability_percent),
               'Предоплата по заказам, ₽': decimal((summary.actual as Entity).prepayment_total),
               'Отсрочка по заказам, ₽': decimal((summary.actual as Entity).deferred_total),
             }}
@@ -373,7 +371,9 @@ function WaveFinancialSummary({ summary }: { summary: Entity }) {
       )}
       <DetailPairs
         values={{
-          'Количество, шт.': decimal(summary.total_quantity),
+          'Реальные позиции, шт.': decimal(summary.real_quantity || 0),
+          'Прогнозный остаток, шт.': decimal(summary.forecast_quantity || 0),
+          'База распределения, шт.': decimal(summary.total_quantity),
           'Таможенная стоимость, ₽': decimal(summary.customs_value),
           'Таможенный сбор, ₽': decimal(summary.customs_fee),
           'Сбор 1 — обычные товары, ₽': decimal(summary.customs_fee_1),
@@ -386,7 +386,11 @@ function WaveFinancialSummary({ summary }: { summary: Entity }) {
         <DataTable<Entity>
           rows={rows}
           columns={[
-            { key: 'request_number', label: 'Заявка' },
+            {
+              key: 'request_number',
+              label: 'Состав',
+              render: (row) => (row.forecast ? 'Прогноз' : String(row.request_number || '—')),
+            },
             { key: 'description', label: 'Товар' },
             { key: 'quantity', label: 'Количество', render: (row) => decimal(row.quantity) },
             {
@@ -411,6 +415,9 @@ function WaveFinancialSummary({ summary }: { summary: Entity }) {
   );
 }
 export function Waves() {
+  const auth = useAuth();
+  const [forecast, setForecast] = useState<Entity>();
+  const [addingForecast, setAddingForecast] = useState(false);
   const [selected, setSelected] = useState<Entity>();
   const [editing, setEditing] = useState(false);
   const [allocation, setAllocation] = useState<Entity>();
@@ -418,6 +425,8 @@ export function Waves() {
   const [revision, setRevision] = useState(0);
   function done() {
     setSelected(undefined);
+    setForecast(undefined);
+    setAddingForecast(false);
     setEditing(false);
     setAllocation(undefined);
     setAllocationAction(undefined);
@@ -451,7 +460,7 @@ export function Waves() {
           { key: 'arrival_week', label: 'Прибытие', render: (r) => waveWeekLabel(r, 'arrival') },
         ]}
       />
-      {selected && !editing && !allocationAction && (
+      {selected && !editing && !allocationAction && !addingForecast && (
         <Modal title={`Волна ${selected.number}`} wide onClose={() => setSelected(undefined)}>
           <div className="form-body">
             <DetailPairs
@@ -467,6 +476,58 @@ export function Waves() {
             <Button variant="secondary" onClick={() => setEditing(true)}>
               Изменить сроки и состояние
             </Button>
+            {auth.can('waves.write') &&
+              auth.can('finance.purchase.read') &&
+              ['planned', 'assembling'].includes(String(selected.status)) && (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setForecast(undefined);
+                    setAddingForecast(true);
+                  }}
+                >
+                  Добавить плановый объём
+                </Button>
+              )}
+            <h3>Плановые позиции</h3>
+            <p className="muted">
+              Ожидаемый общий объём по группе. Реальные заказы замещают прогноз; сохранение расчёта
+              его не расходует.
+            </p>
+            <DataTable<Entity>
+              rows={(selected.forecasts || []) as Entity[]}
+              onRow={
+                auth.can('waves.write') && auth.can('finance.purchase.read')
+                  ? (row) => {
+                      setForecast(row);
+                      setAddingForecast(true);
+                    }
+                  : undefined
+              }
+              columns={[
+                { key: 'product_group_name', label: 'Товарная группа' },
+                {
+                  key: 'target_quantity',
+                  label: 'План, шт.',
+                  render: (row) => decimal(row.target_quantity),
+                },
+                {
+                  key: 'unit_price_rub',
+                  label: 'Ожидаемая цена за шт., ₽',
+                  render: (row) => metric(row.unit_price_rub),
+                },
+                {
+                  key: 'weight_per_unit',
+                  label: 'Вес за шт., кг',
+                  render: (row) => decimal(row.weight_per_unit),
+                },
+                {
+                  key: 'active',
+                  label: 'Прогноз',
+                  render: (row) => (row.active ? 'Включён' : 'Отключён'),
+                },
+              ]}
+            />
             {Boolean(selected.financial_summary) && (
               <WaveFinancialSummary summary={selected.financial_summary as Entity} />
             )}
@@ -501,6 +562,54 @@ export function Waves() {
             />
           </div>
         </Modal>
+      )}
+      {selected && addingForecast && (
+        <RecordForm
+          title={forecast ? 'Изменить плановый объём' : 'Добавить плановый объём'}
+          endpoint={`/waves/${selected.id}/forecasts`}
+          method="PUT"
+          command
+          initial={forecast || { active: true, weight_per_unit: '0' }}
+          extra={{ version: selected.version }}
+          fields={[
+            {
+              name: 'product_group_id',
+              label: 'Товарная группа',
+              type: 'select',
+              source: '/product-groups',
+              required: true,
+            },
+            {
+              name: 'target_quantity',
+              label: 'Ожидаемый общий объём, шт.',
+              type: 'number',
+              required: true,
+            },
+            {
+              name: 'unit_price_rub',
+              label: 'Ожидаемая закупочная цена за штуку, ₽',
+              type: 'decimal',
+              required: true,
+            },
+            {
+              name: 'weight_per_unit',
+              label: 'Вес одной штуки, кг',
+              type: 'decimal',
+              help: 'Необходим при распределении расходов по весу.',
+            },
+            { name: 'active', label: 'Учитывать прогноз в расчётах', type: 'checkbox' },
+            {
+              name: 'reason',
+              label: 'Комментарий',
+              type: 'textarea',
+              required: true,
+              minLength: 3,
+            },
+          ]}
+          note="План включает реальные позиции этой группы. Перед закрытием волны отключите прогноз."
+          onClose={() => setAddingForecast(false)}
+          onSuccess={done}
+        />
       )}
       {selected && editing && (
         <RecordForm

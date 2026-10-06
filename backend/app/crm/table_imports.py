@@ -771,17 +771,25 @@ def confirm(
                     )
                 )
             sheet_ids = []
-            for supplier_id, entries in groups.items():
-                # Use the same invariants and audit trail as the regular quote editor.
-                for offset in range(0, len(entries), 100):
-                    result = create_quote_sheet(
-                        request_id,
-                        QuoteSheetInput(supplier_id=supplier_id, items=entries[offset : offset + 100]),
-                        None,
-                        user,
-                        db,
-                    )
-                    sheet_ids.append(result["id"])
+            previous_batch = db.info.get("quote_import_batch")
+            db.info["quote_import_batch"] = batch.id
+            try:
+                for supplier_id, entries in groups.items():
+                    # Use the same invariants and audit trail as the regular quote editor.
+                    for offset in range(0, len(entries), 100):
+                        result = create_quote_sheet(
+                            request_id,
+                            QuoteSheetInput(supplier_id=supplier_id, items=entries[offset : offset + 100]),
+                            None,
+                            user,
+                            db,
+                        )
+                        sheet_ids.append(result["id"])
+            finally:
+                if previous_batch is None:
+                    db.info.pop("quote_import_batch", None)
+                else:
+                    db.info["quote_import_batch"] = previous_batch
             batch.result = {"quote_sheet_ids": sheet_ids}
         parent.version += 1
         batch.status = "completed"

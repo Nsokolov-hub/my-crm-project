@@ -114,7 +114,7 @@ def test_profile_rates_wave_quantity_and_proposal(commerce):  # noqa: F811
     assert {row["name"]: row["amount"] for row in inherited.json()["expenses"]} == {
         "Международная логистика": "50000", "Декларант": "25000",
     }
-    assert inherited.json()["source_calculation_id"] == calculation["id"]
+    assert inherited.json()["source_calculation_id"] is None
     override = command(env, f"/requests/{env['request_id']}/calculations", {
         **payload, "previous_id": calculation["id"],
         "expenses": [{"name": "Международная логистика", "amount": "80000", "currency": "INR",
@@ -122,6 +122,9 @@ def test_profile_rates_wave_quantity_and_proposal(commerce):  # noqa: F811
                      {"name": "Декларант", "amount": "30000", "currency": "RUB",
                       "method": "BY_QUANTITY", "stage": "GENERAL", "scope": "WAVE"}],
     })
+    current_wave = env["client"].get("/api/v1/waves").json()["items"][0]
+    command(env, f"/waves/{wave['id']}/budget", {"version": current_wave["version"], "profile_id": saved_profile.id,
+        "expenses": override["snapshot"]["resolved_expenses"], "reason": "Общий бюджет"}, method="put")
     next_preview = command(env, f"/requests/{env['request_id']}/calculations/preview", {
         **payload, "previous_id": override["id"],
     })

@@ -2250,3 +2250,29 @@ tr.clickable-row {
     padding: 10px 0;
   }
 }
+
+.modal.calculation-modal {
+  width: min(1480px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+}
+
+.calculation-editor .calculation-product {
+  min-width: 180px;
+  white-space: normal;
+}
+
+.calculation-editor .calculation-product small {
+  display: block;
+  color: #687283;
+  line-height: 1.5;
+}
+
+.calculation-editor table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.calculation-editor .calculation-markup {
+  width: 80px;
+  min-width: 60px;
+}
