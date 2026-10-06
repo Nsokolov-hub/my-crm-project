@@ -542,8 +542,9 @@ def decide_approval(approval_id: str, data: DecisionIn, db: DB, user: Actor):
                     "sale_confirmed",
                     after={"sale_confirmed_at": req.sale_confirmed_at},
                 )
-            for execution in executions:
+            for execution, approved_line in zip(executions, current["lines"], strict=True):
                 execution.procurement_at = utcnow()
+                execution.financing_deficit = dec(approved_line["funding"]["ratio"]) < dec(approved_line["funding_ratio"])
                 execution.version += 1
             if req.wave_id:
                 advisory(db, f"wave:{req.wave_id}")

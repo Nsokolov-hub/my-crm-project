@@ -152,6 +152,7 @@ def test_forecast_replaces_real_orders_and_calculations_do_not_fill_wave(crm):  
     with crm["sessions"]() as db:
         assert db.get(CommercialDocument, proposal["id"]).snapshot == proposal["snapshot"]
         assert db.get(Execution, execution["id"]).procurement_at is not None
+        assert db.get(Execution, execution["id"]).financing_deficit is True
         assert db.query(WaveAllocation).filter_by(wave_id=initial["id"], active=True).count() == 1
 
 
