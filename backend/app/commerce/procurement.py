@@ -405,6 +405,33 @@ def rfq_workbook(db: Session, columns: list[str], rows: list[list], items: list[
         book.close()
 
 
+def rfq_table(db, items):
+    """Use the same original columns and values for XLSX and inline mail."""
+    manual_columns = ["Name", "Packing", "CAS", "Quantity", "Cost", "Article", "Comment", "Producer"]
+    columns = list(dict.fromkeys(col for item in items for col in item.source_columns))
+    if any(not item.source_columns for item in items):
+        columns = list(dict.fromkeys([*columns, *manual_columns]))
+    rows = []
+    for item in items:
+        if item.source_columns:
+            values = dict(zip(item.source_columns, item.source_values, strict=True))
+        else:
+            n = db.get(Nomenclature, item.nomenclature_id) if item.nomenclature_id else None
+            p = db.get(Packing, item.packing_id) if item.packing_id else None
+            quantity = format(item.quantity, 'f').rstrip('0').rstrip('.') if item.quantity is not None else ''
+            if item.quantity is not None and item.quantity == item.quantity.to_integral_value():
+                quantity = str(int(item.quantity))
+            values = dict(zip(manual_columns, [
+                n.name if n else item.description,
+                p.display_name if p else (item.packaging or ''),
+                (n.cas or item.cas or '') if n else (item.cas or ''),
+                quantity, '', (n.article or item.article or '') if n else (item.article or ''),
+                item.comment or '', (n.manufacturer or '') if n else '',
+            ], strict=True))
+        rows.append([values.get(column, '') for column in columns])
+    return columns, rows
+
+
 @router.post("/requests/{request_id}/rfqs")
 def create_rfq(request_id: str, data: RfqIn, db: DB, user: Actor):
     check_request(db, user, request_id, "quotes.write")
@@ -438,37 +465,9 @@ def create_rfq(request_id: str, data: RfqIn, db: DB, user: Actor):
             "response_due": data.response_due.isoformat(),
             "comment": data.comment,
         }
-        rows = []
-        for item in items:
-            nomenclature = db.get(Nomenclature, item.nomenclature_id) if item.nomenclature_id else None
-            packing = db.get(Packing, item.packing_id) if item.packing_id else None
-            rows.append([
-                nomenclature.name if nomenclature else item.description,
-                packing.display_name if packing else (item.packaging or ""),
-                (nomenclature.cas or item.cas) if nomenclature else (item.cas or ""),
-                str(item.quantity),
-                "",
-                nomenclature.article or "" if nomenclature else "",
-                item.comment or "",
-            ])
-        if any(item.source_columns for item in items):
-            columns = list(dict.fromkeys(col for item in items for col in item.source_columns))
-            manual_columns = ["Name", "Packing", "CAS", "Quantity", "Cost", "Article", "Comment"]
-            if any(not item.source_columns for item in items):
-                columns = list(dict.fromkeys([*columns, *manual_columns]))
-            exported = []
-            for item, fallback in zip(items, rows, strict=True):
-                original = dict(zip(item.source_columns, item.source_values, strict=True)) if item.source_columns else dict(zip(manual_columns, fallback, strict=True))
-                exported.append([original.get(col, '') for col in columns])
-            content = rfq_workbook(db, columns, exported, items)
-            snapshot['source_columns'] = columns
-        else:
-            content = rfq_workbook(
-                db,
-                ["Name", "Packing", "CAS", "Quantity", "Cost", "Article", "Comment"],
-                rows,
-                items,
-            )
+        columns, rows = rfq_table(db, items)
+        content = rfq_workbook(db, columns, rows, items)
+        snapshot['source_columns'] = columns
         metadata = put_file(content, "xlsx")
         obj = SupplierRequest(
             request_id=request_id,

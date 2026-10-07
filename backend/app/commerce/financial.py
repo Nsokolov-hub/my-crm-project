@@ -182,7 +182,7 @@ def calculation_view(db, user, calculation: Calculation) -> dict:
 
     snapshot = result.get("snapshot", {})
     if snapshot:
-        for name in ("version_number", "base_version_id", "source_type", "source_id", "source_label", "request_number"):
+        for name in ("calculation_number", "version_number", "base_version_id", "source_type", "source_id", "source_label", "request_number"):
             result[name] = snapshot.get(name)
         wave_id = (snapshot.get("wave") or {}).get("id")
         if wave_id and snapshot.get("algorithm_version") == "itemized-v2":
@@ -599,10 +599,10 @@ def stamp_version(db, request_id: str, snapshot: dict, previous: Calculation | N
 
 def itemized_selection(db, request_id: str, selection, index: int) -> dict:
     quote = db.get(QuoteItem, selection.quote_item_id)
-    if not quote:
+    if not quote or quote.archived:
         error("QUOTE_ITEM_NOT_FOUND", "Позиция квоты не найдена", 404, f"selections.{index}.quote_item_id")
     sheet = db.get(QuoteSheet, quote.quote_id)
-    if not sheet or sheet.request_id != request_id:
+    if not sheet or sheet.archived or sheet.request_id != request_id:
         error("QUOTE_ITEM_NOT_FOUND", "Позиция квоты не относится к этой заявке", 404, f"selections.{index}.quote_item_id")
     if quote.valid_until.replace(tzinfo=quote.valid_until.tzinfo or timezone.utc) <= datetime.now(timezone.utc):
         error("QUOTE_EXPIRED", "Срок действия выбранной позиции квоты истёк", field=f"selections.{index}.quote_item_id")
@@ -627,6 +627,7 @@ def itemized_selection(db, request_id: str, selection, index: int) -> dict:
         "packing": serialize(packing),
         "product_group": serialize(group),
         "currency_code": currency.code,
+        "supplier_name": db.get(Counterparty, quote.supplier_id).name,
         "calculation_type": (db.get(Counterparty, quote.supplier_id).details or {}).get("calculation_type", "IMPORT"),
         "markup_coefficient": str(selection.markup_coefficient) if selection.markup_coefficient is not None else None,
         "bonus_coefficient": str(selection.bonus_coefficient) if selection.bonus_coefficient is not None else None,

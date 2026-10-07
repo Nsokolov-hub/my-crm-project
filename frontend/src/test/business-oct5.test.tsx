@@ -116,6 +116,7 @@ it('previews supplier mail and sends only after the explicit send button', async
       expect.objectContaining({
         body: expect.objectContaining({
           supplier_ids: ['supplier'],
+          cc: ['info@ogk-chem.ru'],
           item_ids: ['item'],
           subject: 'Request 14',
           idempotency_key: expect.any(String),

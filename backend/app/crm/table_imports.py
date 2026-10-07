@@ -339,6 +339,7 @@ def quote_plan(db, request_id, columns, rows, mapping):
             if not c:
                 raise ValueError("Валюта не найдена в справочнике")
             data["supplier_id"], data["currency_id"] = s.id, c.id
+            data["supplier_name"] = s.name
             data["quantity"] = decimal(values.get("quantity", ""), positive=True, whole=True, places=6)
             data["unit_price"] = decimal(values.get("unit_price", ""))
             days = decimal(values.get("delivery_days", ""), whole=True)

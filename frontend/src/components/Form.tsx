@@ -23,6 +23,12 @@ export function validateFields(fields: Field[], values: Record<string, unknown>)
       continue;
     }
     if (value === undefined || value === '') continue;
+    if (
+      field.type === 'date' &&
+      ((field.min !== undefined && String(value) < String(field.min)) ||
+        (field.max !== undefined && String(value) > String(field.max)))
+    )
+      errors[field.name] = 'Выберите дату в допустимом диапазоне';
     if (field.type === 'email' && !z.email().safeParse(value).success)
       errors[field.name] = 'Укажите корректную электронную почту';
     if (field.type === 'decimal' && !/^\d+(?:\.\d{1,8})?$/.test(String(value)))
@@ -293,6 +299,8 @@ function FieldControl({
         <input
           {...common}
           type={field.type === 'decimal' ? 'text' : field.type || 'text'}
+          min={field.min}
+          max={field.max}
           inputMode={field.type === 'decimal' ? 'decimal' : undefined}
           autoComplete={field.type === 'password' ? 'new-password' : undefined}
           value={String(value ?? '')}

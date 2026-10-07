@@ -10,6 +10,13 @@ import { download } from '../lib/api';
 import { date, decimal, nowLocal, today } from '../lib/format';
 import { useApi } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
+
+function fiveDaysFromToday() {
+  const value = new Date(`${today()}T12:00:00`);
+  value.setDate(value.getDate() + 5);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+}
+
 export function RequestDocuments({ requestId }: { requestId: string }) {
   const auth = useAuth();
   const [selected, setSelected] = useState<Entity>();
@@ -26,7 +33,14 @@ export function RequestDocuments({ requestId }: { requestId: string }) {
     executions.refresh();
   }
   const common = [
-    { key: 'number', label: 'Номер документа' },
+    {
+      key: 'number',
+      label: 'Номер документа',
+      render: (r: Entity) =>
+        r.kind === 'proposal'
+          ? `№${String(r.display_number || r.number)} от ${date((r.snapshot as Entity)?.date || r.created_at)}`
+          : String(r.number),
+    },
     { key: 'status', label: 'Статус', render: (r: Entity) => <Badge value={r.status} /> },
     { key: 'total', label: 'Сумма', render: (r: Entity) => `${decimal(r.total)} ${r.currency}` },
     { key: 'created_at', label: 'Выпущен', render: (r: Entity) => date(r.created_at) },
@@ -58,14 +72,29 @@ export function RequestDocuments({ requestId }: { requestId: string }) {
   const proposalFields: Field[] = [
     {
       name: 'calculation_id',
-      label: 'Записанная версия расчёта',
+      label: 'Расчёт',
       required: true,
       type: 'select',
       source: `/requests/${requestId}/calculations`,
-      labelKey: 'reason',
+      labelKey: 'version_number',
     },
-    { name: 'valid_until', label: 'Действует до', type: 'date', required: true },
-    { name: 'terms', label: 'Условия поставки и оплаты', type: 'textarea', required: true },
+    {
+      name: 'valid_until',
+      label: 'Действует до',
+      type: 'date',
+      required: true,
+      value: fiveDaysFromToday(),
+      min: today(),
+      max: fiveDaysFromToday(),
+      help: 'Не более 5 календарных дней с даты выпуска.',
+    },
+    {
+      name: 'terms',
+      label: 'Условия поставки и оплаты',
+      type: 'textarea',
+      required: true,
+      value: 'Оплата согласно договору.',
+    },
   ];
   const snapshot = selected?.snapshot as Record<string, unknown> | undefined;
   const lines = ((snapshot?.lines || []) as Entity[]).map((r, i) => ({
@@ -126,7 +155,7 @@ export function RequestDocuments({ requestId }: { requestId: string }) {
                 Сумма: decimal(selected.total),
                 'Действует до': date(selected.valid_until),
                 'Дата выпуска': date(selected.created_at, true),
-                Расчёт: selected.calculation_id,
+                Расчёт: snapshot?.calculation_version || snapshot?.calculation_number || '—',
                 Предложение: selected.proposal_id,
                 'Общий срок поставки':
                   snapshot?.delivery_days != null ? `${snapshot.delivery_days} дней` : '—',
@@ -277,8 +306,8 @@ function InvoiceEditor({
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const [dueDate, setDueDate] = useState('');
-  const [terms, setTerms] = useState('');
+  const [dueDate, setDueDate] = useState(fiveDaysFromToday());
+  const [terms, setTerms] = useState('Оплата согласно договору.');
   return (
     <LineCommand
       title="Выставить счёт на принятые позиции"
@@ -288,13 +317,15 @@ function InvoiceEditor({
         .map((e) => ({ ...e, name: String((e.snapshot as Entity)?.description || e.item_id) }))}
       rowKey="execution_id"
       extra={{ proposal_id: proposal.id, due_date: dueDate, terms }}
-      note="Счёт выпускается в пределах принятого и ещё не выставленного количества."
+      note="Счёт действует не более 5 календарных дней. Оплата согласно договору."
       additional={
         <div className="form-grid">
           <label className="field">
-            Оплатить до
+            Действует до
             <input
               type="date"
+              min={today()}
+              max={fiveDaysFromToday()}
               required
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}

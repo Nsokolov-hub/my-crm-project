@@ -3,6 +3,8 @@
 import hashlib
 import io
 import os
+import re
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -22,6 +24,19 @@ from app.core.config import settings
 from app.core.errors import error
 
 LOGO = Path(__file__).parent / 'assets' / 'ogk-chem.jpg'
+PROPOSAL_NOTICE = "Срок действия предложения 5 календарных дней. Оплата согласно договору. Не является офертой."
+PROPOSAL_SIGNATURE = {"position": "Генеральный директор", "name": "Гильмутдинов Т.Ф"}
+
+
+def document_date_label(value: str) -> str:
+    return date.fromisoformat(value).strftime("%d.%m.%Y")
+
+
+def proposal_number(snapshot: dict) -> str:
+    if snapshot.get("display_number"):
+        return str(snapshot["display_number"])
+    match = re.fullmatch(r"\d{4}-KP-(\d+)", snapshot["number"])
+    return str(int(match[1])) if match else snapshot["number"]
 
 
 def put_file(content: bytes, extension: str) -> dict:
@@ -152,7 +167,10 @@ def document_files(snapshot: dict) -> dict:
     is_proposal = snapshot.get("kind", "proposal" if "предложение" in snapshot["title"].lower() else "invoice") == "proposal"
     gross_prices = snapshot.get("price_includes_vat", True)
     price_label = "Цена за единицу с НДС" if gross_prices else "Цена за единицу без НДС"
-    signature = snapshot.get("signature") or {}
+    signature = PROPOSAL_SIGNATURE if is_proposal else snapshot.get("signature") or {}
+    display_number = proposal_number(snapshot) if is_proposal else snapshot["number"]
+    issued_date = document_date_label(snapshot["date"])
+    title_label = f"{snapshot['title']} №{display_number} от {issued_date}"
     rows = [
         [
             str(index),
@@ -185,8 +203,8 @@ def document_files(snapshot: dict) -> dict:
     else:
         headers[5] = price_label
     xlsx_rows = [
-        [snapshot["title"], snapshot["number"], snapshot["date"]],
-        ["Заявка", snapshot.get("request_number", "")],
+        [title_label],
+        *([] if is_proposal else [["Заявка", snapshot.get("request_number", "")]]),
         ["Продавец", snapshot["seller"]["name"], party_details(snapshot["seller"])],
         ["Клиент", snapshot["client"]["name"], party_details(snapshot["client"])],
         ["Валюта", snapshot["currency"]],
@@ -207,7 +225,7 @@ def document_files(snapshot: dict) -> dict:
         ],
         *([["Общий срок поставки, дней", snapshot["delivery_days"]]] if snapshot.get("delivery_days") is not None else []),
         ["Условия", snapshot["terms"]],
-        ["Действует / оплатить до", snapshot["valid_until"]],
+        ["Действует до", document_date_label(snapshot["valid_until"])],
     ]
     if is_proposal:
         total_index = next(index for index, row in enumerate(xlsx_rows) if row and row[0] == "Итого")
@@ -229,25 +247,68 @@ def document_files(snapshot: dict) -> dict:
             cell.alignment = Alignment(wrap_text=True, vertical='top')
         book.active.row_dimensions[index].height = 30
     sheet = book.active
-    for cell in sheet[8]:
+    header_row = next(index + 2 for index, row in enumerate(xlsx_rows) if row == headers)
+    if is_proposal:
+        sheet.row_dimensions[1].height = 60
+        sheet.cell(1, 1).fill = PatternFill(fill_type=None)
+        sheet.cell(1, 1).font = Font(name="Arial", bold=True, color="4F8A5B", size=14)
+        sheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(headers))
+        sheet.cell(2, 1).font = Font(name="Arial", bold=True, color="213D37", size=14)
+        sheet.row_dimensions[2].height = 30
+        for column, width in {"A": 10, "B": 60, "C": 15, "D": 10, "E": 28, "F": 28}.items():
+            sheet.column_dimensions[column].width = width
+        for index, row in enumerate(xlsx_rows, 2):
+            if row and row[0] in ("Продавец", "Клиент"):
+                sheet.merge_cells(start_row=index, start_column=3, end_row=index, end_column=6)
+                sheet.row_dimensions[index].height = 48
+            elif row and len(row) == 2:
+                sheet.cell(index, 2).value = None
+                sheet.cell(index, 3, safe_cell(row[1]))
+                sheet.merge_cells(start_row=index, start_column=1, end_row=index, end_column=2)
+                sheet.merge_cells(start_row=index, start_column=3, end_row=index, end_column=6)
+                sheet.cell(index, 3).alignment = Alignment(wrap_text=True, vertical="top")
+                sheet.row_dimensions[index].height = max(30, 16 * ((len(str(row[1])) + 79) // 80))
+    for cell in sheet[header_row]:
         cell.font = Font(name="Arial", bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="213D37")
+        cell.fill = PatternFill("solid", fgColor="4F8A5B" if is_proposal else "213D37")
         cell.alignment = Alignment(wrap_text=True, vertical="center")
-    sheet.row_dimensions[8].height = 32
-    for index, row in enumerate(snapshot["lines"], 9):
+    sheet.row_dimensions[header_row].height = 32
+    for index, row in enumerate(snapshot["lines"], header_row + 1):
         sheet.row_dimensions[index].height = max(28, 16 * ((len(row["description"]) + 39) // 40))
+        for cell in sheet[index][:len(headers)]:
+            cell.fill = PatternFill("solid", fgColor="F0F8E8" if index % 2 else "FFFFFF")
+            cell.border = Border(bottom=Side(style="thin", color="B6D49B"))
+    if is_proposal:
+        total_row = next(index + 2 for index, row in enumerate(xlsx_rows) if row and row[0] == "Итого с НДС")
+        sheet.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=5)
+        for cell in sheet[total_row][:len(headers)]:
+            cell.fill = PatternFill("solid", fgColor="B1DA72")
+            cell.font = Font(name="Arial", bold=True, color="213D37")
     signature_start = sheet.max_row + 3
-    for offset, (key, value) in enumerate((
-        ("Должность", signature.get("position") or "________________________"),
-        ("ФИО", signature.get("name") or "________________________"),
-        ("Подпись", "________________________"),
-        ("Место печати", "М.П."),
-    )):
-        sheet.cell(signature_start + offset, 1, key)
-        sheet.cell(signature_start + offset, 2, safe_cell(value))
-        sheet.row_dimensions[signature_start + offset].height = 28
+    if is_proposal:
+        for offset, value in enumerate((
+            snapshot.get("validity_notice") or PROPOSAL_NOTICE,
+            f"{signature['position']} ________ /{signature['name']}",
+            "М.П.",
+            f"{snapshot.get('website') or 'https://ogk-chem.ru'} · {snapshot.get('contact_email') or 'info@ogk-chem.ru'}",
+        )):
+            index = signature_start + offset
+            sheet.cell(index, 1, value)
+            sheet.merge_cells(start_row=index, start_column=1, end_row=index, end_column=len(headers))
+            sheet.cell(index, 1).alignment = Alignment(wrap_text=True, vertical="center")
+            sheet.row_dimensions[index].height = 32
+    else:
+        for offset, (key, value) in enumerate((
+            ("Должность", signature.get("position") or "________________________"),
+            ("ФИО", signature.get("name") or "________________________"),
+            ("Подпись", "________________________"),
+            ("Место печати", "М.П."),
+        )):
+            sheet.cell(signature_start + offset, 1, key)
+            sheet.cell(signature_start + offset, 2, safe_cell(value))
+            sheet.row_dimensions[signature_start + offset].height = 28
     sheet.print_options.horizontalCentered = True
-    sheet.print_title_rows = "8:8"
+    sheet.print_title_rows = f"{header_row}:{header_row}"
     sheet.print_area = sheet.dimensions
     sheet.sheet_properties.pageSetUpPr.fitToPage = True
     book.active.page_setup.orientation = 'landscape'
@@ -282,11 +343,12 @@ def document_files(snapshot: dict) -> dict:
         leftMargin=30,
         topMargin=32,
         bottomMargin=32,
-        title=f"{snapshot['title']} {snapshot['number']}",
+        title=title_label,
     )
     style = ParagraphStyle("body", fontName=font_name, fontSize=8, leading=11, spaceAfter=8)
     title_style = ParagraphStyle("title", parent=style, fontSize=16, leading=20, spaceAfter=16)
     number_style = ParagraphStyle("number", parent=style, alignment=TA_RIGHT, splitLongWords=0)
+    header_style = ParagraphStyle("header", parent=style, textColor=colors.white)
 
     def p(text):
         return Paragraph(escape(str(text)), style)
@@ -301,9 +363,9 @@ def document_files(snapshot: dict) -> dict:
     content = [
         Image(str(LOGO), width=190, height=190 * 425 / 1280, hAlign='LEFT'),
         Spacer(1, 14),
-        Paragraph(escape(f"{snapshot['title']} № {snapshot['number']}"), title_style),
-        p(f"Дата: {snapshot['date']} · Валюта: {snapshot['currency']}"),
-        p(f"Заявка: {snapshot.get('request_number', '')}"),
+        Paragraph(escape(title_label), title_style),
+        p(f"Дата: {issued_date} · Валюта: {snapshot['currency']}"),
+        *([] if is_proposal else [p(f"Заявка: {snapshot.get('request_number', '')}")]),
         p(f"Продавец: {snapshot['seller']['name']}"),
         p(party_details(snapshot["seller"])),
         p(f"Клиент: {snapshot['client']['name']}"),
@@ -320,7 +382,7 @@ def document_files(snapshot: dict) -> dict:
         pdf_headers = ["№", "Наименование", "Кол-во / ед.", price_label, "Сумма с НДС"]
     else:
         pdf_headers[3] = price_label
-    table_rows = [[p(value) for value in pdf_headers]]
+    table_rows = [[Paragraph(escape(value), header_style if is_proposal else style) for value in pdf_headers]]
     for index, row in enumerate(snapshot["lines"], 1):
         title = row["description"]
         cells = [p(index), p(title), p(f"{pdf_decimal(row['quantity'])} {pdf_unit(row['unit'])}"),
@@ -335,13 +397,15 @@ def document_files(snapshot: dict) -> dict:
     ])
     table = Table(table_rows, colWidths=widths, repeatRows=1)
     table_styles = [
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8F0EB")),
-        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E8F0EB")),
-        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#C6D3CC")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4F8A5B" if is_proposal else "#E8F0EB")),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#B1DA72" if is_proposal else "#E8F0EB")),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#B6D49B" if is_proposal else "#C6D3CC")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
     ]
+    if is_proposal:
+        table_styles.append(("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F0F8E8")]))
     if len(table_rows) > 10:
         table_styles.append(("NOSPLIT", (0, len(table_rows) - 7), (-1, -1)))
     table.setStyle(TableStyle(table_styles))
@@ -353,15 +417,33 @@ def document_files(snapshot: dict) -> dict:
             Spacer(1, 14),
             *([p(f"Общий срок поставки: {snapshot['delivery_days']} дней")] if snapshot.get("delivery_days") is not None else []),
             p(f"Условия: {snapshot['terms']}"),
-            p(f"Действует / оплатить до: {snapshot['valid_until']}"),
+            p(f"Действует до: {document_date_label(snapshot['valid_until'])}"),
         ]
     )
-    content.append(KeepTogether([
-        Spacer(1, 24),
-        p(f"Должность: {signature.get('position') or '________________________'}"),
-        p(f"ФИО: {signature.get('name') or '________________________'}"),
-        p("Подпись: ________________________"),
-        Spacer(1, 22), p("Место печати    М.П."), Spacer(1, 20),
-    ]))
-    pdf.build(content)
+    if is_proposal:
+        content.append(KeepTogether([
+            Spacer(1, 14), p(snapshot.get("validity_notice") or PROPOSAL_NOTICE), Spacer(1, 12),
+            p(f"{signature['position']} ________ /{signature['name']}"),
+            Spacer(1, 14), p("М.П."),
+        ]))
+    else:
+        content.append(KeepTogether([
+            Spacer(1, 24),
+            p(f"Должность: {signature.get('position') or '________________________'}"),
+            p(f"ФИО: {signature.get('name') or '________________________'}"),
+            p("Подпись: ________________________"),
+            Spacer(1, 22), p("Место печати    М.П."), Spacer(1, 20),
+        ]))
+
+    def footer(canvas, doc):
+        if is_proposal:
+            canvas.saveState()
+            canvas.setFont(font_name, 8)
+            canvas.setFillColor(colors.HexColor("#4F8A5B"))
+            website = snapshot.get("website") or "https://ogk-chem.ru"
+            email = snapshot.get("contact_email") or "info@ogk-chem.ru"
+            canvas.drawCentredString(doc.pagesize[0] / 2, 18, f"{website} · {email}")
+            canvas.restoreState()
+
+    pdf.build(content, onFirstPage=footer, onLaterPages=footer)
     return {"pdf": put_file(buffer.getvalue(), "pdf"), "xlsx": put_file(xlsx, "xlsx")}

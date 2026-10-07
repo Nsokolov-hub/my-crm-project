@@ -58,6 +58,11 @@ export function RequestRfqs({
         refreshKey={revision}
         columns={[
           { key: 'recipient', label: 'Кому' },
+          {
+            key: 'cc',
+            label: 'Копия',
+            render: (row) => ((row.cc || []) as string[]).join(', ') || '—',
+          },
           { key: 'subject', label: 'Тема' },
           { key: 'status', label: 'Отправка', render: (r) => <Badge value={r.status} /> },
           { key: 'sent_at', label: 'Дата', render: (r) => date(r.sent_at, true) },
@@ -643,6 +648,37 @@ export function RequestQuotes({
   const [creating, setCreating] = useState(false);
   const [revision, setRevision] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const deleteCommand = useCommand();
+  async function deleteQuote(whole: boolean) {
+    if (
+      !selected ||
+      !window.confirm(
+        whole
+          ? `Удалить квоту ${String(selected.quote_number)} поставщика ${String(selected.supplier_name)} целиком?`
+          : 'Удалить эту ошибочную позицию квоты?',
+      )
+    )
+      return;
+    try {
+      const result = await deleteCommand.run<{ deleted_ids: string[] }>(
+        whole
+          ? `/quote-sheets/${String(selected.quote_sheet_id)}/delete`
+          : `/quote-items/${selected.id}/delete`,
+        { version: whole ? selected.quote_sheet_version : selected.version },
+        'POST',
+        true,
+      );
+      if (result) {
+        setSelectedIds(
+          (current) => new Set([...current].filter((id) => !result.deleted_ids.includes(id))),
+        );
+        setSelected(undefined);
+        setRevision((value) => value + 1);
+      }
+    } catch {
+      /* ErrorBox displays the failure. */
+    }
+  }
   return (
     <>
       <div className="tab-actions">
@@ -699,6 +735,7 @@ export function RequestQuotes({
         }}
         onSelect={setSelected}
         columns={[
+          { key: 'quote_number', label: 'Квота' },
           { key: 'nomenclature_name', label: 'Номенклатура', render: quoteName },
           { key: 'packing_name', label: 'Фасовка' },
           { key: 'quantity', label: 'Количество', render: (row) => decimal(row.quantity) },
@@ -727,8 +764,12 @@ export function RequestQuotes({
         />
       )}
       {selected && (
-        <Modal title="Позиция квоты" onClose={() => setSelected(undefined)}>
+        <Modal
+          title={`Квота ${String(selected.quote_number)} · ${String(selected.supplier_name)}`}
+          onClose={() => setSelected(undefined)}
+        >
           <div className="form-body">
+            <ErrorBox error={deleteCommand.error} />
             <DetailPairs
               values={{
                 Номенклатура: quoteName(selected),
@@ -740,6 +781,24 @@ export function RequestQuotes({
                 'Действует до': date(selected.valid_until),
               }}
             />
+            {auth.can('quotes.write') && (
+              <div className="inline-actions">
+                <Button
+                  variant="secondary"
+                  busy={deleteCommand.busy}
+                  onClick={() => void deleteQuote(false)}
+                >
+                  <Trash2 size={16} /> Удалить позицию
+                </Button>
+                <Button
+                  variant="secondary"
+                  busy={deleteCommand.busy}
+                  onClick={() => void deleteQuote(true)}
+                >
+                  Удалить квоту целиком
+                </Button>
+              </div>
+            )}
           </div>
         </Modal>
       )}

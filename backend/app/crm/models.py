@@ -220,6 +220,7 @@ class Country(Entity):
 
 class QuoteSheet(Entity):
     __tablename__ = 'quote_sheets'
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
     number: Mapped[str] = mapped_column(String(80), unique=True)
     request_id: Mapped[str] = mapped_column(ForeignKey('requests.id'), index=True)
     supplier_id: Mapped[str] = mapped_column(ForeignKey('counterparties.id'), index=True)
@@ -229,6 +230,7 @@ class QuoteSheet(Entity):
 
 class QuoteItem(Entity):
     __tablename__ = 'quote_items'
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
     __table_args__ = (
         CheckConstraint('quantity > 0 AND unit_price >= 0'),
         CheckConstraint('delivery_days IS NULL OR delivery_days >= 0'),

@@ -62,6 +62,8 @@ def send_mail(db, event):
         return
     message = EmailMessage()
     message["From"], message["To"], message["Subject"] = settings.smtp_from, mail.recipient, mail.subject
+    if mail.cc:
+        message["Cc"] = ", ".join(mail.cc)
     message["Message-ID"] = f"<crm-supplier-{mail.id}@{settings.smtp_from.rsplit('@', 1)[-1]}>"
     message.set_content(mail.body)
     message.add_alternative(mail.html_body, subtype="html")
@@ -81,4 +83,4 @@ def send_mail(db, event):
         "request",
         mail.request_id,
     )
-    audit(db, None, "supplier_mail", mail.id, "sent", after={"recipient": mail.recipient})
+    audit(db, None, "supplier_mail", mail.id, "sent", after={"recipient": mail.recipient, "cc": mail.cc})

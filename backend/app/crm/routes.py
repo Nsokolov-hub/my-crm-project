@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.commerce.schemas import VersionCommand
 from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
 from app.core.models import AppSetting, AuditEvent, User
@@ -1203,6 +1204,7 @@ def quote_item_view(db: Session, row: QuoteItem, show_purchase: bool = True) -> 
     value.update({
         'quote_sheet_id': sheet.id,
         'quote_number': sheet.number,
+        'quote_sheet_version': sheet.version,
         'request_id': sheet.request_id,
         'request_number': request.number,
         'supplier_request_id': sheet.supplier_request_id,
@@ -1233,7 +1235,7 @@ def quote_sheet_view(db: Session, row: QuoteSheet, show_purchase: bool = True) -
         'supplier_name': supplier.name,
         'items': [
             quote_item_view(db, item, show_purchase) for item in db.scalars(
-                select(QuoteItem).where(QuoteItem.quote_id == row.id)
+                select(QuoteItem).where(QuoteItem.quote_id == row.id, QuoteItem.archived.is_(False))
                 .order_by(QuoteItem.created_at, QuoteItem.id)
             )
         ],
@@ -1255,6 +1257,8 @@ def latest_price(
             QuoteItem.packing_id == packing_id,
             QuoteItem.quoted_at <= at,
             QuoteItem.valid_until > at,
+            QuoteItem.archived.is_(False),
+            QuoteSheet.archived.is_(False),
             QuoteSheet.request_id.in_(select(Request.id).where(request_predicate(db, user, 'finance.purchase.read'))),
         )
     )
@@ -1287,6 +1291,7 @@ def quote_item_history(
 ) -> dict[str, Any]:
     require_permission(db, user, 'finance.purchase.read')
     stmt = select(QuoteItem).join(QuoteSheet, QuoteSheet.id == QuoteItem.quote_id).where(
+        QuoteItem.archived.is_(False), QuoteSheet.archived.is_(False),
         QuoteSheet.request_id.in_(select(Request.id).where(request_predicate(db, user, 'finance.purchase.read')))
     )
     for field, value in (
@@ -1306,7 +1311,8 @@ def request_quote_items(
     user: User = Depends(current_user), db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     check_request(db, user, entity_id)
-    stmt = select(QuoteItem).join(QuoteSheet, QuoteSheet.id == QuoteItem.quote_id).where(QuoteSheet.request_id == entity_id)
+    stmt = select(QuoteItem).join(QuoteSheet, QuoteSheet.id == QuoteItem.quote_id).where(
+        QuoteSheet.request_id == entity_id, QuoteSheet.archived.is_(False), QuoteItem.archived.is_(False))
     if ids:
         selected_ids = [value.strip() for value in ids.split(',') if value.strip()]
         if len(selected_ids) > 10000:
@@ -1328,7 +1334,7 @@ def request_quote_sheets(
     user: User = Depends(current_user), db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     check_request(db, user, entity_id)
-    result = paginate(db, select(QuoteSheet).where(QuoteSheet.request_id == entity_id).order_by(QuoteSheet.created_at.desc()), page, page_size)
+    result = paginate(db, select(QuoteSheet).where(QuoteSheet.request_id == entity_id, QuoteSheet.archived.is_(False)).order_by(QuoteSheet.created_at.desc()), page, page_size)
     show_purchase = has_request_permission(db, user, entity_id, 'finance.purchase.read')
     result['items'] = [quote_sheet_view(db, db.get(QuoteSheet, item['id']), show_purchase) for item in result['items']]
     return result
@@ -1341,6 +1347,67 @@ def quote_sheet_detail(entity_id: str, user: User = Depends(current_user), db: S
         raise DomainError('NOT_FOUND', 'Квота не найдена', 404)
     check_request(db, user, row.request_id)
     return quote_sheet_view(db, row, has_request_permission(db, user, row.request_id, 'finance.purchase.read'))
+
+
+def archive_quote(db, user, row):
+    before = serialize(row)
+    row.archived = True
+    row.version += 1
+    audit(db, user, 'quote_item' if isinstance(row, QuoteItem) else 'quote_sheet',
+          row.id, 'deleted', before=before, after=serialize(row), reason='Ошибочная квота')
+
+
+@router.post('/quote-items/{entity_id}/delete')
+def delete_quote_item(entity_id: str, body: VersionCommand,
+                      user: User = Depends(current_user), db: Session = Depends(get_db)):
+    row = db.get(QuoteItem, entity_id)
+    if not row:
+        raise DomainError('NOT_FOUND', 'Позиция квоты не найдена', 404)
+    sheet = db.get(QuoteSheet, row.quote_id)
+    check_request(db, user, sheet.request_id, 'quotes.write')
+
+    def operation():
+        advisory(db, f'request-commerce:{sheet.request_id}')
+        current_sheet = lock(db, QuoteSheet, sheet.id)
+        current = lock(db, QuoteItem, entity_id)
+        check_version(current, body.version)
+        if current.archived or current_sheet.archived:
+            raise DomainError('QUOTE_DELETED', 'Квота уже удалена', 409)
+        archive_quote(db, user, current)
+        if not db.scalar(select(QuoteItem.id).where(
+                QuoteItem.quote_id == sheet.id, QuoteItem.archived.is_(False))):
+            archive_quote(db, user, current_sheet)
+        else:
+            current_sheet.version += 1
+        return {'deleted_ids': [current.id]}
+
+    return idem(db, user, body.idempotency_key, f'quote-item.delete:{entity_id}',
+                body.model_dump(mode='json'), operation)
+
+
+@router.post('/quote-sheets/{entity_id}/delete')
+def delete_quote_sheet(entity_id: str, body: VersionCommand,
+                       user: User = Depends(current_user), db: Session = Depends(get_db)):
+    row = db.get(QuoteSheet, entity_id)
+    if not row:
+        raise DomainError('NOT_FOUND', 'Квота не найдена', 404)
+    check_request(db, user, row.request_id, 'quotes.write')
+
+    def operation():
+        advisory(db, f'request-commerce:{row.request_id}')
+        current = lock(db, QuoteSheet, entity_id)
+        check_version(current, body.version)
+        if current.archived:
+            raise DomainError('QUOTE_DELETED', 'Квота уже удалена', 409)
+        items = db.scalars(select(QuoteItem).where(
+            QuoteItem.quote_id == entity_id, QuoteItem.archived.is_(False)).with_for_update()).all()
+        for item in items:
+            archive_quote(db, user, item)
+        archive_quote(db, user, current)
+        return {'deleted_ids': [item.id for item in items]}
+
+    return idem(db, user, body.idempotency_key, f'quote-sheet.delete:{entity_id}',
+                body.model_dump(mode='json'), operation)
 
 
 @router.post('/requests/{entity_id}/quote-sheets', status_code=201)

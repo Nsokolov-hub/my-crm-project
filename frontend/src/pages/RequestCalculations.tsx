@@ -131,6 +131,16 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
         rows={rows}
         columns={[
           { key: 'description', label: 'Товар' },
+          {
+            key: 'supplier_name',
+            label: 'Поставщик',
+            render: (row) => String(row.supplier_name || '—'),
+          },
+          {
+            key: 'delivery_days',
+            label: 'Срок поставки, дней',
+            render: (row) => String(row.delivery_days ?? '—'),
+          },
           { key: 'quantity', label: 'Кол-во', render: (row) => decimal(row.quantity) },
           ...(
             [
@@ -368,13 +378,28 @@ function CalculationEditor({
     Object.fromEntries(
       initialIds.map((id) => {
         const old = previousSelections.find((item) => item.quote_item_id === id);
+        const line = ((previousSnapshot.lines || []) as Entity[]).find(
+          (item) => item.quote_item_id === id,
+        );
+        const detail = (line?.detail || {}) as Entity;
+        let bonus = String(old?.bonus_coefficient || detail.bonus_coefficient || '1');
+        if (
+          Number(bonus) === 1 &&
+          previousAdjustment.enabled &&
+          Number(detail.pre_bonus_sale_net) > 0
+        ) {
+          bonus = (
+            1 +
+            Number(detail.internal_bonus || 0) / Number(detail.pre_bonus_sale_net)
+          ).toFixed(6);
+        }
         return [
           id,
           {
             quote_item_id: id,
             ...(old?.quantity ? { quantity: String(old.quantity) } : {}),
             markup_coefficient: String(old?.markup_coefficient || '1.5'),
-            ...(old?.bonus_coefficient ? { bonus_coefficient: String(old.bonus_coefficient) } : {}),
+            ...(old || line ? { bonus_coefficient: bonus } : {}),
           },
         ];
       }),
@@ -394,9 +419,6 @@ function CalculationEditor({
   const [deferredStart, setDeferredStart] = useState(
     String(previousTerms.deferred_start_event || ''),
   );
-  const [internalEnabled, setInternalEnabled] = useState(Boolean(previousAdjustment.enabled));
-  const [internalType, setInternalType] = useState(String(previousAdjustment.type || 'PERCENTAGE'));
-  const [internalValue, setInternalValue] = useState(String(previousAdjustment.value || '0'));
   const [serviceFeePercent, setServiceFeePercent] = useState(
     String(previousAdjustment.service_fee_percent || '0'),
   );
@@ -428,7 +450,7 @@ function CalculationEditor({
     deferred !== '0' ||
     deferredDays !== '0' ||
     deferredStart ||
-    internalEnabled ||
+    Number(serviceFeePercent) > 0 ||
     vatDeductible ||
     deliveryDays,
   );
@@ -624,14 +646,8 @@ function CalculationEditor({
   )
     errors.push('Общий срок поставки укажите целым числом от 0 до 3650 дней.');
   if (Number(deferred) > 0 && !deferredStart) errors.push('Выберите событие начала отсрочки.');
-  if (
-    internalEnabled &&
-    (!Number.isFinite(Number(internalValue)) ||
-      Number(internalValue) < (internalType === 'MULTIPLIER' ? 1 : 0) ||
-      !Number.isFinite(Number(serviceFeePercent)) ||
-      Number(serviceFeePercent) < 0)
-  )
-    errors.push('Проверьте внутреннюю корректировку и комиссию.');
+  if (!Number.isFinite(Number(serviceFeePercent)) || Number(serviceFeePercent) < 0)
+    errors.push('Сервисная комиссия должна быть неотрицательным числом.');
   function invalidate() {
     setPreview(undefined);
     command.setError(undefined);
@@ -686,9 +702,9 @@ function CalculationEditor({
           ...(auth.can('finance.reward.read')
             ? {
                 internal_adjustment: {
-                  enabled: internalEnabled,
-                  type: internalType,
-                  value: internalValue,
+                  enabled: Number(serviceFeePercent) > 0,
+                  type: 'PERCENTAGE',
+                  value: '0',
                   service_fee_percent: serviceFeePercent,
                 },
               }
@@ -724,9 +740,6 @@ function CalculationEditor({
     deferred,
     deferredDays,
     deferredStart,
-    internalEnabled,
-    internalType,
-    internalValue,
     serviceFeePercent,
     vatDeductible,
     deliveryDays,
@@ -1585,65 +1598,24 @@ function CalculationEditor({
             <section className="calculation-section">
               <div className="section-heading">
                 <div>
-                  <h3>Внутренняя корректировка</h3>
-                  <p>Параметры используются только внутри CRM и не выводятся в КП.</p>
+                  <h3>Сервисная комиссия</h3>
+                  <p>
+                    Бонус укажите один раз в строках позиций выше. Комиссия используется только
+                    внутри CRM.
+                  </p>
                 </div>
               </div>
-              <label className="calculation-internal-toggle">
+              <label className="field">
+                Сервисная комиссия, %
                 <input
-                  type="checkbox"
-                  checked={internalEnabled}
+                  inputMode="decimal"
+                  value={serviceFeePercent}
                   onChange={(event) => {
-                    setInternalEnabled(event.target.checked);
+                    setServiceFeePercent(event.target.value.replace(',', '.'));
                     invalidate();
                   }}
-                />{' '}
-                Применить внутренний бонус / комиссию
+                />
               </label>
-              {internalEnabled && (
-                <div className="calculation-terms-grid">
-                  <label>
-                    Тип{' '}
-                    <select
-                      value={internalType}
-                      onChange={(event) => {
-                        setInternalType(event.target.value);
-                        invalidate();
-                      }}
-                    >
-                      <option value="PERCENTAGE">Процент</option>
-                      <option value="MULTIPLIER">Множитель</option>
-                      <option value="FIXED">Фиксированная сумма</option>
-                    </select>
-                  </label>
-                  <label>
-                    {internalType === 'MULTIPLIER'
-                      ? 'Коэффициент'
-                      : internalType === 'FIXED'
-                        ? 'Сумма, ₽'
-                        : 'Бонус, %'}
-                    <input
-                      inputMode="decimal"
-                      value={internalValue}
-                      onChange={(event) => {
-                        setInternalValue(event.target.value.replace(',', '.'));
-                        invalidate();
-                      }}
-                    />
-                  </label>
-                  <label>
-                    Сервисная комиссия, %{' '}
-                    <input
-                      inputMode="decimal"
-                      value={serviceFeePercent}
-                      onChange={(event) => {
-                        setServiceFeePercent(event.target.value.replace(',', '.'));
-                        invalidate();
-                      }}
-                    />
-                  </label>
-                </div>
-              )}
               {serverError?.field?.startsWith('internal_adjustment') && (
                 <p className="field-error">{serverError.message}</p>
               )}
@@ -1930,11 +1902,9 @@ export function RequestCalculations({
         columns={[
           {
             key: 'version_number',
-            label: 'Версия',
+            label: 'Номер',
             render: (row) =>
-              row.version_number
-                ? 'Версия №' + row.version_number
-                : 'Расчёт от ' + date(row.created_at),
+              row.version_number ? '№' + row.version_number : 'Расчёт от ' + date(row.created_at),
           },
           { key: 'created_at', label: 'Записан', render: (row) => date(row.created_at, true) },
           {

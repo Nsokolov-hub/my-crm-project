@@ -240,6 +240,12 @@ export function TableImportDialog({
                 ...(kind === 'quotes'
                   ? [
                       {
+                        key: 'supplier_name',
+                        label: 'Поставщик',
+                        render: (row: Entity) =>
+                          String((row.data as Record<string, unknown>).supplier_name || '—'),
+                      },
+                      {
                         key: 'product_group_name',
                         label: 'Товарная группа',
                         render: (row: Entity) =>

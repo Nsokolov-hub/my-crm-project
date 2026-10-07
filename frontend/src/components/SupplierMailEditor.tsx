@@ -21,10 +21,19 @@ export function SupplierMailEditor({
   const [chosen, setChosen] = useState('');
   const [intro, setIntro] = useState('Dear Colleagues,\n\nPlease send us offer for:');
   const [subject, setSubject] = useState(`Request ${requestNumber || ''}`);
+  const [cc, setCc] = useState('info@ogk-chem.ru');
   const [preview, setPreview] = useState<Entity[]>();
   const [error, setError] = useState<unknown>();
   const command = useCommand();
-  const body = { supplier_ids: suppliers.map((s) => s.id), item_ids: itemIds, introduction: intro };
+  const body = {
+    supplier_ids: suppliers.map((s) => s.id),
+    item_ids: itemIds,
+    introduction: intro,
+    cc: cc
+      .split(/[;,\s]+/)
+      .map((email) => email.trim())
+      .filter(Boolean),
+  };
   async function add() {
     try {
       const supplier = await api<Entity>(`/counterparties/${chosen}`);
@@ -113,6 +122,18 @@ export function SupplierMailEditor({
           ]}
         />
         <label className="field">
+          Копия
+          <input
+            value={cc}
+            onChange={(e) => {
+              setCc(e.target.value);
+              setPreview(undefined);
+            }}
+            placeholder="info@ogk-chem.ru"
+          />
+          <small>Несколько адресов разделите запятой. Поле можно оставить пустым.</small>
+        </label>
+        <label className="field">
           Тема
           <input value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={250} />
         </label>
@@ -138,6 +159,7 @@ export function SupplierMailEditor({
         {preview && (
           <>
             <p>Получатели: {preview.map((row) => String(row.recipient)).join(', ')}</p>
+            {body.cc.length > 0 && <p>Копия: {body.cc.join(', ')}</p>}
             <pre className="mail-preview">{String(preview[0]?.body || '')}</pre>
             <Button disabled={!subject.trim()} busy={command.busy} onClick={() => void send()}>
               Отправить отдельные письма ({preview.length})

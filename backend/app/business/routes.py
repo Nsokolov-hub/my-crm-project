@@ -17,7 +17,7 @@ from sqlalchemy import or_, select
 from app.commerce.calculator import dec, profitability_metrics
 from app.commerce.files import workbook
 from app.commerce.models import Calculation, CommercialDocument, Execution
-from app.commerce.procurement import DB, Actor, product_view, supplier
+from app.commerce.procurement import DB, Actor, product_view, rfq_table, supplier
 from app.commerce.schemas import Command, Currency, Positive, VersionCommand
 from app.core.config import settings
 from app.core.db import utcnow
@@ -917,31 +917,21 @@ class MailPreviewIn(Command):
     supplier_ids: list[str] = Field(min_length=1, max_length=100)
     item_ids: list[str] = Field(min_length=1, max_length=10000)
     introduction: str = Field(default="Dear Colleagues,\n\nPlease send us offer for:", max_length=4000)
+    cc: list[EmailStr] = Field(default_factory=list, max_length=100)
 
 
 @router.post("/requests/{request_id}/supplier-mail/preview")
 def mail_preview(request_id: str, data: MailPreviewIn, db: DB, user: Actor):
     request = check_request(db, user, request_id, "quotes.write")
-    lines = []
-    for entity_id in dict.fromkeys(data.item_ids):
-        item = db.get(RequestItem, entity_id)
-        if not item or item.request_id != request.id or item.archived:
-            error("ITEM_NOT_FOUND", "Выберите действующие позиции этой заявки")
-        n = db.get(Nomenclature, item.nomenclature_id) if item.nomenclature_id else None
-        p = db.get(Packing, item.packing_id) if item.packing_id else None
-        lines.append(
-            [
-                n.name if n else item.description,
-                n.manufacturer if n else "",
-                n.article if n else item.article,
-                p.display_name if p else item.packaging,
-                str(item.quantity or ""),
-            ]
-        )
-    headers = ["Name", "Producer", "Art", "Packing", "Qty"]
-    table = '<table border="1" cellpadding="6"><tr>' + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
+    items = db.scalars(select(RequestItem).where(
+        RequestItem.id.in_(set(data.item_ids)), RequestItem.request_id == request.id,
+        RequestItem.archived.is_(False)).order_by(RequestItem.created_at, RequestItem.id)).all()
+    if len(items) != len(set(data.item_ids)):
+        error("ITEM_NOT_FOUND", "Выберите действующие позиции этой заявки")
+    headers, lines = rfq_table(db, items)
+    table = '<table border="1" cellpadding="6"><tr>' + "".join(f"<th>{escape(h)}</th>" for h in headers) + "</tr>"
     table += (
-        "".join("<tr>" + "".join(f"<td>{escape(str(c or ''))}</td>" for c in row) + "</tr>" for row in lines)
+        "".join("<tr>" + "".join(f"<td>{escape(str(c) if c is not None else '')}</td>" for c in row) + "</tr>" for row in lines)
         + "</table>"
     )
     body = (
@@ -949,7 +939,7 @@ def mail_preview(request_id: str, data: MailPreviewIn, db: DB, user: Actor):
         + "\n\n"
         + "\t".join(headers)
         + "\n"
-        + "\n".join("\t".join(str(c or "") for c in row) for row in lines)
+        + "\n".join("\t".join(str(c) if c is not None else "" for c in row) for row in lines)
     )
     drafts = []
     for supplier_id in dict.fromkeys(data.supplier_ids):
@@ -958,7 +948,7 @@ def mail_preview(request_id: str, data: MailPreviewIn, db: DB, user: Actor):
         if not email:
             error("SUPPLIER_EMAIL", f"Укажите почту для запросов в карточке {party.name}")
         try:
-            TypeAdapter(EmailStr).validate_python(email)
+            email = str(TypeAdapter(EmailStr).validate_python(email))
         except ValidationError:
             error("SUPPLIER_EMAIL", f"Исправьте почту для запросов в карточке {party.name}")
         drafts.append(
@@ -966,6 +956,7 @@ def mail_preview(request_id: str, data: MailPreviewIn, db: DB, user: Actor):
                 "supplier_id": party.id,
                 "supplier_name": party.name,
                 "recipient": email,
+                "cc": list(dict.fromkeys(str(address) for address in data.cc if str(address).casefold() != email.casefold())),
                 "subject": f"Request {request.number}",
                 "body": body,
                 "table_html": table,
@@ -992,6 +983,7 @@ def mail_send(request_id: str, data: MailSendIn, db: DB, user: Actor):
                 request_id=request_id,
                 supplier_id=draft["supplier_id"],
                 recipient=draft["recipient"],
+                cc=draft["cc"],
                 subject=data.subject,
                 body=draft["body"],
                 html_body="<p>"
@@ -1013,7 +1005,7 @@ def mail_send(request_id: str, data: MailSendIn, db: DB, user: Actor):
                 "supplier_mail",
                 mail.id,
                 "queued",
-                after={"recipient": mail.recipient, "request_id": request_id},
+                after={"recipient": mail.recipient, "cc": mail.cc, "request_id": request_id},
             )
             result.append(serialize(mail))
         return {"items": result}
