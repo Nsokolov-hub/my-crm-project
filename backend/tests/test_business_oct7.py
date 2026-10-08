@@ -76,7 +76,7 @@ def test_documents_have_five_day_lifetime_short_number_and_fixed_proposal_signat
         assert PROPOSAL_NOTICE in values
         assert "https://ogk-chem.ru · info@ogk-chem.ru" in values
         header = next(row[0].row for row in book.active if row[0].value == "№")
-        assert book.active.cell(header, 1).fill.fgColor.rgb == "004F8A5B"
+        assert book.active.cell(header, 1).fill.fgColor.rgb == "00173F35"
         assert book.active.print_title_rows == f"${header}:${header}"
         book.close()
     accepted = cmd(crm, f"/proposals/{proposal['id']}/accept", {
