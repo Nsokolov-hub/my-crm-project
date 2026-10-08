@@ -100,6 +100,7 @@ class SupplierMail(Entity):
     request_id: Mapped[str] = mapped_column(ForeignKey("requests.id"), index=True)
     supplier_id: Mapped[str] = mapped_column(ForeignKey("counterparties.id"))
     recipient: Mapped[str] = mapped_column(String(254))
+    cc: Mapped[list[str]] = mapped_column(JSON, default=list)
     subject: Mapped[str] = mapped_column(String(250))
     body: Mapped[str] = mapped_column(Text)
     html_body: Mapped[str] = mapped_column(Text)

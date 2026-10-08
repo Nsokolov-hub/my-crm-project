@@ -1,19 +1,21 @@
 import copy
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
 from fastapi.responses import Response
 from sqlalchemy import func, select
 
+from app.core.config import settings
 from app.core.errors import DomainError, error
 from app.core.security import check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
-from app.crm.models import Counterparty, QuoteItem, RequestItem, Seller
+from app.crm.models import Counterparty, QuoteItem, QuoteSheet, RequestItem, Seller
 from app.crm.models import Request as CRMRequest
 
 from .calculator import ROUNDING, convert, dec
-from .files import document_files, read_file
+from .files import PROPOSAL_NOTICE, PROPOSAL_SIGNATURE, document_files, read_file
 from .models import (
     Calculation,
     CommercialDocument,
@@ -29,16 +31,28 @@ from .schemas import AcceptanceIn, ExecutionCancelIn, InvoiceIn, ProposalIn, Sen
 router = APIRouter(tags=["Коммерческие документы"])
 
 
+def document_date() -> date:
+    return datetime.now(ZoneInfo(settings.company_timezone)).date()
+
+
+def document_expiry(requested: date) -> date:
+    today = document_date()
+    if requested < today:
+        error("DOCUMENT_EXPIRED", "Срок действия документа уже истёк")
+    return min(requested, today + timedelta(days=5))
+
+
 def document_view(document: CommercialDocument) -> dict:
     value = serialize(document)
     value["files"] = {
         name: {"sha256": data["sha256"], "size": data["size"]} for name, data in document.files.items()
     }
+    value["display_number"] = document.snapshot.get("display_number", document.number)
     return value
 
 
 def next_number(db, seller_id: str, kind: str) -> str:
-    year = date.today().year
+    year = document_date().year
     advisory(db, f"document-number:{seller_id}:{kind}:{year}")
     prefix = f"{year}-{'KP' if kind == 'proposal' else 'INV'}-"
     count = (
@@ -117,6 +131,7 @@ def customer_line(line: dict, template: dict) -> dict:
         "item_id": line["item_id"],
         "description": description,
         "cas": product.get("cas") if template.get("show_cas") else None,
+        "delivery_days": line.get("delivery_days"),
         **{
             field: line[field]
             for field in ("quantity", "unit", "unit_price", "net", "tax", "total", "tax_category")
@@ -147,11 +162,15 @@ def base_snapshot(
     return {
         "title": title,
         "kind": kind,
-        "signature": {"name": (seller.details or {}).get("Подписант", ""),
-                      "position": (seller.details or {}).get("Должность подписанта", "")},
+        "signature": (PROPOSAL_SIGNATURE.copy() if kind == "proposal" else
+                      {"name": (seller.details or {}).get("Подписант", ""),
+                       "position": (seller.details or {}).get("Должность подписанта", "")}),
         "price_includes_vat": calculation.snapshot.get("algorithm_version") == "itemized-v2",
         "number": number,
-        "date": date.today().isoformat(),
+        "display_number": str(int(number.rsplit("-", 1)[-1])) if kind == "proposal" else number,
+        "date": document_date().isoformat(),
+        **({"validity_notice": PROPOSAL_NOTICE, "website": "https://ogk-chem.ru",
+            "contact_email": "info@ogk-chem.ru"} if kind == "proposal" else {}),
         "request_number": request.number,
         "calculation_number": calculation.snapshot.get("calculation_number"),
         "calculation_version": calculation.snapshot.get("version_number"),
@@ -187,8 +206,7 @@ def issue_proposal(request_id: str, data: ProposalIn, db: DB, user: Actor):
             error("CALCULATION_REQUIRED", "Для выпуска КП нужен сохранённый расчёт этой заявки")
         from app.business.routes import require_calculation_approved
         require_calculation_approved(db, calc)
-        if data.valid_until < date.today():
-            error("DOCUMENT_EXPIRED", "Срок действия документа уже истёк")
+        valid_until = document_expiry(data.valid_until)
         if data.previous_id:
             prior = db.get(CommercialDocument, data.previous_id)
             if not prior or prior.kind != "proposal" or prior.request_id != request_id:
@@ -204,6 +222,12 @@ def issue_proposal(request_id: str, data: ProposalIn, db: DB, user: Actor):
             for line in calc.snapshot["lines"]:
                 quote = db.get(Quote, line["quote_id"])
                 check_quote(db, quote)
+        else:
+            for line in calc.snapshot["lines"]:
+                quote = db.get(QuoteItem, line["quote_item_id"])
+                sheet = db.get(QuoteSheet, quote.quote_id) if quote else None
+                if not quote or quote.archived or not sheet or sheet.archived:
+                    error("QUOTE_DELETED", "Квота расчёта удалена. Создайте расчёт по действующим квотам")
         number = next_number(db, req.seller_id, "proposal")
         snapshot = base_snapshot(
             db,
@@ -212,7 +236,7 @@ def issue_proposal(request_id: str, data: ProposalIn, db: DB, user: Actor):
             "proposal",
             number,
             [customer_line(row, calc.snapshot["profile"]["template"]) for row in calc.snapshot["lines"]],
-            data.valid_until,
+            valid_until,
             data.terms,
         )
         obj = CommercialDocument(
@@ -225,7 +249,7 @@ def issue_proposal(request_id: str, data: ProposalIn, db: DB, user: Actor):
             previous_id=data.previous_id,
             currency=snapshot["currency"],
             total=dec(snapshot["totals"]["total"]),
-            valid_until=data.valid_until,
+            valid_until=valid_until,
             snapshot=snapshot,
             files=document_files(snapshot),
             author_id=user.id,
@@ -258,7 +282,7 @@ def accept_proposal(proposal_id: str, data: AcceptanceIn, db: DB, user: Actor):
         advisory(db, f"request-commerce:{proposal.request_id}")
         doc = lock(db, CommercialDocument, proposal_id)
         check_version(doc, data.version)
-        if doc.status not in ("issued", "sent", "accepted") or doc.valid_until < date.today():
+        if doc.status not in ("issued", "sent", "accepted") or doc.valid_until < document_date():
             error("PROPOSAL_STATE", "КП недоступно для принятия; выпустите актуальную версию")
         calc = db.get(Calculation, doc.calculation_id)
         profile = calc.snapshot["profile"]
@@ -367,6 +391,7 @@ def issue_invoice(request_id: str, data: InvoiceIn, db: DB, user: Actor):
     def operation():
         advisory(db, f"request-commerce:{request_id}")
         req = lock(db, CRMRequest, request_id)
+        valid_until = document_expiry(data.due_date)
         proposal = db.get(CommercialDocument, data.proposal_id)
         if (
             not proposal
@@ -399,7 +424,7 @@ def issue_invoice(request_id: str, data: InvoiceIn, db: DB, user: Actor):
             line["execution_id"] = execution.id
             lines.append(line)
         number = next_number(db, req.seller_id, "invoice")
-        snapshot = base_snapshot(db, req, calc, "invoice", number, lines, data.due_date, data.terms)
+        snapshot = base_snapshot(db, req, calc, "invoice", number, lines, valid_until, data.terms)
         # Parties remain bound to the accepted proposal, including requisites.
         snapshot["seller"] = copy.deepcopy(proposal.snapshot["seller"])
         snapshot["client"] = copy.deepcopy(proposal.snapshot["client"])
@@ -414,7 +439,7 @@ def issue_invoice(request_id: str, data: InvoiceIn, db: DB, user: Actor):
             proposal_id=proposal.id,
             currency=proposal.currency,
             total=dec(snapshot["totals"]["total"]),
-            valid_until=data.due_date,
+            valid_until=valid_until,
             snapshot=snapshot,
             files=document_files(snapshot),
             author_id=user.id,

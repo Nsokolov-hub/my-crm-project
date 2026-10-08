@@ -445,7 +445,7 @@ def test_api_wave_reprices_zero_two_three_orders_and_delivery_documents(commerce
     assert "Общий срок поставки: 45 дней" in paragraphs
     xlsx = env["client"].get(f"/api/v1/documents/{proposal['id']}/file?format=xlsx")
     book = load_workbook(io.BytesIO(xlsx.content))
-    assert any(row[0] == "Общий срок поставки, дней" and row[1] == 45 for row in book.active.values)
+    assert any(row[0] == "Общий срок поставки, дней" and row[2] == 45 for row in book.active.values)
     assert saved[2]["snapshot"]["vat_deductible"] is True
     assert saved[2]["snapshot"]["totals"]["import_vat"] != "0"
     usd_budget = [

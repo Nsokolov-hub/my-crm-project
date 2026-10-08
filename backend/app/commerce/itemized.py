@@ -477,8 +477,10 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         )
         if mode == 'RUSSIA':
             pre_bonus_sale_net += row['international_logistics']
+        # A line bonus is authoritative. The old request-wide bonus remains a
+        # fallback for clients that have not migrated to the per-line editor.
         internal_bonus = _money(pre_bonus_sale_net * (row["bonus_coefficient"] - 1), rounding)
-        if adjustment_enabled and row["id"] in selected_ids:
+        if adjustment_enabled and row["id"] in selected_ids and row["bonus_coefficient"] == 1:
             if adjustment_type == "PERCENTAGE":
                 internal_bonus += _money(pre_bonus_sale_net * adjustment_value / 100, rounding)
             elif adjustment_type == "MULTIPLIER":
@@ -553,6 +555,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             },
             "description": f"{name} {packing}", "packing": packing,
             "supplier_id": quote["supplier_id"], "product_group": source["product_group"],
+            "supplier_name": source.get("supplier_name"),
             'calculation_type': mode,
             "customs_rule": rules[row["group"]] if mode == "IMPORT" else {"type": "PERCENTAGE" if mode == "DAP" else "NONE", "value": "5" if mode == "DAP" else "0"},
             "quantity": _string(qty), "unit": "pcs", "purchase_currency": row["currency"],

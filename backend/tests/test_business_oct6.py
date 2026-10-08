@@ -56,7 +56,7 @@ def test_quantity_is_independent_of_quote_and_initial_demand(crm, quantity):  # 
     assert Decimal(calculation["snapshot"]["totals"]["purchase_rub"]) == Decimal(quantity) * 1000
     proposal, execution = release(crm, req, calculation, quantity)
     assert proposal["snapshot"]["lines"][0]["description"] == "Стандартный образец Sample (100 mg) Арт. A123"
-    assert proposal["snapshot"]["signature"] == {"name": "Иван Иванов", "position": "Директор"}
+    assert proposal["snapshot"]["signature"] == {"name": "Гильмутдинов Т.Ф", "position": "Генеральный директор"}
     assert "bank_details" not in proposal["snapshot"]
     invoice = cmd(crm, f"/requests/{req['id']}/invoices", {
         "proposal_id": proposal["id"], "due_date": (date.today() + timedelta(days=30)).isoformat(),
@@ -74,7 +74,7 @@ def test_quantity_is_independent_of_quote_and_initial_demand(crm, quantity):  # 
         invoice_values = [cell.value for row in invoice_book.active for cell in row]
         assert "Банк A" not in proposal_values
         assert "Банк A" in invoice_values
-        assert "Иван Иванов" in proposal_values and "Директор" in invoice_values
+        assert "Генеральный директор ________ /Гильмутдинов Т.Ф" in proposal_values and "Директор" in invoice_values
         assert "Наименование" in proposal_values and "Цена за единицу с НДС" in proposal_values
         assert "Без налога" not in proposal_values
     assert crm["client"].get("/api/v1/supplier-orders/positions").json()["items"] == []

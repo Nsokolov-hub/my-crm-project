@@ -44,6 +44,8 @@ export type Field = {
   labelKey?: string;
   value?: unknown;
   minLength?: number;
+  min?: string | number;
+  max?: string | number;
   wide?: boolean;
 };
 export type Column<T = Entity> = {

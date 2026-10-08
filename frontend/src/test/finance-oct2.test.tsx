@@ -255,7 +255,7 @@ it('refreshes shared wave costs in a new version while retaining request costs a
       <RequestCalculations request={{ id: 'request', version: 1, wave_id: 'wave' }} />
     </MemoryRouter>,
   );
-  fireEvent.click(await screen.findByText('Версия №1'));
+  fireEvent.click(await screen.findByText('№1'));
   expect(screen.getByText(/Состав или расходы волны изменились/)).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Создать новую версию' }));
   expect(await screen.findByLabelText('Общий срок поставки, дней')).toHaveValue(30);
