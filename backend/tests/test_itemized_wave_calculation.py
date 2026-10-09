@@ -223,4 +223,5 @@ def test_purine_rows_apply_markup_before_non_deductible_vat():
     assert first["total"] == "246210.00"
     assert second["detail"]["sale_unit_gross"] == "63107"
     assert second["total"] == "126214.00"
-    assert abs(Decimal(first["detail"]["profit"]) - Decimal("64312.50")) <= Decimal("0.01")
+    # The upward rounding is revenue; VAT is extracted from the new gross price.
+    assert Decimal(first["detail"]["profit"]) == Decimal("64313.60")

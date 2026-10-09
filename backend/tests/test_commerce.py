@@ -241,6 +241,8 @@ def prepare(env, with_invoice=False):
             },
         )
         result.update(execution=execution, invoice=invoice)
+    with env["sessions"]() as db:
+        payload["request_version"] = db.get(Request, env["request_id"]).version
     return result
 
 

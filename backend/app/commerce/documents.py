@@ -13,6 +13,7 @@ from app.core.security import check_request, has_request_permission, require_per
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.crm.models import Counterparty, QuoteItem, QuoteSheet, RequestItem, Seller
 from app.crm.models import Request as CRMRequest
+from app.crm.stages import advance_stage
 
 from .calculator import ROUNDING, convert, dec
 from .files import PROPOSAL_NOTICE, PROPOSAL_SIGNATURE, document_files, read_file
@@ -159,6 +160,11 @@ def base_snapshot(
         if kind == "proposal"
         else profile["template"].get("invoice_title", "Счёт на оплату")
     )
+    calculation_version = calculation.snapshot.get("version_number") or db.scalar(
+        select(func.count(Calculation.id)).where(
+            Calculation.request_id == request.id, Calculation.created_at <= calculation.created_at
+        )
+    ) or 1
     return {
         "title": title,
         "kind": kind,
@@ -167,7 +173,7 @@ def base_snapshot(
                        "position": (seller.details or {}).get("Должность подписанта", "")}),
         "price_includes_vat": calculation.snapshot.get("algorithm_version") == "itemized-v2",
         "number": number,
-        "display_number": str(int(number.rsplit("-", 1)[-1])) if kind == "proposal" else number,
+        "display_number": f"{request.number}-{calculation_version}" if kind == "proposal" else number,
         "date": document_date().isoformat(),
         **({"validity_notice": PROPOSAL_NOTICE, "website": "https://ogk-chem.ru",
             "contact_email": "info@ogk-chem.ru"} if kind == "proposal" else {}),
@@ -256,6 +262,7 @@ def issue_proposal(request_id: str, data: ProposalIn, db: DB, user: Actor):
         )
         db.add(obj)
         db.flush()
+        advance_stage(db, user, req, "proposal_sent")
         audit(
             db,
             user,
@@ -377,6 +384,7 @@ def accept_proposal(proposal_id: str, data: AcceptanceIn, db: DB, user: Actor):
             result.append({key: value for key, value in serialize(obj).items() if key != "snapshot"})
         doc.status = "accepted"
         doc.version += 1
+        advance_stage(db, user, lock(db, CRMRequest, doc.request_id), "composition_agreed")
         return {"proposal": document_view(doc), "executions": result}
 
     return idem(
@@ -454,6 +462,7 @@ def issue_invoice(request_id: str, data: InvoiceIn, db: DB, user: Actor):
             "issue",
             after={"number": obj.number, "kind": obj.kind, "files": obj.files},
         )
+        advance_stage(db, user, req, "awaiting_payment")
         return document_view(obj)
 
     return idem(
@@ -597,6 +606,8 @@ def mark_sent(document_id: str, data: SentIn, db: DB, user: Actor):
     check_request(db, user, obj.request_id, "documents.write")
 
     def operation():
+        advisory(db, f"request-commerce:{obj.request_id}")
+        req = lock(db, CRMRequest, obj.request_id)
         doc = lock(db, CommercialDocument, document_id)
         check_version(doc, data.version)
         if doc.status in ("cancelled", "replaced", "rejected"):
@@ -605,6 +616,7 @@ def mark_sent(document_id: str, data: SentIn, db: DB, user: Actor):
         if doc.status == "issued":
             doc.status = "sent"
         doc.version += 1
+        advance_stage(db, user, req, "proposal_sent" if doc.kind == "proposal" else "awaiting_payment")
         audit(db, user, "document", doc.id, "sent", after={"channel": data.channel, "sent_at": data.sent_at})
         return document_view(doc)
 

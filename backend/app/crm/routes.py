@@ -1039,7 +1039,8 @@ def edit_request(entity_id: str, body: RequestPatch, user: User = Depends(curren
         if db.scalar(select(CommercialDocument.id).where(CommercialDocument.request_id == row.id).limit(1)):
             raise DomainError('SELLER_LOCKED', 'У заявки уже выпущены документы. Для другой организации создайте отдельную заявку.', 409, 'seller_id')
     if 'commercial_stage' in body.model_fields_set and body.commercial_stage != row.commercial_stage:
-        allowed = ['new', 'clarification', 'collecting_quotes', 'quote_given', 'calculation', 'closed_lost']
+        allowed = ['new', 'clarification', 'collecting_quotes', 'quote_given', 'calculation',
+                   'proposal_sent', 'composition_agreed', 'awaiting_payment', 'closed_lost']
         if body.commercial_stage not in allowed:
             raise DomainError('STAGE_ACTION_REQUIRED', 'Этот этап меняется при выполнении связанной бизнес-операции', 422, 'commercial_stage')
         if body.commercial_stage == 'closed_lost':
@@ -1210,6 +1211,7 @@ def quote_item_view(db: Session, row: QuoteItem, show_purchase: bool = True) -> 
         'supplier_request_id': sheet.supplier_request_id,
         'nomenclature_name': nomenclature.name,
         'article': nomenclature.article,
+        'manufacturer': nomenclature.manufacturer,
         'request_quantity': db.get(RequestItem, row.source_request_item_id).quantity if row.source_request_item_id else None,
         'packing_name': packing.display_name,
         'product_group_id': nomenclature.product_group_id,

@@ -16,7 +16,7 @@ from app.core.security import (
     require_permission,
 )
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
-from app.crm.models import Counterparty, ProductGroup, QuoteItem, RequestItem, Task
+from app.crm.models import Counterparty, Nomenclature, ProductGroup, QuoteItem, RequestItem, Task
 from app.crm.models import Request as CRMRequest
 
 from .calculator import convert, dec, digest
@@ -648,7 +648,31 @@ def wave_view(db, user, wave: Wave) -> dict:
     value.pop("budget_expenses", None)
     value.pop("budget_rates", None)
     forecasts = db.scalars(select(WaveForecast).where(WaveForecast.wave_id == wave.id).order_by(WaveForecast.created_at)).all()
-    value["forecasts"] = [{**serialize(row), "product_group_name": db.get(ProductGroup, row.product_group_id).name} for row in forecasts]
+    quantities = {}
+    full_composition_visible = True
+    real_allocations = db.scalars(select(WaveAllocation).where(
+        WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True))).all()
+    for allocation in real_allocations:
+        execution = db.get(Execution, allocation.execution_id)
+        if not execution or execution.quantity <= execution.cancelled_quantity:
+            continue
+        if not has_request_permission(db, user, execution.request_id, "requests.read"):
+            full_composition_visible = False
+        group_id = (execution.snapshot.get("product_group") or {}).get("id")
+        if not group_id and execution.quote_item_id:
+            quote = db.get(QuoteItem, execution.quote_item_id)
+            product = db.get(Nomenclature, quote.nomenclature_id) if quote else None
+            group_id = product.product_group_id if product else None
+        if group_id:
+            quantities[group_id] = quantities.get(group_id, dec("0")) + allocation.quantity
+        else:
+            full_composition_visible = False
+    value["forecasts"] = [{
+        **serialize(row), "product_group_name": db.get(ProductGroup, row.product_group_id).name,
+        "filled_quantity": str(quantities.get(row.product_group_id, dec("0"))) if full_composition_visible else None,
+        "remaining_quantity": (str(max(dec("0"), row.target_quantity - quantities.get(row.product_group_id, dec("0"))))
+                               if full_composition_visible else None),
+    } for row in forecasts]
     for prefix in ("close", "departure", "arrival"):
         year, week, _ = getattr(wave, f"{prefix}_date").isocalendar()
         value[f"{prefix}_year"] = getattr(wave, f"{prefix}_year") or year

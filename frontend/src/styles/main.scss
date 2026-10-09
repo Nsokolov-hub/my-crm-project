@@ -2253,26 +2253,186 @@ tr.clickable-row {
 
 .modal.calculation-modal {
   width: min(1480px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
   max-height: calc(100vh - 24px);
+  box-sizing: border-box;
+  overflow: clip auto;
 }
 
-.calculation-editor .calculation-product {
-  min-width: 180px;
+.calculation-modal .form-body,
+.calculation-modal .calculation-section,
+.calculation-modal .detail-pairs > div {
+  min-width: 0;
+}
+
+.calculation-modal .detail-pairs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.calculation-modal .calculation-product {
+  min-width: 0;
   white-space: normal;
 }
 
-.calculation-editor .calculation-product small {
+.calculation-modal .calculation-product small {
   display: block;
   color: #687283;
   line-height: 1.5;
 }
 
-.calculation-editor table td {
+.calculation-modal .table-scroll {
+  overflow-x: visible;
+}
+
+.calculation-modal table {
+  table-layout: fixed;
+  white-space: normal;
+}
+
+.calculation-modal table td,
+.calculation-modal table th {
   white-space: normal;
   overflow-wrap: anywhere;
+  padding: 9px 6px;
+}
+
+.modal.calculation-modal table th {
+  font-size: 11px;
+}
+
+.calculation-modal table th button {
+  font-size: inherit;
 }
 
 .calculation-editor .calculation-markup {
-  width: 80px;
-  min-width: 60px;
+  width: min(64px, 100%);
+  min-width: 0;
+  box-sizing: border-box;
+  padding-inline: 5px;
+}
+
+.calculation-manufacturer {
+  display: block;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.calculation-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: #f2eef9;
+  font-size: 12px;
+}
+
+.calculation-positions th:nth-child(1) {
+  width: 24px;
+}
+
+.calculation-select-all span {
+  display: none;
+}
+
+.calculation-positions th:nth-child(2) {
+  width: 27%;
+}
+
+.calculation-positions th:nth-child(3) {
+  width: 17%;
+}
+
+.calculation-overview th:first-child {
+  width: 25%;
+}
+
+.calculation-overview th:nth-child(2) {
+  width: 17%;
+}
+
+@media (width <= 900px) {
+  .calculation-modal .form-body {
+    padding: 12px;
+  }
+
+  .calculation-modal table,
+  .calculation-modal tbody {
+    display: block;
+  }
+
+  .calculation-modal thead {
+    display: none;
+  }
+
+  .calculation-positions thead,
+  .calculation-positions thead tr {
+    display: block;
+  }
+
+  .calculation-positions thead th {
+    display: none;
+  }
+
+  .calculation-positions thead th:first-child {
+    display: block;
+    width: auto;
+  }
+
+  .calculation-select-all {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .calculation-select-all span {
+    display: inline;
+  }
+
+  .calculation-modal tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: 12px;
+    border: 1px solid #e9e2f4;
+    border-radius: 8px;
+    padding: 6px;
+  }
+
+  .calculation-modal tbody td {
+    display: block;
+    min-width: 0;
+    background: transparent;
+  }
+
+  .calculation-modal tbody tr.selected-table-row {
+    background: #f2eef9;
+  }
+
+  .calculation-modal tbody td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 5px;
+    color: #687283;
+    font-size: 10px;
+  }
+
+  .calculation-positions tbody td:nth-child(2) {
+    grid-column: 1 / -1;
+  }
+
+  .calculation-modal .calculation-terms-grid,
+  .calculation-modal .calculation-rate-row,
+  .calculation-modal .calculation-expense-row,
+  .calculation-modal .form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (width <= 480px) {
+  .calculation-modal .detail-pairs {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px;
+  }
 }

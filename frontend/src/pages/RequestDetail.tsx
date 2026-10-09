@@ -299,7 +299,7 @@ export function RequestDetail() {
           onLaunchConsumed={() => setQuoteItemIds([])}
         />
       )}
-      {tab === 'documents' && <RequestDocuments requestId={id} />}
+      {tab === 'documents' && <RequestDocuments requestId={id} onChanged={refresh} />}
       {tab === 'payments' && <RequestPayments requestId={id} />}
       {tab === 'fulfillment' && <RequestFulfillment requestId={id} />}
       {tab === 'history' && (

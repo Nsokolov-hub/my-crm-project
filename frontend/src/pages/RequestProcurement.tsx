@@ -737,6 +737,8 @@ export function RequestQuotes({
         columns={[
           { key: 'quote_number', label: 'Квота' },
           { key: 'nomenclature_name', label: 'Номенклатура', render: quoteName },
+          { key: 'article', label: 'Артикул' },
+          { key: 'manufacturer', label: 'Производитель' },
           { key: 'packing_name', label: 'Фасовка' },
           { key: 'quantity', label: 'Количество', render: (row) => decimal(row.quantity) },
           { key: 'supplier_name', label: 'Поставщик' },
@@ -773,6 +775,8 @@ export function RequestQuotes({
             <DetailPairs
               values={{
                 Номенклатура: quoteName(selected),
+                Артикул: selected.article,
+                Производитель: selected.manufacturer,
                 Фасовка: selected.packing_name,
                 Поставщик: selected.supplier_name,
                 Количество: decimal(selected.quantity),

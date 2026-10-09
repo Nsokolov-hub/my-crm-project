@@ -1,10 +1,12 @@
 from copy import deepcopy
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter
 from pydantic import ValidationError
 from sqlalchemy import func, select
 
+from app.core.config import settings
 from app.core.errors import DomainError, error
 from app.core.security import can, check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
@@ -181,9 +183,19 @@ def calculation_view(db, user, calculation: Calculation) -> dict:
     result = serialize(calculation)
 
     snapshot = result.get("snapshot", {})
+    created = calculation.created_at
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    version = snapshot.get("version_number") or db.scalar(select(func.count(Calculation.id)).where(
+        Calculation.request_id == calculation.request_id, Calculation.created_at <= calculation.created_at
+    )) or 1
+    result["selection_label"] = (
+        f"№{version or '—'} · {created.astimezone(ZoneInfo(settings.company_timezone)):%d.%m.%Y %H:%M}"
+    )
     if snapshot:
         for name in ("calculation_number", "version_number", "base_version_id", "source_type", "source_id", "source_label", "request_number"):
             result[name] = snapshot.get(name)
+        result["version_number"] = version
         wave_id = (snapshot.get("wave") or {}).get("id")
         if wave_id and snapshot.get("algorithm_version") == "itemized-v2":
             try:

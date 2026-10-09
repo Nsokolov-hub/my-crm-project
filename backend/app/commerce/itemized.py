@@ -501,7 +501,10 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         if profile.get("round_sale_up_to_ruble", True):
             unit_gross = (sale_net / qty * (Decimal("1") + vat_rate)).to_integral_value(rounding=ROUND_CEILING)
             sale_total = _money(unit_gross * qty, rounding)
-            sale_tax = sale_total - sale_net
+            # The rounded gross price remains taxable in full, including the
+            # rounding increment. Extract VAT instead of treating it as VAT.
+            sale_tax = _money(sale_total * vat_rate / (Decimal("1") + vat_rate), rounding)
+            sale_net = sale_total - sale_tax
         else:
             sale_tax = _money(sale_net * vat_rate, rounding)
             sale_total = sale_net + sale_tax

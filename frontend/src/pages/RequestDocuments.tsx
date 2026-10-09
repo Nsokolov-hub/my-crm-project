@@ -17,7 +17,13 @@ function fiveDaysFromToday() {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 }
 
-export function RequestDocuments({ requestId }: { requestId: string }) {
+export function RequestDocuments({
+  requestId,
+  onChanged,
+}: {
+  requestId: string;
+  onChanged?: () => void;
+}) {
   const auth = useAuth();
   const [selected, setSelected] = useState<Entity>();
   const [action, setAction] = useState<
@@ -27,6 +33,7 @@ export function RequestDocuments({ requestId }: { requestId: string }) {
   const [revision, setRevision] = useState(0);
   const executions = useApi<Page>(`/requests/${requestId}/executions`);
   function done() {
+    onChanged?.();
     setAction(undefined);
     setSelected(undefined);
     setRevision((v) => v + 1);
@@ -76,7 +83,7 @@ export function RequestDocuments({ requestId }: { requestId: string }) {
       required: true,
       type: 'select',
       source: `/requests/${requestId}/calculations`,
-      labelKey: 'version_number',
+      labelKey: 'selection_label',
     },
     {
       name: 'valid_until',

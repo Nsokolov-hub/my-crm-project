@@ -98,6 +98,8 @@ const detailLabels: Record<string, string> = {
 };
 
 function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
+  const auth = useAuth();
+  const totals = (snapshot.totals || {}) as Entity;
   const lines = (snapshot.lines || []) as Entity[];
   const wave = (snapshot.wave || {}) as Entity;
   const distribution = (snapshot.wave_distribution || {}) as Entity;
@@ -119,6 +121,17 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
   return (
     <div className="calculation-breakdown">
       <h4>Общий расчёт по позициям</h4>
+      <div className="calculation-summary">
+        <span>
+          Итого с НДС: <strong>{metric(totals.total)} ₽</strong>
+        </span>
+        {auth.can('finance.profit.read') && (
+          <span>
+            Рентабельность расчёта:{' '}
+            <strong>{metric(displayCalculationMetrics(totals).profitability_percent)} %</strong>
+          </span>
+        )}
+      </div>
       <p>
         Волна: {String(wave.number || '—')}. База распределения общих расходов волны:{' '}
         {decimal(distribution.total_quantity || 0)} шт. (
@@ -128,9 +141,22 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
         {decimal(distribution.selected_quantity || 0)} шт. этого расчёта.
       </p>
       <DataTable<Entity>
+        className="calculation-overview"
         rows={rows}
         columns={[
-          { key: 'description', label: 'Товар' },
+          {
+            key: 'description',
+            label: 'Товар',
+            render: (row) => (
+              <span className="calculation-product">
+                <strong>{String(row.description || '')}</strong>
+                <span className="calculation-manufacturer">
+                  {String((row.product as Entity | undefined)?.manufacturer || '—')}
+                </span>
+                <small>Арт. {String((row.product as Entity | undefined)?.article || '—')}</small>
+              </span>
+            ),
+          },
           {
             key: 'supplier_name',
             label: 'Поставщик',
@@ -142,19 +168,7 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
             render: (row) => String(row.delivery_days ?? '—'),
           },
           { key: 'quantity', label: 'Кол-во', render: (row) => decimal(row.quantity) },
-          ...(
-            [
-              'purchase_rub',
-              'international_logistics',
-              'duty',
-              'customs_fee',
-              'import_vat',
-              'general_expenses',
-              'cost',
-              'sale_total',
-              'profit',
-            ] as const
-          ).map((key) => ({
+          ...(['cost', 'sale_total', 'profit'] as const).map((key) => ({
             key,
             label: detailLabels[key],
             render: (row: Entity) =>
@@ -162,6 +176,12 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
                 ? '—'
                 : metric((row.detail as Entity)[key]),
           })),
+          {
+            key: 'profitability_percent',
+            label: 'Рентабельность, %',
+            render: (row) =>
+              metric(displayCalculationMetrics((row.detail || {}) as Entity).profitability_percent),
+          },
         ]}
       />
       <h4>Расшифровка каждой позиции</h4>
@@ -194,6 +214,8 @@ function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
                 'Таможенная стоимость, ₽': 'Закупка в рублях + международная логистика',
                 'База ввозного НДС (ННБ), ₽': 'Таможенная стоимость + таможенная пошлина',
                 'Ввозной НДС, ₽': 'ННБ × ставка НДС / 100. При вычете в цену до наценки не входит.',
+                'НДС продажи, ₽':
+                  'Из цены с НДС: сумма × ставка / (100 + ставка). Округление цены вверх входит в налоговую базу.',
                 'Таможенная стоимость с пошлиной и ввозным НДС, ₽': 'ННБ + ввозной НДС',
                 'Стоимость с пошлиной и невозмещаемым НДС, ₽':
                   'Импорт с вычетом: ННБ. Без вычета: ННБ + ввозной НДС.',
@@ -940,7 +962,21 @@ function CalculationEditor({
               </div>
               <span className="selection-count">Выбрано: {Object.keys(selections).length}</span>
             </div>
+            <div className="calculation-summary" aria-live="polite">
+              <span>
+                Итого с НДС: <strong>{metric(totals?.total)} ₽</strong>
+              </span>
+              {auth.can('finance.profit.read') && (
+                <span>
+                  Рентабельность расчёта:{' '}
+                  <strong>
+                    {metric(displayCalculationMetrics(totals || {}).profitability_percent)} %
+                  </strong>
+                </span>
+              )}
+            </div>
             <DataTable<Entity>
+              className="calculation-positions"
               rows={rows}
               rowClassName={(row) => (selections[row.id] ? 'selected-table-row' : '')}
               columns={[
@@ -948,31 +984,36 @@ function CalculationEditor({
                   key: '__selection',
                   sortable: false,
                   label: (
-                    <input
-                      type="checkbox"
-                      aria-label="Выбрать все квоты"
-                      title="Выбрать все квоты"
-                      checked={rows.length > 0 && rows.every((row) => Boolean(selections[row.id]))}
-                      onChange={(event) => {
-                        const checked = event.target.checked;
-                        setSelections((current) => {
-                          const next = { ...current };
-                          rows.forEach((row) => {
-                            if (checked)
-                              next[row.id] = {
-                                quote_item_id: row.id,
-                                quantity:
-                                  current[row.id]?.quantity ??
-                                  String(row.request_quantity || row.quantity || '1'),
-                                markup_coefficient: current[row.id]?.markup_coefficient || '1.5',
-                              };
-                            else delete next[row.id];
+                    <label className="calculation-select-all">
+                      <input
+                        type="checkbox"
+                        aria-label="Выбрать все квоты"
+                        title="Выбрать все квоты"
+                        checked={
+                          rows.length > 0 && rows.every((row) => Boolean(selections[row.id]))
+                        }
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setSelections((current) => {
+                            const next = { ...current };
+                            rows.forEach((row) => {
+                              if (checked)
+                                next[row.id] = {
+                                  quote_item_id: row.id,
+                                  quantity:
+                                    current[row.id]?.quantity ??
+                                    String(row.request_quantity || row.quantity || '1'),
+                                  markup_coefficient: current[row.id]?.markup_coefficient || '1.5',
+                                };
+                              else delete next[row.id];
+                            });
+                            return next;
                           });
-                          return next;
-                        });
-                        invalidate();
-                      }}
-                    />
+                          invalidate();
+                        }}
+                      />
+                      <span>Выбрать все квоты</span>
+                    </label>
                   ),
                   render: (row) => (
                     <input
@@ -989,13 +1030,16 @@ function CalculationEditor({
                   render: (row) => (
                     <span className="calculation-product">
                       <strong>{nameOf(row)}</strong>
+                      <span className="calculation-manufacturer">
+                        {String(row.manufacturer || '—')}
+                      </span>
                       <small>
                         {String(row.product_group_name || '')} · {String(row.packing_name || '')} ·
                         Арт. {String(row.article || '—')}
                       </small>
                       <small>
-                        {String(row.supplier_name || '—')} · {decimal(row.unit_price)}{' '}
-                        {currencyOf(row)} за шт. · Срок: {String(row.delivery_days ?? '—')} дней
+                        {decimal(row.unit_price)} {currencyOf(row)} за шт. · Срок:{' '}
+                        {String(row.delivery_days ?? '—')} дней
                       </small>
                       {row.id === serverSelectionId && (
                         <small className="field-error">{serverError?.message}</small>
@@ -1005,8 +1049,13 @@ function CalculationEditor({
                   ),
                 },
                 {
+                  key: 'supplier_name',
+                  label: 'Поставщик',
+                  render: (row) => String(row.supplier_name || '—'),
+                },
+                {
                   key: 'quantity',
-                  label: 'Количество, шт.',
+                  label: 'Кол-во, шт.',
                   sortable: false,
                   render: (row) =>
                     selections[row.id] ? (
@@ -1063,7 +1112,7 @@ function CalculationEditor({
                 },
                 {
                   key: 'sale_unit_price',
-                  label: 'Цена продажи за шт., ₽',
+                  label: 'Цена за шт., ₽',
                   render: (row) =>
                     metric(outputLines.find((line) => line.quote_item_id === row.id)?.unit_price),
                 },
@@ -1073,11 +1122,36 @@ function CalculationEditor({
                   render: (row) =>
                     metric(outputLines.find((line) => line.quote_item_id === row.id)?.total),
                 },
+                ...(auth.can('finance.profit.read')
+                  ? [
+                      {
+                        key: 'profitability_percent',
+                        label: 'Рентабельность',
+                        render: (row: Entity) => {
+                          const line = outputLines.find((entry) => entry.quote_item_id === row.id);
+                          const detail = displayCalculationMetrics((line?.detail || {}) as Entity);
+                          return (
+                            <span className="calculation-product">
+                              <strong>{metric(detail.profitability_percent)} %</strong>
+                              <small>
+                                {metric(
+                                  line && detail.profit != null
+                                    ? Number(detail.profit) / Number(line.quantity)
+                                    : undefined,
+                                )}{' '}
+                                ₽ / шт.
+                              </small>
+                            </span>
+                          );
+                        },
+                      },
+                    ]
+                  : []),
                 ...(auth.can('finance.reward.read')
                   ? [
                       {
                         key: 'bonus',
-                        label: 'Бонус / откат',
+                        label: 'Бонус',
                         sortable: false,
                         render: (row: Entity) =>
                           selections[row.id] ? (
@@ -1687,6 +1761,8 @@ function CalculationEditor({
                       'Сбор 1 по шкале от таможенной стоимости обычных товаров + сбор 2: 73 800 ₽ только на колонки.',
                     'Ввозной НДС, ₽':
                       '(Таможенная стоимость + пошлина) × ставка НДС; сбор в базу НДС не входит.',
+                    'НДС продажи, ₽':
+                      'Из цены с НДС: сумма × ставка / (100 + ставка). Округление цены вверх входит в налоговую базу.',
                     'Таможенная стоимость, ₽': 'Закупка в рублях + международная логистика',
                     'База ввозного НДС (ННБ), ₽': 'Таможенная стоимость + пошлина',
                     'Стоимость с пошлиной и невозмещаемым НДС, ₽':
@@ -1706,8 +1782,6 @@ function CalculationEditor({
                       'Продажа без НДС − себестоимость; ввозной НДС при вычете в себестоимость не входит',
                     'Рентабельность, %': 'Валовая прибыль / продажа без НДС × 100%',
                     'Доходность затрат, %': 'Валовая прибыль / себестоимость × 100%',
-                    'НДС продажи, ₽':
-                      'Продажа без НДС × ставка НДС с учётом округления цены за штуку',
                     'Цена продажи, ₽': 'Продажа без НДС + НДС продажи',
                     'Денежные затраты на заказ, ₽':
                       'Закупка + денежные расходы + пошлина + сбор + ввозной НДС + финансирование и бонусы. Предоплата клиента из этой суммы не вычитается.',
@@ -1904,7 +1978,12 @@ export function RequestCalculations({
             key: 'version_number',
             label: 'Номер',
             render: (row) =>
-              row.version_number ? '№' + row.version_number : 'Расчёт от ' + date(row.created_at),
+              String(
+                row.selection_label ||
+                  (row.version_number
+                    ? '№' + row.version_number + ' · ' + date(row.created_at, true)
+                    : 'Расчёт от ' + date(row.created_at, true)),
+              ),
           },
           { key: 'created_at', label: 'Записан', render: (row) => date(row.created_at, true) },
           {
@@ -1939,7 +2018,13 @@ export function RequestCalculations({
       />
       {selected && (
         <Modal
-          title={'Версия расчёта №' + String(selected.version_number || '')}
+          title={
+            'Версия расчёта ' +
+            String(
+              selected.selection_label ||
+                '№' + (selected.version_number || '') + ' · ' + date(selected.created_at, true),
+            )
+          }
           wide
           className="calculation-modal"
           onClose={() => setSelected(undefined)}

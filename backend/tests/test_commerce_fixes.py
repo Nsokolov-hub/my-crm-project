@@ -212,6 +212,7 @@ def test_wave_does_not_finish_when_second_request_is_undelivered(commerce):
         f"/requests/{other['request_id']}/calculations",
         {
             **state["calculation_payload"],
+            "request_version": request.version,
             "selections": [{"quote_id": quote["id"], "quote_revision": 1, "quantity": "10", "unit": "pcs"}],
         },
     )
