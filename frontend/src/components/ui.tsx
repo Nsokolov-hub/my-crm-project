@@ -190,6 +190,7 @@ export function DataTable<T extends Entity>({
   columnFilters,
   filterKeys,
   onFilter,
+  className = '',
 }: {
   rows: T[];
   columns: Column<NoInfer<T>>[];
@@ -201,11 +202,12 @@ export function DataTable<T extends Entity>({
   columnFilters?: Record<string, string>;
   filterKeys?: string[];
   onFilter?: (key: string, value: string) => void;
+  className?: string;
 }) {
   if (rows.length === 0 && !filterKeys?.length) return empty || <Empty />;
   const linkIndex = columns.findIndex((column) => column.key !== '__selection');
   return (
-    <div className="table-scroll">
+    <div className={`table-scroll ${className}`}>
       <table>
         <thead>
           <tr>
@@ -265,7 +267,10 @@ export function DataTable<T extends Entity>({
               }
             >
               {columns.map((col, index) => (
-                <td key={col.key}>
+                <td
+                  key={col.key}
+                  data-label={typeof col.label === 'string' ? col.label : undefined}
+                >
                   {index === linkIndex && onRow ? (
                     <button className="row-link" onClick={() => onRow(row)}>
                       {col.render ? col.render(row) : display(row[col.key])}

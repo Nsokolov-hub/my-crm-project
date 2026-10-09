@@ -379,8 +379,10 @@ def test_api_wave_reprices_zero_two_three_orders_and_delivery_documents(commerce
     assert summary["status"] == "provisional"
     assert Decimal(summary["total_quantity"]) == 0
     assert summary["allocations"] == []
+    with env["sessions"]() as db:
+        request_version = db.get(Request, requests[0]).version
     preview_payload = {
-        "request_version": 1,
+        "request_version": request_version,
         "profile_id": profile.id,
         "selections": [{"quote_item_id": quotes[0]}],
         "delivery_days": 45,

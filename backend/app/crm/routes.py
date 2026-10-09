@@ -1027,6 +1027,13 @@ def edit_request(entity_id: str, body: RequestPatch, user: User = Depends(curren
     row = lock(db, Request, entity_id)
     check_version(row, body.version)
     before = serialize(row)
+    # A selected refusal reason is the customer's decision to close this
+    # request. An explicit reopening clears the previous reason instead.
+    if body.loss_reason and body.loss_reason.strip():
+        if row.commercial_stage == 'closed_lost' and 'commercial_stage' in body.model_fields_set and body.commercial_stage != 'closed_lost':
+            body.loss_reason = None
+        else:
+            body.commercial_stage = 'closed_lost'
     if 'owner_id' in body.model_fields_set and body.owner_id != row.owner_id:
         require_permission(db, user, 'requests.assign')
         active_user(db, body.owner_id)
@@ -1039,7 +1046,8 @@ def edit_request(entity_id: str, body: RequestPatch, user: User = Depends(curren
         if db.scalar(select(CommercialDocument.id).where(CommercialDocument.request_id == row.id).limit(1)):
             raise DomainError('SELLER_LOCKED', 'У заявки уже выпущены документы. Для другой организации создайте отдельную заявку.', 409, 'seller_id')
     if 'commercial_stage' in body.model_fields_set and body.commercial_stage != row.commercial_stage:
-        allowed = ['new', 'clarification', 'collecting_quotes', 'quote_given', 'calculation', 'closed_lost']
+        allowed = ['new', 'clarification', 'collecting_quotes', 'quote_given', 'calculation',
+                   'proposal_sent', 'composition_agreed', 'awaiting_payment', 'closed_lost']
         if body.commercial_stage not in allowed:
             raise DomainError('STAGE_ACTION_REQUIRED', 'Этот этап меняется при выполнении связанной бизнес-операции', 422, 'commercial_stage')
         if body.commercial_stage == 'closed_lost':
@@ -1053,13 +1061,15 @@ def edit_request(entity_id: str, body: RequestPatch, user: User = Depends(curren
                 raise DomainError('LOSS_REASON_INVALID', 'Выберите причину из справочника', 422, 'loss_reason')
 
             from app.commerce.models import Execution
-            if db.scalar(select(Execution.id).where(Execution.request_id == row.id).limit(1)):
+            if db.scalar(select(Execution.id).where(Execution.request_id == row.id,
+                                                  Execution.quantity > Execution.cancelled_quantity).limit(1)):
                 raise DomainError('ACCEPTED_COMPOSITION_EXISTS', 'Сначала оформите согласованную отмену принятого состава', 409)
             row.closed_at = utcnow()
         elif row.closed_at:
             if not body.reason:
                 raise DomainError('REOPEN_REASON_REQUIRED', 'Укажите причину повторного открытия', 422, 'reason')
             row.closed_at = None
+            row.loss_reason = None
     for k, v in body.model_dump(exclude_unset=True, exclude={'version', 'reason'}).items():
         setattr(row, k, v)
     row.version += 1
@@ -1210,6 +1220,7 @@ def quote_item_view(db: Session, row: QuoteItem, show_purchase: bool = True) -> 
         'supplier_request_id': sheet.supplier_request_id,
         'nomenclature_name': nomenclature.name,
         'article': nomenclature.article,
+        'manufacturer': nomenclature.manufacturer,
         'request_quantity': db.get(RequestItem, row.source_request_item_id).quantity if row.source_request_item_id else None,
         'packing_name': packing.display_name,
         'product_group_id': nomenclature.product_group_id,

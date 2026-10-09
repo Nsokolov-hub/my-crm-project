@@ -62,7 +62,7 @@ def test_documents_have_five_day_lifetime_short_number_and_fixed_proposal_signat
     proposal = release(crm, req, calculation)
     until = (date.today() + timedelta(days=5)).isoformat()
     assert proposal["valid_until"] == proposal["snapshot"]["valid_until"] == until
-    assert proposal["display_number"] == "1"
+    assert proposal["display_number"] == f"{req['number']}-1"
     assert proposal["snapshot"]["signature"] == PROPOSAL_SIGNATURE
     assert proposal["snapshot"]["validity_notice"] == PROPOSAL_NOTICE
     assert release(crm, req, calculation, days=2)["valid_until"] == (date.today() + timedelta(days=2)).isoformat()
@@ -71,8 +71,11 @@ def test_documents_have_five_day_lifetime_short_number_and_fixed_proposal_signat
         book = load_workbook(io.BytesIO(read_file(document.files["xlsx"])))
         values = [cell.value for row in book.active for cell in row]
         assert "Заявка" not in values
-        assert f"Коммерческое предложение №1 от {date.today():%d.%m.%Y}" in values
-        assert "Генеральный директор ________ /Гильмутдинов Т.Ф" in values
+        assert f"Коммерческое предложение №{req['number']}-1 от {date.today():%d.%m.%Y}" in values
+        assert "Генеральный директор" in values and "Гильмутдинов Т.Ф" in values
+        signature_row = next(row[0].row for row in book.active if row[0].value == "Генеральный директор")
+        assert book.active.cell(signature_row, 5).value == "Гильмутдинов Т.Ф"
+        assert book.active.cell(signature_row, 5).alignment.horizontal == "right"
         assert PROPOSAL_NOTICE in values
         assert "https://ogk-chem.ru · info@ogk-chem.ru" in values
         header = next(row[0].row for row in book.active if row[0].value == "№")
@@ -105,6 +108,7 @@ def test_delete_quote_item_preserves_saved_documents_but_prevents_new_use(crm): 
     assert cmd(crm, f"/quote-items/{row['id']}/delete", {"version": row["version"]}, key=key) == deleted
     assert crm["client"].get(f"/api/v1/requests/{req['id']}/quote-items").json()["items"] == []
     assert crm["client"].get(f"/api/v1/requests/{req['id']}/quote-sheets").json()["items"] == []
+    data["request_version"] = crm["client"].get(f"/api/v1/requests/{req['id']}").json()["version"]
     assert cmd(crm, f"/requests/{req['id']}/calculations/preview", data, status=404)["code"] == "QUOTE_ITEM_NOT_FOUND"
     assert cmd(crm, f"/requests/{req['id']}/proposals", {
         "calculation_id": calculation["id"], "valid_until": date.today().isoformat(), "terms": "По договору",

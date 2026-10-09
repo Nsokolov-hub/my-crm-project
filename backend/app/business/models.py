@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -50,6 +51,8 @@ class CalendarEntry(Entity):
     __table_args__ = (CheckConstraint("amount > 0"),)
     direction: Mapped[str] = mapped_column(String(10))
     planned_date: Mapped[date] = mapped_column(Date, index=True)
+    actual_date: Mapped[date | None] = mapped_column(Date, index=True)
+    outside_payment_days: Mapped[bool] = mapped_column(Boolean, default=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(24, 8))
     currency: Mapped[str] = mapped_column(String(3))
     purpose: Mapped[str] = mapped_column(Text)
@@ -64,6 +67,16 @@ class CalendarEntry(Entity):
     author_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     confirmed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
+
+
+class CalendarBalance(Entity):
+    __tablename__ = "calendar_balances"
+    __table_args__ = (UniqueConstraint("currency", "balance_date"),)
+    balance_date: Mapped[date] = mapped_column(Date, index=True)
+    currency: Mapped[str] = mapped_column(String(3))
+    amount: Mapped[Decimal] = mapped_column(Numeric(24, 8))
+    reason: Mapped[str] = mapped_column(Text)
+    author_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
 
 
 class SupplierOrder(Entity):

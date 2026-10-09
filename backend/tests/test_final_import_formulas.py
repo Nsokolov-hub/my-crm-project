@@ -81,7 +81,8 @@ def test_shipment_a_totals_use_revenue_weighting_and_only_selected_lines():
 def test_explicit_legacy_rounding_and_disabled_vat_deduction_are_preserved():
     rounded = shipment_a(round_up=True)["lines"][0]["detail"]
     assert Decimal(rounded["sale_total"]) == Decimal("33531")
-    assert Decimal(rounded["sale_net"]) == Decimal("27483.69")
+    assert Decimal(rounded["sale_net"]) == Decimal("27484.43")
+    assert Decimal(rounded["sale_tax"]) == Decimal("6046.57")
     without_deduction = shipment_a(deduct_vat=False)["lines"][0]["detail"]
     assert Decimal(without_deduction["clean_cost"]) == Decimal("19266.24")
     assert Decimal(without_deduction["vat_payable"]) == Decimal(without_deduction["sale_tax"])

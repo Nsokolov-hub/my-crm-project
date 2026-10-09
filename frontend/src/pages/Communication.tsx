@@ -121,8 +121,12 @@ export function FilesPanel({
   }, [upload, busy]);
   return (
     <Section
-      title="Вложения"
-      description="Прикрепите PNG или вставьте снимок через Ctrl+V / ⌘V. Файл станет доступен после проверки."
+      title={entityType === 'calendar_entry' ? 'Счёт и документы платежа' : 'Вложения'}
+      description={
+        entityType === 'calendar_entry'
+          ? 'Загрузите счёт в PDF, Excel или изображение. Файл станет доступен после проверки.'
+          : 'Прикрепите PNG или вставьте снимок через Ctrl+V / ⌘V. Файл станет доступен после проверки.'
+      }
     >
       <ErrorBox error={error || files.error} />
       {autoAttachId && <p>Снимок проверяется и будет приложен к сообщению автоматически.</p>}

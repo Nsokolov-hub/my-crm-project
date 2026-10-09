@@ -28,7 +28,6 @@ PROPOSAL_NOTICE = "Срок действия предложения 5 кален
 PROPOSAL_SIGNATURE = {"position": "Генеральный директор", "name": "Гильмутдинов Т.Ф"}
 PROPOSAL_INK = "173F35"
 PROPOSAL_LIME = "C6EA76"
-PROPOSAL_ORDER_HINT = "Подтвердите состав поставки в ответном письме. Условия заказа согласуем в договоре."
 
 
 def document_date_label(value: str) -> str:
@@ -262,11 +261,13 @@ def proposal_pdf(snapshot: dict, font_name: str, bold_font: str) -> bytes:
         ("RIGHTPADDING", (1, 0), (1, 0), 15), ("TOPPADDING", (0, 0), (-1, -1), 13),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 13),
     ]))
-    closing = [decision, Spacer(1, 20), p("Оформление заказа", name), Spacer(1, 5),
-               p(PROPOSAL_ORDER_HINT, body), Spacer(1, 19),
-               p(snapshot.get("validity_notice") or PROPOSAL_NOTICE, small), Spacer(1, 16),
-               p(f"{PROPOSAL_SIGNATURE['position']} ________ /{PROPOSAL_SIGNATURE['name']}", body),
-               Spacer(1, 10), p("М.П.", small)]
+    signature = Table([[p(PROPOSAL_SIGNATURE['position']), p(PROPOSAL_SIGNATURE['name'], right)]],
+                      colWidths=[width * .6, width * .4])
+    signature.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0),
+                                   ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                                   ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    closing = [decision, Spacer(1, 19),
+               p(snapshot.get("validity_notice") or PROPOSAL_NOTICE, small), Spacer(1, 20), signature]
     content.append(KeepTogether(closing))
 
     def page_brand(canvas, document):
@@ -431,15 +432,20 @@ def document_files(snapshot: dict) -> dict:
     signature_start = sheet.max_row + 3
     if is_proposal:
         for offset, value in enumerate((
-            f"Оформление заказа: {PROPOSAL_ORDER_HINT}",
             snapshot.get("validity_notice") or PROPOSAL_NOTICE,
-            f"{signature['position']} ________ /{signature['name']}",
-            "М.П.",
+            signature["position"],
             f"{snapshot.get('website') or 'https://ogk-chem.ru'} · {snapshot.get('contact_email') or 'info@ogk-chem.ru'}",
         )):
             index = signature_start + offset
             sheet.cell(index, 1, value)
-            sheet.merge_cells(start_row=index, start_column=1, end_row=index, end_column=len(headers))
+            if offset == 1:
+                sheet.merge_cells(start_row=index, start_column=1, end_row=index, end_column=4)
+                sheet.cell(index, 5, signature["name"])
+                sheet.merge_cells(start_row=index, start_column=5, end_row=index, end_column=6)
+                sheet.cell(index, 5).alignment = Alignment(horizontal="right", vertical="center")
+                sheet.cell(index, 5).font = Font(name="Arial", size=10, color=PROPOSAL_INK)
+            else:
+                sheet.merge_cells(start_row=index, start_column=1, end_row=index, end_column=len(headers))
             sheet.cell(index, 1).alignment = Alignment(wrap_text=True, vertical="center")
             sheet.cell(index, 1).font = Font(name="Arial", size=10, color=PROPOSAL_INK)
             sheet.row_dimensions[index].height = 32

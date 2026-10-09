@@ -267,6 +267,7 @@ def test_domestic_calculation_order_export_and_calendar_source(crm):  # noqa: F8
             "amount": order["total"],
             "purpose": order["number"],
             "supplier_order_id": order["id"],
+            "outside_payment_days": True,
         },
     )
     assert expense["status"] == "draft"
@@ -338,11 +339,6 @@ def test_calendar_review_currency_summary_recurrence_and_reminders(crm):  # noqa
     row = cmd(crm, f"/payment-calendar/{row['id']}/submit", {"version": row["version"]})
     login(crm)
     review = crm["client"].get("/api/v1/workflow-approvals").json()["items"][0]
-    cmd(
-        crm,
-        f"/workflow-approvals/{review['id']}/decision",
-        {"version": review["version"], "decision": "approved", "reason": "Оплата согласована"},
-    )
     row = crm["client"].get("/api/v1/payment-calendar").json()["items"][0]
     with crm["sessions"].begin() as db:
         reminders(db, datetime(2026, 2, 1, 10, tzinfo=timezone.utc))
@@ -351,7 +347,11 @@ def test_calendar_review_currency_summary_recurrence_and_reminders(crm):  # noqa
             len(db.scalars(select(Notification).where(Notification.entity_type == "calendar_entry")).all())
             == 2
         )
-    row = cmd(crm, f"/payment-calendar/{row['id']}/confirm", {"version": row["version"]})
+    cmd(crm, f"/workflow-approvals/{review['id']}/decision", {
+        "version": review["version"], "decision": "approved", "reason": "Оплата согласована", "actual_date": "2026-01-31",
+    })
+    row = next(item for item in crm["client"].get("/api/v1/payment-calendar").json()["items"] if item["id"] == row["id"])
+    assert row["status"] == "confirmed"
     result = crm["client"].get("/api/v1/payment-calendar").json()
     assert result["summary"][0]["income"] == "100.25000000"
     assert result["summary"][0]["prepayment_count"] == 1
@@ -670,7 +670,7 @@ def test_calendar_is_available_without_task_permissions_and_cannot_confirm(crm):
     row = cmd(
         crm,
         "/payment-calendar",
-        {"direction": "expense", "planned_date": "2026-10-05", "amount": "10", "purpose": "Интернет"},
+        {"direction": "expense", "planned_date": "2026-10-06", "amount": "10", "purpose": "Интернет"},
     )
     assert crm["client"].get("/api/v1/payment-calendar").json()["items"][0]["id"] == row["id"]
     row = cmd(
@@ -685,6 +685,11 @@ def test_calendar_is_available_without_task_permissions_and_cannot_confirm(crm):
         },
         method="patch",
     )
+    from app.communication.models import FileRecord
+    with crm["sessions"].begin() as db:
+        db.add(FileRecord(name="Счёт.pdf", media_type="application/pdf", size=10, sha256="a"*64,
+                          storage_key="test-calendar-invoice", author_id=crm["manager"].id,
+                          status="clean", classification="general", calendar_entry_id=row["id"]))
     cmd(crm, f"/payment-calendar/{row['id']}/submit", {"version": row["version"]})
     assert cmd(crm, f"/payment-calendar/{row['id']}/confirm", {"version": row["version"] + 1}, status=403)[
         "code"

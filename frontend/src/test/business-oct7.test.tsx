@@ -118,7 +118,14 @@ it('selects a calculation by its number and defaults proposal validity to five c
   vi.mocked(api).mockImplementation(async (path) =>
     path.includes('/calculations')
       ? {
-          items: [{ id: 'calc', version_number: 14, reason: 'Длинное описание источника расчёта' }],
+          items: [
+            {
+              id: 'calc',
+              version_number: 14,
+              selection_label: '№14 · 09.10.2026 14:54',
+              reason: 'Длинное описание источника расчёта',
+            },
+          ],
         }
       : { items: [] },
   );
@@ -137,7 +144,7 @@ it('selects a calculation by its number and defaults proposal validity to five c
   expect(expiry).toHaveValue(iso(today));
   expect(expiry).toHaveAttribute('max', iso(today));
   fireEvent.focus(screen.getByLabelText(/^Расчёт/));
-  expect(await screen.findByRole('option', { name: '14' })).toBeVisible();
+  expect(await screen.findByRole('option', { name: '№14 · 09.10.2026 14:54' })).toBeVisible();
   expect(screen.queryByText('Длинное описание источника расчёта')).not.toBeInTheDocument();
 });
 
@@ -171,7 +178,7 @@ it('shows supplier and delivery days next to saved calculation positions', async
       <RequestCalculations request={{ id: 'request', number: '22' }} />
     </MemoryRouter>,
   );
-  fireEvent.click(await screen.findByText('№14'));
+  fireEvent.click(await screen.findByText(/^№14/));
   expect(screen.getByText('Aozeal')).toBeVisible();
   expect(screen.getByText('Срок поставки, дней')).toBeVisible();
   expect(screen.getByText('35')).toBeVisible();

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 @dataclass
@@ -42,6 +42,17 @@ class CalendarSetting(BaseModel):
     )
 
 
+class PaymentDaysSetting(BaseModel):
+    weekdays: list[int] = Field(default_factory=lambda: [1, 3], min_length=1, max_length=7)
+
+    @field_validator("weekdays")
+    @classmethod
+    def valid_days(cls, value):
+        if len(set(value)) != len(value) or any(day < 0 or day > 6 for day in value):
+            raise ValueError("Укажите разные дни недели от 0 до 6")
+        return sorted(value)
+
+
 class TimezoneSetting(BaseModel):
     timezone: str = Field(default="UTC", description="Базовый часовой пояс организации")
 
@@ -72,6 +83,7 @@ class CommercialRulesSetting(BaseModel):
 
 # Реестр всех настроек (ключ -> Метаданные)
 SETTING_META: dict[str, SettingMeta] = {
+    "payment_days": SettingMeta(PaymentDaysSetting, "settings.system.write", "Платёжный календарь", "Платёжные дни для расходов", True),
     "call_results": SettingMeta(CallResultSetting, "settings.dictionaries.write", "UI: Форма звонка", "Результаты звонка ограничены фиксированным списком", False),
     "loss_reasons": SettingMeta(LossReasonSetting, "settings.dictionaries.write", "UI: Закрытие сделки", "Список причин отказа", True),
     "chemical_categories": SettingMeta(ChemicalCategorySetting, "settings.dictionaries.write", "UI: Каталог", "Химические категории", True),

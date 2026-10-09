@@ -507,9 +507,25 @@ export function Waves() {
               columns={[
                 { key: 'product_group_name', label: 'Товарная группа' },
                 {
-                  key: 'target_quantity',
+                  key: 'remaining_quantity',
                   label: 'План, шт.',
+                  render: (row) =>
+                    decimal(
+                      row.remaining_quantity === undefined
+                        ? row.target_quantity
+                        : row.remaining_quantity,
+                    ),
+                },
+                {
+                  key: 'target_quantity',
+                  label: 'Первоначальный план, шт.',
                   render: (row) => decimal(row.target_quantity),
+                },
+                {
+                  key: 'filled_quantity',
+                  label: 'В закупках, шт.',
+                  render: (row) =>
+                    decimal(row.filled_quantity === undefined ? 0 : row.filled_quantity),
                 },
                 {
                   key: 'unit_price_rub',

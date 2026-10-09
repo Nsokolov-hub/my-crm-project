@@ -74,7 +74,8 @@ def test_quantity_is_independent_of_quote_and_initial_demand(crm, quantity):  # 
         invoice_values = [cell.value for row in invoice_book.active for cell in row]
         assert "Банк A" not in proposal_values
         assert "Банк A" in invoice_values
-        assert "Генеральный директор ________ /Гильмутдинов Т.Ф" in proposal_values and "Директор" in invoice_values
+        assert "Генеральный директор" in proposal_values and "Гильмутдинов Т.Ф" in proposal_values
+        assert "Директор" in invoice_values
         assert "Наименование" in proposal_values and "Цена за единицу с НДС" in proposal_values
         assert "Без налога" not in proposal_values
     assert crm["client"].get("/api/v1/supplier-orders/positions").json()["items"] == []
@@ -123,6 +124,9 @@ def test_forecast_replaces_real_orders_and_calculations_do_not_fill_wave(crm):  
     assert len(actual["allocations"]) == 1
     assert Decimal(actual["financial_summary"]["real_quantity"]) == 2
     assert Decimal(actual["financial_summary"]["forecast_quantity"]) == 8
+    assert Decimal(actual["forecasts"][0]["remaining_quantity"]) == 8
+    assert Decimal(actual["forecasts"][0]["filled_quantity"]) == 2
+    assert Decimal(actual["forecasts"][0]["target_quantity"]) == 10
     assert actual["financial_summary"]["actual"]["status"] == "current"
     # A different customer's current selection consumes only its scenario forecast.
     peer = request(crm)
