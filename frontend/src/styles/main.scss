@@ -2436,3 +2436,251 @@ tr.clickable-row {
     padding: 12px;
   }
 }
+
+.calendar-policy,
+.calendar-note {
+  padding: 12px 16px;
+  font-size: 12px;
+  color: #687283;
+  line-height: 1.6;
+}
+
+.calendar-period,
+.calendar-list-filters {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 16px;
+}
+
+.calendar-period label,
+.calendar-list-filters label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  min-width: 140px;
+}
+
+.calendar-period input,
+.calendar-period select,
+.calendar-list-filters input,
+.calendar-list-filters select {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid #e0dbea;
+  border-radius: 6px;
+  padding: 7px 10px;
+  background: white;
+}
+
+.calendar-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  padding: 16px;
+}
+
+.calendar-metrics > div {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid #e9e2f4;
+  border-radius: 8px;
+  background: #faf9fd;
+}
+
+.calendar-metrics span {
+  font-size: 11px;
+  color: #687283;
+}
+
+.calendar-metrics strong {
+  font-size: 21px;
+  overflow-wrap: anywhere;
+}
+
+.calendar-metrics .income,
+.calendar-legend .income,
+.calendar-row-confirmed .income {
+  color: #27754c;
+}
+
+.calendar-metrics .expense,
+.calendar-legend .expense,
+.calendar-row-confirmed .expense {
+  color: #ae4053;
+}
+
+.calendar-charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  padding: 16px;
+}
+
+.calendar-charts.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.calendar-charts figure {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #e9e2f4;
+  border-radius: 8px;
+}
+
+.calendar-charts figcaption {
+  font-weight: 650;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.calendar-charts svg {
+  width: 100%;
+  min-height: 180px;
+  overflow: visible;
+}
+
+.calendar-charts text {
+  font-size: 12px;
+  fill: #687283;
+}
+
+.calendar-chart-grid,
+.calendar-chart-axis {
+  stroke: #e9eaf0;
+  stroke-width: 1px;
+}
+
+.calendar-chart-income {
+  fill: #34885c;
+}
+
+.calendar-chart-expense {
+  fill: #bf5668;
+}
+
+.calendar-chart-balance {
+  fill: none;
+  stroke: #7960d6;
+  stroke-width: 2.5px;
+}
+
+.calendar-chart-dot {
+  fill: #7960d6;
+}
+
+.calendar-legend {
+  display: flex;
+  gap: 20px;
+  font-size: 12px;
+}
+
+.calendar-empty-chart {
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+  color: #687283;
+  font-size: 13px;
+}
+
+.calendar-row-rejected td {
+  background: #fff1f3;
+  color: #a4394d;
+}
+
+.calendar-row-pending td {
+  background: #fffaf0;
+}
+
+.calendar-table table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.calendar-table th,
+.calendar-table td,
+.calendar-table .row-link {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.calendar-table th,
+.calendar-table td {
+  padding: 12px 8px;
+}
+
+.calendar-table:not(.detailed) th:first-child {
+  width: 20%;
+}
+
+.calendar-table:not(.detailed) th:nth-child(2) {
+  width: 21%;
+}
+
+.calendar-table:not(.detailed) th:nth-child(3) {
+  width: 15%;
+}
+
+.calendar-table:not(.detailed) th:nth-child(4),
+.calendar-table:not(.detailed) th:nth-child(5),
+.calendar-table:not(.detailed) th:nth-child(6) {
+  width: 12%;
+}
+
+.calendar-table:not(.detailed) th:nth-child(7) {
+  width: 8%;
+}
+
+@media (width <= 1200px) {
+  .calendar-charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (width <= 1000px) {
+  .calendar-table table,
+  .calendar-table tbody {
+    display: block;
+  }
+
+  .calendar-table thead {
+    display: none;
+  }
+
+  .calendar-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 12px;
+    border: 1px solid #e9e2f4;
+    border-radius: 8px;
+  }
+
+  .calendar-table tbody td {
+    display: block;
+    min-width: 0;
+    border: 0;
+  }
+
+  .calendar-table tbody td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    font-size: 11px;
+    color: #687283;
+  }
+
+  .calendar-table tbody td:nth-child(1),
+  .calendar-table tbody td:nth-child(2) {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (width <= 600px) {
+  .calendar-period label,
+  .calendar-list-filters label {
+    width: 100%;
+  }
+}

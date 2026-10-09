@@ -89,7 +89,7 @@ export const requestEditFields: Field[] = [
     label: 'Причина закрытия без продажи',
     type: 'select',
     source: '/dictionaries/loss_reasons',
-    help: 'Выберите причину, если закрываете заявку без продажи.',
+    help: 'Выбор причины автоматически закрывает заявку без продажи.',
   },
   { name: 'reason', label: 'Причина изменения', type: 'textarea', required: true },
 ];

@@ -1027,6 +1027,13 @@ def edit_request(entity_id: str, body: RequestPatch, user: User = Depends(curren
     row = lock(db, Request, entity_id)
     check_version(row, body.version)
     before = serialize(row)
+    # A selected refusal reason is the customer's decision to close this
+    # request. An explicit reopening clears the previous reason instead.
+    if body.loss_reason and body.loss_reason.strip():
+        if row.commercial_stage == 'closed_lost' and 'commercial_stage' in body.model_fields_set and body.commercial_stage != 'closed_lost':
+            body.loss_reason = None
+        else:
+            body.commercial_stage = 'closed_lost'
     if 'owner_id' in body.model_fields_set and body.owner_id != row.owner_id:
         require_permission(db, user, 'requests.assign')
         active_user(db, body.owner_id)
@@ -1054,13 +1061,15 @@ def edit_request(entity_id: str, body: RequestPatch, user: User = Depends(curren
                 raise DomainError('LOSS_REASON_INVALID', 'Выберите причину из справочника', 422, 'loss_reason')
 
             from app.commerce.models import Execution
-            if db.scalar(select(Execution.id).where(Execution.request_id == row.id).limit(1)):
+            if db.scalar(select(Execution.id).where(Execution.request_id == row.id,
+                                                  Execution.quantity > Execution.cancelled_quantity).limit(1)):
                 raise DomainError('ACCEPTED_COMPOSITION_EXISTS', 'Сначала оформите согласованную отмену принятого состава', 409)
             row.closed_at = utcnow()
         elif row.closed_at:
             if not body.reason:
                 raise DomainError('REOPEN_REASON_REQUIRED', 'Укажите причину повторного открытия', 422, 'reason')
             row.closed_at = None
+            row.loss_reason = None
     for k, v in body.model_dump(exclude_unset=True, exclude={'version', 'reason'}).items():
         setattr(row, k, v)
     row.version += 1

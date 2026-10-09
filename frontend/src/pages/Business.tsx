@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../app/Auth';
 import { RecordForm, DirectorySelect } from '../components/Form';
 import { Collection } from '../components/Collection';
@@ -16,380 +16,11 @@ import {
 import { download } from '../lib/api';
 import { useApi, useCommand } from '../lib/hooks';
 import { date, decimal, today } from '../lib/format';
+import { FilesPanel } from './Communication';
 import type { Entity, Field, Page } from '../lib/types';
 
-const calendarFields: Field[] = [
-  {
-    name: 'direction',
-    label: 'Тип платежа',
-    type: 'select',
-    required: true,
-    options: [
-      { value: 'income', label: 'Приход' },
-      { value: 'expense', label: 'Расход' },
-    ],
-  },
-  { name: 'planned_date', label: 'Плановая дата', type: 'date', required: true },
-  { name: 'amount', label: 'Сумма', type: 'decimal', required: true },
-  { name: 'currency', label: 'Валюта', required: true },
-  { name: 'purpose', label: 'Назначение платежа', type: 'textarea', required: true },
-  { name: 'counterparty_id', label: 'Контрагент', type: 'select', source: '/counterparties' },
-  { name: 'responsible_id', label: 'Ответственный', type: 'select', source: '/users' },
-  {
-    name: 'payment_kind',
-    label: 'Условия клиента',
-    type: 'select',
-    options: [
-      { value: 'prepayment', label: 'Предоплата' },
-      { value: 'deferred', label: 'Отсрочка' },
-      { value: 'other', label: 'Прочее' },
-    ],
-  },
-  {
-    name: 'recurrence',
-    label: 'Повторение',
-    type: 'select',
-    options: [
-      { value: 'none', label: 'Не повторять' },
-      { value: 'weekly', label: 'Еженедельно' },
-      { value: 'monthly', label: 'Ежемесячно' },
-    ],
-  },
-];
-type CalendarPage = Page & { summary: Entity[]; daily: Entity[]; parties: Entity[] };
-
-export function PaymentCalendar() {
-  const auth = useAuth();
-  const [params] = useSearchParams();
-  const [from, setFrom] = useState(today().slice(0, 8) + '01');
-  const [to, setTo] = useState('');
-  const [status, setStatus] = useState('');
-  const [direction, setDirection] = useState('');
-  const [kind, setKind] = useState('');
-  const [currency, setCurrency] = useState('');
-  const [counterparty, setCounterparty] = useState('');
-  const [detailed, setDetailed] = useState(false);
-  const [creating, setCreating] = useState(params.get('create') === '1');
-  const [editing, setEditing] = useState(false);
-  const [selected, setSelected] = useState<Entity>();
-  const [page, setPage] = useState(1);
-  const [error, setError] = useState<unknown>();
-  const command = useCommand();
-  const query = new URLSearchParams({ page: String(page), page_size: '50' });
-  Object.entries({
-    from_date: from,
-    to_date: to,
-    status,
-    direction,
-    payment_kind: kind,
-    currency,
-    counterparty_id: counterparty,
-  }).forEach(([key, value]) => {
-    if (value) query.set(key, value);
-  });
-  const list = useApi<CalendarPage>('/payment-calendar?' + query);
-  async function action(row: Entity, name: string) {
-    try {
-      await command.run(
-        `/payment-calendar/${row.id}/${name}`,
-        { version: row.version },
-        'POST',
-        true,
-      );
-      setSelected(undefined);
-      list.refresh();
-    } catch {
-      /* displayed below */
-    }
-  }
-  const initial: Record<string, unknown> = {
-    direction: params.get('direction') || 'income',
-    planned_date: params.get('planned_date') || today(),
-    amount: params.get('amount') || '',
-    currency: params.get('currency') || 'RUB',
-    purpose: params.get('purpose') || '',
-    counterparty_id: params.get('counterparty_id'),
-    payment_kind: params.get('payment_kind') || 'other',
-    recurrence: 'none',
-  };
-  const sources = Object.fromEntries(
-    ['request_id', 'document_id', 'supplier_order_id'].flatMap((key) =>
-      params.get(key) ? [[key, params.get(key)]] : [],
-    ),
-  );
-  return (
-    <>
-      <PageHeading
-        title="Платёжный календарь"
-        description="Поступления и расходы по датам. Платежи проводит руководитель после согласования."
-        actions={<Button onClick={() => setCreating(true)}>Создать платёж</Button>}
-      />
-      <ErrorBox error={error || list.error || command.error} />
-      <div className="form-grid business-filters">
-        <label>
-          С даты
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => {
-              setFrom(e.target.value);
-              setPage(1);
-            }}
-          />
-        </label>
-        <label>
-          По дату
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => {
-              setTo(e.target.value);
-              setPage(1);
-            }}
-          />
-        </label>
-        <label>
-          Тип
-          <select
-            value={direction}
-            onChange={(e) => {
-              setDirection(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">Все</option>
-            <option value="income">Приход</option>
-            <option value="expense">Расход</option>
-          </select>
-        </label>
-        <label>
-          Состояние
-          <select
-            value={status}
-            onChange={(e) => {
-              setStatus(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">Все</option>
-            {['draft', 'pending', 'approved', 'confirmed', 'rejected'].map((value) => (
-              <option key={value} value={value}>
-                {
-                  (
-                    {
-                      draft: 'Черновик',
-                      pending: 'На согласовании',
-                      approved: 'Согласован',
-                      confirmed: 'Подтверждён',
-                      rejected: 'Отклонён',
-                    } as Record<string, string>
-                  )[value]
-                }
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Валюта
-          <input
-            value={currency}
-            placeholder="Все валюты"
-            onChange={(e) => {
-              setCurrency(e.target.value.toUpperCase());
-              setPage(1);
-            }}
-          />
-        </label>
-        <label>
-          Оплата клиента
-          <select value={kind} onChange={(e) => setKind(e.target.value)}>
-            <option value="">Все</option>
-            <option value="prepayment">Предоплата</option>
-            <option value="deferred">Отсрочка</option>
-          </select>
-        </label>
-        <label>
-          Контрагент
-          <DirectorySelect
-            field={{ name: 'calendar_party', label: 'Контрагент', source: '/counterparties' }}
-            value={counterparty}
-            onChange={(v) => {
-              setCounterparty(String(v));
-              setPage(1);
-            }}
-          />
-        </label>
-        <Button variant="secondary" onClick={() => setDetailed((v) => !v)}>
-          {detailed ? 'Краткий вид' : 'Детальный вид'}
-        </Button>
-      </div>
-      {list.data?.summary.map((row) => (
-        <Section key={String(row.currency)} title={`Оборот — ${row.currency}`}>
-          <DetailPairs
-            values={{
-              Приход: decimal(row.income),
-              Расход: decimal(row.expense),
-              Сальдо: decimal(row.balance),
-              'Поступлений с предоплатой': row.prepayment_count,
-              'Поступлений с отсрочкой': row.deferred_count,
-            }}
-          />
-          <p className="muted">
-            Итоги учитывают платежи на согласовании, согласованные и подтверждённые. Черновики и
-            отклонённые платежи исключены.
-          </p>
-          <div
-            className="cash-chart"
-            role="img"
-            aria-label={`Приход и расход по дням, ${row.currency}`}
-          >
-            {list.data?.daily
-              .filter((day) => day.currency === row.currency)
-              .map((day) => {
-                const maximum = Math.max(
-                  1,
-                  ...list
-                    .data!.daily.filter((d) => d.currency === row.currency)
-                    .flatMap((d) => [Number(d.income), Number(d.expense)]),
-                );
-                return (
-                  <div
-                    className="cash-chart-day"
-                    key={String(day.date)}
-                    title={`${date(day.date)}: приход ${decimal(day.income)}, расход ${decimal(day.expense)}`}
-                  >
-                    <div className="cash-chart-bars">
-                      <i style={{ height: `${(Number(day.income) / maximum) * 100}%` }} />
-                      <i style={{ height: `${(Number(day.expense) / maximum) * 100}%` }} />
-                    </div>
-                    <small>{date(day.date)}</small>
-                  </div>
-                );
-              })}
-          </div>
-          <p>Зелёный — приход, фиолетовый — расход.</p>
-        </Section>
-      ))}
-      <Section title="План и подтверждённые платежи">
-        <DataTable
-          rows={list.data?.items || []}
-          onRow={setSelected}
-          columns={[
-            { key: 'planned_date', label: 'Дата', render: (r) => date(r.planned_date) },
-            {
-              key: 'direction',
-              label: 'Тип',
-              render: (r) => (r.direction === 'income' ? 'Приход' : 'Расход'),
-            },
-            { key: 'purpose', label: 'Назначение' },
-            { key: 'amount', label: 'Сумма', render: (r) => `${decimal(r.amount)} ${r.currency}` },
-            { key: 'status', label: 'Состояние', render: (r) => <Badge value={r.status} /> },
-            ...(detailed
-              ? [
-                  { key: 'counterparty_name', label: 'Контрагент' },
-                  { key: 'payment_kind', label: 'Условия' },
-                  { key: 'recurrence', label: 'Повторение' },
-                ]
-              : []),
-          ]}
-        />
-        <div className="inline-actions">
-          <Button variant="secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-            Назад
-          </Button>
-          <span>Страница {page}</span>
-          <Button
-            variant="secondary"
-            disabled={page * 50 >= (list.data?.total || 0)}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Далее
-          </Button>
-        </div>
-      </Section>
-      {detailed && (
-        <Section title="Доля контрагентов в закупках и продажах">
-          <DataTable<Entity>
-            rows={(list.data?.parties || []).map((r, i) => ({ ...r, id: String(i) }))}
-            columns={[
-              { key: 'counterparty_name', label: 'Контрагент' },
-              { key: 'direction', label: 'Приход / расход' },
-              { key: 'currency', label: 'Валюта' },
-              { key: 'amount', label: 'Оборот', render: (r) => decimal(r.amount) },
-              {
-                key: 'share_percent',
-                label: 'Доля, %',
-                render: (r) => Number(r.share_percent).toFixed(2),
-              },
-            ]}
-          />
-        </Section>
-      )}
-      {creating && (
-        <RecordForm
-          title="Новый платёж"
-          endpoint="/payment-calendar"
-          fields={calendarFields}
-          initial={initial as Entity}
-          extra={sources}
-          command
-          onClose={() => setCreating(false)}
-          onSuccess={() => {
-            setCreating(false);
-            list.refresh();
-          }}
-        />
-      )}
-      {selected && editing && (
-        <RecordForm
-          title="Изменить платёж"
-          endpoint={`/payment-calendar/${selected.id}`}
-          fields={calendarFields}
-          initial={selected}
-          extra={{ version: selected.version }}
-          method="PATCH"
-          command
-          onClose={() => setEditing(false)}
-          onSuccess={() => {
-            setSelected(undefined);
-            setEditing(false);
-            list.refresh();
-          }}
-        />
-      )}
-      {selected && !editing && (
-        <Modal title={String(selected.purpose)} onClose={() => setSelected(undefined)}>
-          <div className="form-body">
-            <DetailPairs
-              values={{
-                Дата: date(selected.planned_date),
-                Сумма: `${decimal(selected.amount)} ${selected.currency}`,
-                Контрагент: selected.counterparty_name,
-                Статус: selected.status,
-              }}
-            />
-            {['draft', 'rejected'].includes(String(selected.status)) && (
-              <Button variant="secondary" onClick={() => setEditing(true)}>
-                Изменить
-              </Button>
-            )}
-            {['draft', 'rejected'].includes(String(selected.status)) && (
-              <Button busy={command.busy} onClick={() => void action(selected, 'submit')}>
-                Направить руководителю
-              </Button>
-            )}
-            {selected.status === 'approved' && auth.can('approvals.decide') && (
-              <Button busy={command.busy} onClick={() => void action(selected, 'confirm')}>
-                Подтвердить платёж
-              </Button>
-            )}
-            <ErrorBox error={command.error} retry={() => setError(undefined)} />
-          </div>
-        </Modal>
-      )}
-    </>
-  );
-}
+export { PaymentCalendar } from './PaymentCalendar';
+import { paymentConfirmationFields } from './PaymentCalendar';
 
 export function SupplierOrders() {
   const [tab, setTab] = useState('positions');
@@ -753,8 +384,12 @@ export function WorkflowApprovals() {
                 values={{
                   Сумма: `${decimal((selected.snapshot as Entity)?.amount)} ${(selected.snapshot as Entity)?.currency}`,
                   Назначение: (selected.snapshot as Entity)?.purpose,
+                  'Плановая дата': date((selected.snapshot as Entity)?.planned_date),
                 }}
               />
+            )}
+            {selected.kind === 'calendar' && (
+              <FilesPanel entityType="calendar_entry" entityId={String(selected.entity_id)} />
             )}
             {selected.kind === 'task' && (
               <p>Результат: {String((selected.snapshot as Entity)?.result || '—')}</p>
@@ -771,6 +406,15 @@ export function WorkflowApprovals() {
           endpoint={`/workflow-approvals/${selected.id}/decision`}
           command
           extra={{ version: selected.version }}
+          initial={
+            selected.kind === 'calendar'
+              ? {
+                  id: 'calendar-decision',
+                  actual_date: today(),
+                  outside_payment_days: (selected.snapshot as Entity)?.outside_payment_days,
+                }
+              : undefined
+          }
           fields={[
             {
               name: 'decision',
@@ -778,10 +422,14 @@ export function WorkflowApprovals() {
               type: 'select',
               required: true,
               options: [
-                { value: 'approved', label: 'Согласовать' },
+                {
+                  value: 'approved',
+                  label: selected.kind === 'calendar' ? 'Подтвердить оплату' : 'Согласовать',
+                },
                 { value: 'rejected', label: 'Отказать' },
               ],
             },
+            ...(selected.kind === 'calendar' ? paymentConfirmationFields : []),
             { name: 'reason', label: 'Комментарий', type: 'textarea', required: true },
           ]}
           onClose={() => setDeciding(false)}
