@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every pull request is checked, including stacked ones whose base is another branch.
   pull_request:
-    branches: [main]
 
 jobs:
   backend-sqlite:
@@ -17,9 +17,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r backend/requirements.lock
       - name: Audit dependencies
-        run: pip-audit -r backend/requirements.lock || true
+        run: pip-audit -r backend/requirements.lock
       - name: Check code style
         run: ruff check backend
+      - name: Check that docs/openapi.json matches the code
+        run: python3 scripts/export_openapi.py --check
       - name: Run backend SQLite tests
         env:
           DATABASE_URL: sqlite://
@@ -35,7 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:15
+        # Same major version as docker-compose.yml.
+        image: postgres:17.9-alpine
         env:
           POSTGRES_USER: crm_test
           POSTGRES_PASSWORD: crm_test_password
@@ -47,6 +50,9 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+    env:
+      DATABASE_URL: postgresql+psycopg://crm_test:crm_test_password@localhost:5432/crm_test_db
+      PYTHONPATH: backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -55,17 +61,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r backend/requirements.lock
       - name: Run Alembic migrations
-        env:
-          DATABASE_URL: postgresql+psycopg://crm_test:crm_test_password@localhost:5432/crm_test_db
-        run: |
-          PYTHONPATH=backend alembic -c backend/alembic.ini upgrade head
+        run: alembic -c backend/alembic.ini upgrade head
+      - name: Check that models and migrations agree
+        run: alembic -c backend/alembic.ini check
       - name: Run backend PostgreSQL tests
-        env:
-          DATABASE_URL: postgresql+psycopg://crm_test:crm_test_password@localhost:5432/crm_test_db
-        run: |
-          # The step must fail if postgres tests are not found or skipped entirely.
-          # pytest returns 5 if no tests collected, but here we expect tests to run.
-          PYTHONPATH=backend pytest backend/tests -m 'postgres' -q -p no:cacheprovider --junitxml=backend-postgres-report.xml
+        # pytest exits with 5 when nothing is collected, so a missing postgres marker fails the job.
+        run: pytest backend/tests -m 'postgres' -q -p no:cacheprovider --junitxml=backend-postgres-report.xml
       - name: Upload Test Report
         uses: actions/upload-artifact@v4
         if: always()
@@ -75,36 +76,35 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # Same major version as frontend/Dockerfile.
+          node-version: '24'
       - name: Install pnpm
         run: npm install -g pnpm@11.19.0
       - name: Install dependencies
-        working-directory: frontend
         run: pnpm install --frozen-lockfile
-      - name: Audit dependencies
-        working-directory: frontend
+      - name: Audit production dependencies
+        run: pnpm audit --prod
+      - name: Audit development tooling (informational)
         run: pnpm audit || true
       - name: Check TypeScript
-        working-directory: frontend
         run: pnpm run typecheck
       - name: Check ESLint
-        working-directory: frontend
         run: pnpm exec eslint src
       - name: Check Stylelint
-        working-directory: frontend
         run: pnpm exec stylelint "src/**/*.scss"
       - name: Run frontend tests
-        working-directory: frontend
         env:
           TZ: Europe/Moscow
         run: pnpm exec vitest run --reporter=junit --outputFile=frontend-report.xml
       - name: Build frontend
-        working-directory: frontend
         run: pnpm run build
       - name: Upload Test Report
         uses: actions/upload-artifact@v4
@@ -117,3 +117,16 @@ jobs:
         with:
           name: frontend-dist
           path: frontend/dist/
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t reaktiv-crm-backend:ci backend
+      - name: Smoke-test backend image
+        run: docker run --rm -e DATABASE_URL=sqlite:// reaktiv-crm-backend:ci python -c "import app.main, app.communication.worker"
+      - name: Build web image
+        run: docker build -t reaktiv-crm-web:ci frontend
+      - name: Validate nginx configuration
+        run: docker run --rm --add-host api:127.0.0.1 --entrypoint nginx reaktiv-crm-web:ci -t
