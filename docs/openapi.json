@@ -737,79 +737,6 @@
         }
       }
     },
-    "/api/v1/admin/audit": {
-      "get": {
-        "tags": [
-          "Доступ и настройки"
-        ],
-        "summary": "List Audit",
-        "operationId": "list_audit_api_v1_admin_audit_get",
-        "parameters": [
-          {
-            "name": "entity_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Entity Id"
-            }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 1,
-              "title": "Page"
-            }
-          },
-          {
-            "name": "page_size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 25,
-              "title": "Page Size"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response List Audit Api V1 Admin Audit Get"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Сеанс отсутствует или отозван"
-          },
-          "403": {
-            "description": "Недостаточно прав"
-          },
-          "409": {
-            "description": "Конфликт версии или повторяемости"
-          },
-          "422": {
-            "description": "Ошибка предметной валидации"
-          }
-        }
-      }
-    },
     "/api/v1/setup/wizard": {
       "post": {
         "tags": [
@@ -1003,6 +930,79 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Retry Job Api V1 Admin Jobs  Entity Id  Retry Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/audit": {
+      "get": {
+        "tags": [
+          "Доступ и настройки"
+        ],
+        "summary": "List Audit",
+        "operationId": "list_audit_api_v1_admin_audit_get",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entity Id"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 25,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Audit Api V1 Admin Audit Get"
                 }
               }
             }
@@ -4465,6 +4465,110 @@
                   "additionalProperties": true,
                   "title": "Response Quote Sheet Detail Api V1 Quote Sheets  Entity Id  Get"
                 }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/quote-items/{entity_id}/delete": {
+      "post": {
+        "tags": [
+          "CRM"
+        ],
+        "summary": "Delete Quote Item",
+        "operationId": "delete_quote_item_api_v1_quote_items__entity_id__delete_post",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/quote-sheets/{entity_id}/delete": {
+      "post": {
+        "tags": [
+          "CRM"
+        ],
+        "summary": "Delete Quote Sheet",
+        "operationId": "delete_quote_sheet_api_v1_quote_sheets__entity_id__delete_post",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -9359,6 +9463,21 @@
             }
           },
           {
+            "name": "date_basis",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "effective",
+                "planned",
+                "actual"
+              ],
+              "type": "string",
+              "default": "effective",
+              "title": "Date Basis"
+            }
+          },
+          {
             "name": "page",
             "in": "query",
             "required": false,
@@ -9421,6 +9540,204 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/payment-calendar/rules": {
+      "get": {
+        "tags": [
+          "Платёжный календарь и заказы поставщикам"
+        ],
+        "summary": "Calendar Rules",
+        "operationId": "calendar_rules_api_v1_payment_calendar_rules_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Платёжный календарь и заказы поставщикам"
+        ],
+        "summary": "Calendar Rules Save",
+        "operationId": "calendar_rules_save_api_v1_payment_calendar_rules_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentDaysIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/payment-calendar/balances": {
+      "get": {
+        "tags": [
+          "Платёжный календарь и заказы поставщикам"
+        ],
+        "summary": "Calendar Balances",
+        "operationId": "calendar_balances_api_v1_payment_calendar_balances_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Платёжный календарь и заказы поставщикам"
+        ],
+        "summary": "Calendar Balance Save",
+        "operationId": "calendar_balance_save_api_v1_payment_calendar_balances_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarBalanceIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/payment-calendar/export": {
+      "get": {
+        "tags": [
+          "Платёжный календарь и заказы поставщикам"
+        ],
+        "summary": "Calendar Export",
+        "operationId": "calendar_export_api_v1_payment_calendar_export_get",
+        "parameters": [
+          {
+            "name": "on_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "On Date"
+            }
+          },
+          {
+            "name": "date_basis",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "planned",
+                "actual",
+                "effective"
+              ],
+              "type": "string",
+              "default": "effective",
+              "title": "Date Basis"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -9572,7 +9889,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/VersionCommand"
+                "$ref": "#/components/schemas/CalendarConfirm"
               }
             }
           }
@@ -10861,6 +11178,104 @@
         ],
         "title": "CalculationIn"
       },
+      "CalendarBalanceIn": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "balance_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Balance Date"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "default": "RUB"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,16}|(?=[\\d.]{1,25}0*$)\\d{0,16}\\.\\d{0,8}0*$)"
+              }
+            ],
+            "title": "Amount"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Reason"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "balance_date",
+          "amount",
+          "reason"
+        ],
+        "title": "CalendarBalanceIn"
+      },
+      "CalendarConfirm": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "actual_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Date"
+          },
+          "outside_payment_days": {
+            "type": "boolean",
+            "title": "Outside Payment Days",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "version"
+        ],
+        "title": "CalendarConfirm"
+      },
       "CalendarIn": {
         "properties": {
           "idempotency_key": {
@@ -10980,6 +11395,11 @@
             ],
             "title": "Recurrence",
             "default": "none"
+          },
+          "outside_payment_days": {
+            "type": "boolean",
+            "title": "Outside Payment Days",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -11112,6 +11532,11 @@
             ],
             "title": "Recurrence",
             "default": "none"
+          },
+          "outside_payment_days": {
+            "type": "boolean",
+            "title": "Outside Payment Days",
+            "default": false
           },
           "version": {
             "type": "integer",
@@ -13094,6 +13519,15 @@
             "maxLength": 4000,
             "title": "Introduction",
             "default": "Dear Colleagues,\n\nPlease send us offer for:"
+          },
+          "cc": {
+            "items": {
+              "type": "string",
+              "format": "email"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Cc"
           }
         },
         "additionalProperties": false,
@@ -13136,6 +13570,15 @@
             "maxLength": 4000,
             "title": "Introduction",
             "default": "Dear Colleagues,\n\nPlease send us offer for:"
+          },
+          "cc": {
+            "items": {
+              "type": "string",
+              "format": "email"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Cc"
           },
           "subject": {
             "type": "string",
@@ -13697,6 +14140,47 @@
           "amount"
         ],
         "title": "PaymentAllocationLine"
+      },
+      "PaymentDaysIn": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "weekdays": {
+            "items": {
+              "type": "integer",
+              "enum": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            },
+            "type": "array",
+            "maxItems": 7,
+            "minItems": 1,
+            "title": "Weekdays"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "version",
+          "weekdays"
+        ],
+        "title": "PaymentDaysIn"
       },
       "PaymentIn": {
         "properties": {
@@ -15068,6 +15552,23 @@
             "maxLength": 4000,
             "minLength": 1,
             "title": "Reason"
+          },
+          "actual_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Date"
+          },
+          "outside_payment_days": {
+            "type": "boolean",
+            "title": "Outside Payment Days",
+            "default": false
           }
         },
         "additionalProperties": false,
