@@ -6,9 +6,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 import app.business.models  # noqa: F401
 import app.commerce.models  # noqa: F401
@@ -16,7 +15,7 @@ from app.communication import worker
 from app.communication.files import store_quarantine
 from app.communication.models import FileRecord
 from app.core.config import settings
-from app.core.db import Base, get_db, utcnow
+from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
 from app.core.models import (
     AuditEvent,
@@ -35,15 +34,8 @@ from app.crm.models import Contact, Counterparty, ImportBatch, ImportRow
 
 
 @pytest.fixture
-def jobs(tmp_path, monkeypatch):
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
-
-    @event.listens_for(engine, 'connect')
-    def foreign_keys(connection, _record):
-        connection.execute('PRAGMA foreign_keys=ON')
-
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(engine, expire_on_commit=False)
+def jobs(tmp_path, monkeypatch, database_with_foreign_keys):
+    sessions = sessionmaker(database_with_foreign_keys, expire_on_commit=False)
     monkeypatch.setattr(settings, 'storage_dir', tmp_path / 'files')
     monkeypatch.setattr(settings, 'require_mfa', False)
     state = {'sessions': sessions}
@@ -87,7 +79,6 @@ def jobs(tmp_path, monkeypatch):
         client.headers['X-CSRF-Token'] = 'test-csrf'
         state['client'] = client
         yield state
-    engine.dispose()
 
 
 def add_job(env, **values):

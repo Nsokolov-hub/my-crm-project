@@ -67,6 +67,12 @@ jobs:
       - name: Run backend PostgreSQL tests
         # pytest exits with 5 when nothing is collected, so a missing postgres marker fails the job.
         run: pytest backend/tests -m 'postgres' -q -p no:cacheprovider --junitxml=backend-postgres-report.xml
+      - name: Run the regular suite on PostgreSQL
+        # Same tests as the SQLite job, each in its own schema: locks and constraints as in production.
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://crm_test:crm_test_password@localhost:5432/crm_test_db
+          DATABASE_URL: sqlite://
+        run: pytest backend/tests -m 'not postgres and not integration' -q -p no:cacheprovider
       - name: Upload Test Report
         uses: actions/upload-artifact@v4
         if: always()

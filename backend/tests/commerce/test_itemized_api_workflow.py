@@ -5,7 +5,14 @@ from decimal import Decimal
 
 from app.commerce.financial import existing_wave_components
 from app.commerce.itemized import itemized_profile
-from app.commerce.models import CalculationProfile, Execution, WaveAllocation
+from app.commerce.models import (
+    Approval,
+    Calculation,
+    CalculationProfile,
+    CommercialDocument,
+    Execution,
+    WaveAllocation,
+)
 from app.core.models import PermissionGrant
 from app.crm.models import (
     Counterparty,
@@ -20,6 +27,28 @@ from app.crm.models import (
 )
 from tests.support.commerce import command
 
+
+def recorded_proposal(db, env, request_id, profile_id):
+    """A previously issued proposal whose calculation snapshot carries no lines."""
+    calculation = Calculation(request_id=request_id, profile_id=profile_id, snapshot={}, digest="0" * 64,
+                              reason="Исторический расчёт", author_id=env["owner_id"])
+    db.add(calculation)
+    db.flush()
+    proposal = CommercialDocument(request_id=request_id, seller_id=env["seller_id"], client_id=env["client_id"],
+                                  kind="proposal", number=f"HIST-{calculation.id[:8]}", calculation_id=calculation.id,
+                                  currency="RUB", total=Decimal("0"), valid_until=date.today(), snapshot={},
+                                  files={}, author_id=env["owner_id"])
+    db.add(proposal)
+    db.flush()
+    return proposal.id
+
+
+def recorded_approval(db, env, request_id):
+    approval = Approval(request_id=request_id, snapshot={}, digest="0" * 64, status="approved",
+                        submitted_by=env["owner_id"], reviewer_id=env["owner_id"])
+    db.add(approval)
+    db.flush()
+    return approval.id
 
 def test_profile_rates_wave_quantity_and_proposal(commerce):  # noqa: F811
     env = commerce
@@ -82,14 +111,17 @@ def test_profile_rates_wave_quantity_and_proposal(commerce):  # noqa: F811
                                 owner_id=env["owner_id"])
         db.add(other_request)
         db.flush()
+        # An older order whose proposal no longer reveals its line: the wave basis is unknown.
+        previous_proposal = recorded_proposal(db, env, other_request.id, saved_profile.id)
         previous = Execution(request_id=other_request.id, item_id=env["item_id"],
-                             proposal_id="previous-proposal", line_id="previous-line",
+                             proposal_id=previous_proposal, line_id="previous-line",
                              quantity=Decimal("4"), cancelled_quantity=Decimal("0"), unit="pcs",
                              snapshot={}, acceptance_reason="Подтверждено", accepted_by=env["owner_id"])
         db.add(previous)
         db.flush()
         db.add(WaveAllocation(wave_id=wave["id"], execution_id=previous.id,
-                              approval_id="previous-approval", quantity=Decimal("4"), active=True))
+                              approval_id=recorded_approval(db, env, other_request.id),
+                              quantity=Decimal("4"), active=True))
 
     payload = {"request_version": 2, "profile_id": saved_profile.id,
                "selections": [{"quote_item_id": quote.id, "markup_coefficient": "1.5"}]}
@@ -146,7 +178,8 @@ def test_profile_rates_wave_quantity_and_proposal(commerce):  # noqa: F811
         db.add(accepted)
         db.flush()
         db.add(WaveAllocation(wave_id=wave["id"], execution_id=accepted.id,
-                              approval_id="test-approval", quantity=Decimal("1"), active=True))
+                              approval_id=recorded_approval(db, env, env["request_id"]),
+                              quantity=Decimal("1"), active=True))
     with env["sessions"]() as db:
         quantity, components, missing = existing_wave_components(db, wave["id"], [])
     assert quantity == Decimal("5")

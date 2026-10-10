@@ -3,4 +3,5 @@
 import app.models  # noqa: F401  (every table is known to Base.metadata, whatever runs first)
 from tests.support.commerce import commerce  # noqa: F401
 from tests.support.crm import crm  # noqa: F401
+from tests.support.database import database, database_with_foreign_keys  # noqa: F401
 from tests.support.postgres import postgres_commerce  # noqa: F401

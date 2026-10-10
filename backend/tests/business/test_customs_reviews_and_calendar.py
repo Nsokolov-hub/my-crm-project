@@ -12,6 +12,7 @@ from app.business.models import SupplierMail, WorkflowReview
 from app.business.worker import reminders, send_mail
 from app.commerce.files import party_details, payment_bank
 from app.commerce.itemized import calculate_itemized
+from app.core.db import as_utc
 from app.core.models import Notification, OutboxEvent, PermissionGrant, User
 from app.crm.models import Request, Task
 from tests.support.business import cmd, configured_profile, request, structured
@@ -296,7 +297,7 @@ def test_overdue_close_requires_review_and_absence_blocks_assignment(crm):  # no
         status=422,
     )
     with crm["sessions"]() as db:
-        assert db.get(Task, open_task["id"]).due_at > (now + timedelta(days=6)).replace(tzinfo=None)
+        assert as_utc(db.get(Task, open_task["id"]).due_at) > now + timedelta(days=6)
 
 
 def test_own_only_overrides_all_and_shared_request_access(crm):  # noqa: F811

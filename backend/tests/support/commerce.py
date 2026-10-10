@@ -8,14 +8,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.commerce.calculator import example_profile
 from app.commerce.routes import router
 from app.core.config import settings
-from app.core.db import Base, get_db
+from app.core.db import get_db
 from app.core.errors import DomainError
 from app.core.models import PermissionGrant, User
 from app.core.security import PERMISSIONS, current_user
@@ -23,10 +21,8 @@ from app.crm.models import Counterparty, Request, RequestItem, Seller
 
 
 @pytest.fixture
-def commerce(tmp_path, monkeypatch):
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(engine, expire_on_commit=False)
+def commerce(tmp_path, monkeypatch, database):
+    sessions = sessionmaker(database, expire_on_commit=False)
     monkeypatch.setattr(settings, "storage_dir", tmp_path / "files")
     with sessions() as db:
         owner = User(email="owner@example.test", name="Владелец", password_hash="fixture-only")
@@ -102,7 +98,6 @@ def commerce(tmp_path, monkeypatch):
     state["client"] = TestClient(app)
     state["client"].post("/api/v1/setup/wizard", json={"company_name": "Test Company"})
     yield state
-    engine.dispose()
 
 
 def command(env, path, payload=None, expected=200, method="post"):

@@ -1,15 +1,13 @@
-"""The real application with HTTP sign-in on an in-memory database: owner and own-scope manager."""
+"""The real application with HTTP sign-in on a test database: an owner and an own-scope manager."""
 
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
-from app.core.db import Base, get_db
+from app.core.db import get_db
 from app.core.models import PermissionGrant, User
 from app.core.security import PERMISSIONS, password_hasher
 from app.main import app
@@ -18,15 +16,8 @@ PASSWORD = "Only-for-automated-tests-1234"
 
 
 @pytest.fixture
-def crm(tmp_path, monkeypatch):
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-
-    @event.listens_for(engine, "connect")
-    def foreign_keys(connection, _record):
-        connection.execute("PRAGMA foreign_keys=ON")
-
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(engine, expire_on_commit=False)
+def crm(tmp_path, monkeypatch, database_with_foreign_keys):
+    sessions = sessionmaker(database_with_foreign_keys, expire_on_commit=False)
     monkeypatch.setattr(settings, "storage_dir", tmp_path / "files")
     monkeypatch.setattr(settings, "require_mfa", False)
     with sessions.begin() as db:
@@ -72,7 +63,6 @@ def crm(tmp_path, monkeypatch):
             yield {"client": client, "sessions": sessions, "admin": admin, "manager": manager}
     finally:
         app.dependency_overrides.pop(get_db, None)
-        engine.dispose()
 
 
 def login(env, email="owner@example.com", **extra):
