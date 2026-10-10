@@ -88,21 +88,23 @@ def login(
     email = str(body.email).lower()
     ip = request.client.host if request.client else "unknown"
     advisory(db, f"login:{email}")
-    since = utcnow() - timedelta(minutes=15)
-    failures = (
-        db.scalar(
-            select(func.count())
-            .select_from(LoginAttempt)
-            .where(
-                LoginAttempt.created_at >= since,
-                LoginAttempt.successful.is_(False),
-                or_(LoginAttempt.identity == email, LoginAttempt.ip == ip),
-            )
+    since = utcnow() - timedelta(minutes=settings.login_window_minutes)
+    identity_failures, ip_failures = db.execute(
+        select(
+            func.count().filter(LoginAttempt.identity == email),
+            func.count().filter(LoginAttempt.ip == ip),
+        ).where(
+            LoginAttempt.created_at >= since,
+            LoginAttempt.successful.is_(False),
+            or_(LoginAttempt.identity == email, LoginAttempt.ip == ip),
         )
-        or 0
-    )
-    if failures >= 10:
-        raise DomainError("LOGIN_RATE_LIMIT", "Слишком много попыток входа. Повторите через 15 минут.", 429)
+    ).one()
+    if identity_failures >= settings.login_identity_attempts or ip_failures >= settings.login_ip_attempts:
+        raise DomainError(
+            "LOGIN_RATE_LIMIT",
+            f"Слишком много попыток входа. Повторите через {settings.login_window_minutes} минут.",
+            429,
+        )
     user = db.scalar(select(User).where(User.email == email).with_for_update())
     valid = False
     try:

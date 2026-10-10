@@ -1,5 +1,9 @@
 FROM python:3.13-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+# The API is reached through nginx (and Caddy) on private Docker networks. Trust X-Forwarded-For
+# only from those hops so request.client is the real visitor; uvicorn takes the right-most
+# untrusted address, so a spoofed header from the internet cannot impersonate another client.
+ENV FORWARDED_ALLOW_IPS="127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/* \
