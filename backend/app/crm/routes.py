@@ -1191,8 +1191,10 @@ def history(entity_id: str, page: int = 1, page_size: int = 50, user: User = Dep
     check_request(db, user, entity_id)
     ids = [entity_id, *db.scalars(select(RequestItem.id).where(RequestItem.request_id == entity_id))]
     result = paginate(db, select(AuditEvent).where(AuditEvent.entity_id.in_(ids)).order_by(AuditEvent.created_at.desc()), page, page_size)
-    for row in result['items']:
-        if not all(can(db, user, p) for p in ('finance.purchase.read', 'finance.calculations.read', 'finance.reward.read')):
+    # Snapshots can contain purchase prices and rewards; the rights must cover this very request.
+    if not all(has_request_permission(db, user, entity_id, permission) for permission in
+               ('finance.purchase.read', 'finance.calculations.read', 'finance.reward.read')):
+        for row in result['items']:
             row.pop('before', None)
             row.pop('after', None)
     return result
