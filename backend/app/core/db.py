@@ -12,6 +12,11 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def as_utc(value: datetime) -> datetime:
+    """Naive values are stored UTC (SQLite); aware ones are converted, never relabelled."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -23,7 +28,9 @@ class Entity(Base):
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
 
-engine = create_engine(settings.database_url, pool_pre_ping=True)
+# Sessions read timestamps in UTC whatever TimeZone the PostgreSQL server is configured with.
+engine = create_engine(settings.database_url, pool_pre_ping=True, connect_args=(
+    {"options": "-c timezone=UTC"} if settings.database_url.startswith("postgresql") else {}))
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
 

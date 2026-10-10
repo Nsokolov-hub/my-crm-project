@@ -1,6 +1,5 @@
 import hashlib
 import secrets
-from datetime import timezone
 from typing import Any
 
 from argon2 import PasswordHasher
@@ -10,7 +9,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.db import get_db, utcnow
+from app.core.db import as_utc, get_db, utcnow
 from app.core.errors import DomainError
 from app.core.models import AuthSession, PermissionGrant, User, UserRole
 
@@ -151,7 +150,7 @@ def current_user(request: Request, db: Session = Depends(get_db, scope="function
     if not token:
         raise DomainError('UNAUTHENTICATED', 'Войдите в систему', 401)
     session = db.scalar(select(AuthSession).where(AuthSession.token_hash == digest(token), AuthSession.revoked.is_(False)))
-    if session is None or session.expires_at.replace(tzinfo=timezone.utc) <= utcnow():
+    if session is None or as_utc(session.expires_at) <= utcnow():
         raise DomainError('SESSION_EXPIRED', 'Сеанс завершён. Войдите снова.', 401)
     user = db.get(User, session.user_id)
     if user is None or not user.active:
