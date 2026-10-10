@@ -1,14 +1,7 @@
-import app.business.models  # noqa: F401
-import app.commerce.models  # noqa: F401
-import app.communication.models  # noqa: F401
-import app.core.models  # noqa: F401
-import app.crm.models  # noqa: F401
+import app.models  # noqa: F401  (registers every table on Base.metadata)
 from alembic import context
-from app.commerce.models import *  # noqa
 from app.core.config import settings
 from app.core.db import Base, engine
-from app.core.models import *  # noqa
-from app.crm.models import *  # noqa
 
 config = context.config
 target_metadata = Base.metadata
