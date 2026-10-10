@@ -3,7 +3,6 @@
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from test_postgres_commerce import postgres_commerce as postgres_commerce
 
 from app.crm.models import Counterparty
 

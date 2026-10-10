@@ -3,19 +3,19 @@
 from decimal import Decimal
 
 import pytest
-from test_itemized_wave_calculation import _selection
 
 from app.commerce.calculator import profitability_metrics
 from app.commerce.itemized import calculate_itemized, itemized_profile
+from tests.support.itemized import quote_selection
 
 
 def shipment_a(*, deduct_vat=True, round_up=False, all_selected=False):
     profile = itemized_profile()
     profile.update(import_country_id="IN", vat_deduction_mode=deduct_vat, round_sale_up_to_ruble=round_up)
-    first = _selection("product-1", "reference_standards", "1", "11000", "1")
+    first = quote_selection("product-1", "reference_standards", "1", "11000", "1")
     # The other eleven units provide the full recorded wave basis; their unit
     # price is a test assumption, not an inferred price of the user's product.
-    peers = _selection("other-products", "reference_standards", "11", "17000", "1")
+    peers = quote_selection("other-products", "reference_standards", "11", "17000", "1")
     for row in (first, peers):
         row["currency_code"] = "INR"
     peers["markup_coefficient"] = "2"

@@ -1,15 +1,16 @@
 """The October 7 migration keeps existing quotes and mail readable."""
 
 import importlib.util
-from pathlib import Path
 
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
+from tests.support.paths import BACKEND_DIR
+
 
 def test_oct7_defaults_and_rollback_preserve_existing_records():
-    path = Path(__file__).parents[1] / "alembic/versions/b5131005_business_oct7.py"
+    path = BACKEND_DIR / "alembic/versions/b5131005_business_oct7.py"
     spec = importlib.util.spec_from_file_location("business_oct7_migration", path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)

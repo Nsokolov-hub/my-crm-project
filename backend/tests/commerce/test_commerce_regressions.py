@@ -7,17 +7,11 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
-from test_commerce import approve, command, fund, get, prepare, wave
-from test_commerce import commerce as commerce_fixture
 
 from app.commerce.fulfillment import WAVE_TRANSITIONS
 from app.commerce.models import Execution
 from app.crm.models import Request, RequestItem
-
-
-@pytest.fixture
-def commerce(tmp_path, monkeypatch):
-    yield from commerce_fixture.__wrapped__(tmp_path, monkeypatch)
+from tests.support.commerce import approve, command, fund, get, prepare, wave
 
 
 def raw(env, path, payload, method="post"):

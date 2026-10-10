@@ -7,12 +7,12 @@ from uuid import uuid4
 
 from openpyxl import load_workbook
 from sqlalchemy import select
-from test_business_oct5 import cmd
-from test_crm import crm, login, post  # noqa: F401
 
 from app.communication.models import FileRecord
 from app.core.models import AppSetting, AuditEvent, PermissionGrant
 from app.crm.models import Request
+from tests.support.business import cmd
+from tests.support.crm import login, post
 
 
 def invoice(env, entry, status="clean"):

@@ -5,13 +5,12 @@ import logging
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
-from test_crm import crm as crm  # noqa: F401
-from test_crm import login
 
 from app.core.db import get_db
 from app.core.security import current_user
 from app.crm.models import Counterparty
 from app.main import app
+from tests.support.crm import login
 
 
 def _api_routes(routes):

@@ -2,15 +2,16 @@
 
 import importlib.util
 from datetime import datetime, timezone
-from pathlib import Path
 
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
+from tests.support.paths import BACKEND_DIR
+
 
 def test_oct5_upgrade_codes_roles_and_downgrade():
-    path = Path(__file__).parents[1] / "alembic/versions/b5131003_business_oct5.py"
+    path = BACKEND_DIR / "alembic/versions/b5131003_business_oct5.py"
     spec = importlib.util.spec_from_file_location("business_oct5_migration", path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)

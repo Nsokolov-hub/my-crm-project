@@ -7,40 +7,24 @@ from decimal import Decimal
 import pytest
 from openpyxl import load_workbook
 from sqlalchemy import select
-from test_business_imports import confirm, preview, quote_file, request
-from test_business_oct5 import cmd, structured
-from test_crm import crm, post  # noqa: F401
 
 from app.commerce.files import read_file
 from app.commerce.models import CommercialDocument, Execution, WaveAllocation
 from app.core.models import Notification
 from app.crm.models import QuoteItem, Request, RequestItem
 from app.crm.table_imports import QUOTE_COLUMNS
-
-
-def wave(env, wave_id):
-    return next(row for row in env["client"].get("/api/v1/waves").json()["items"] if row["id"] == wave_id)
-
-
-def release(env, req, calculation, quantity):
-    proposal = cmd(env, f"/requests/{req['id']}/proposals", {
-        "calculation_id": calculation["id"], "valid_until": (date.today() + timedelta(days=15)).isoformat(),
-        "terms": "Отсрочка, оплата после поставки",
-    })
-    accepted = cmd(env, f"/proposals/{proposal['id']}/accept", {
-        "version": proposal["version"], "reason": "Клиент подтвердил новый объём",
-        "lines": [{"line_id": calculation["snapshot"]["lines"][0]["line_id"], "quantity": quantity}],
-    })
-    return proposal, accepted["executions"][0]
-
-
-def handoff(env, req, execution):
-    approval = cmd(env, f"/requests/{req['id']}/approvals", {
-        "execution_ids": [execution["id"]], "reviewer_id": env["admin"].id,
-    })
-    return cmd(env, f"/approvals/{approval['id']}/decision", {
-        "version": approval["version"], "decision": "approved", "reason": "Передать с отсрочкой",
-    })
+from tests.support.business import (
+    cmd,
+    confirm,
+    handoff,
+    preview,
+    quote_file,
+    release,
+    request,
+    structured,
+    wave_row,
+)
+from tests.support.crm import post
 
 
 @pytest.mark.parametrize("quantity", ["2", "100"])
@@ -100,7 +84,7 @@ def test_forecast_replaces_real_orders_and_calculations_do_not_fill_wave(crm):  
         group_id = item.product_group_id
         item_data = {"nomenclature_id": quote.nomenclature_id, "packing_id": quote.packing_id,
             "quantity": "1", "unit_price": "1000", "currency_id": quote.currency_id, "delivery_days": 7}
-    initial = wave(crm, req["wave_id"])
+    initial = wave_row(crm, req["wave_id"])
     forecast_data = {"product_group_id": group_id, "target_quantity": "10", "unit_price_rub": "1000",
         "weight_per_unit": "1", "reason": "Минимальный объём запуска"}
     current = cmd(crm, f"/waves/{initial['id']}/forecasts", {**forecast_data, "version": initial["version"]}, method="put")
@@ -115,12 +99,12 @@ def test_forecast_replaces_real_orders_and_calculations_do_not_fill_wave(crm):  
     assert Decimal(first["snapshot"]["wave_distribution"]["total_quantity"]) == 10
     assert Decimal(first["snapshot"]["wave_distribution"]["forecast_quantity"]) == 8
     assert Decimal(first["snapshot"]["totals"]["international_logistics"]) == 200
-    assert wave(crm, initial["id"])["allocations"] == []
+    assert wave_row(crm, initial["id"])["allocations"] == []
     proposal, execution = release(crm, req, first, "2")
-    assert wave(crm, initial["id"])["allocations"] == []
+    assert wave_row(crm, initial["id"])["allocations"] == []
     assert crm["client"].get("/api/v1/supplier-orders/positions").json()["items"] == []
     handoff(crm, req, execution)
-    actual = wave(crm, initial["id"])
+    actual = wave_row(crm, initial["id"])
     assert len(actual["allocations"]) == 1
     assert Decimal(actual["financial_summary"]["real_quantity"]) == 2
     assert Decimal(actual["financial_summary"]["forecast_quantity"]) == 8
@@ -190,12 +174,12 @@ def test_forecast_budget_bases_and_overfilled_plan(crm, method):  # noqa: F811
     with crm["sessions"]() as db:
         quote = db.get(QuoteItem, data["selections"][0]["quote_item_id"])
         group_id = db.get(RequestItem, quote.source_request_item_id).product_group_id
-    initial = wave(crm, req["wave_id"])
+    initial = wave_row(crm, req["wave_id"])
     payload = {"version": initial["version"], "product_group_id": group_id,
         "target_quantity": "10", "unit_price_rub": "1000", "weight_per_unit": "1", "reason": "Запуск поставщика"}
     current = cmd(crm, f"/waves/{initial['id']}/forecasts", payload, method="put", key="forecast-retry")
     assert cmd(crm, f"/waves/{initial['id']}/forecasts", payload, method="put", key="forecast-retry") == current
-    assert len(wave(crm, initial["id"])["forecasts"]) == 1
+    assert len(wave_row(crm, initial["id"])["forecasts"]) == 1
     assert cmd(crm, f"/waves/{initial['id']}/forecasts", payload, method="put", status=409)["code"] == "VERSION_CONFLICT"
     data["expenses"] = [{"name": "Транспорт", "amount": "1000", "scope": "WAVE", "stage": "GENERAL",
         "method": method, "currency": "RUB"}]
@@ -215,7 +199,7 @@ def test_forecast_budget_bases_and_overfilled_plan(crm, method):  # noqa: F811
     saved = cmd(crm, f"/requests/{req['id']}/calculations", data)
     _, execution = release(crm, req, saved, "2")
     handoff(crm, req, execution)
-    summary = wave(crm, initial["id"])["financial_summary"]
+    summary = wave_row(crm, initial["id"])["financial_summary"]
     assert summary["actual"]["status"] == "current"
     assert Decimal(summary["real_quantity"]) == 2
     assert Decimal(summary["forecast_quantity"]) == 8

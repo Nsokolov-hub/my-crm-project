@@ -8,13 +8,12 @@ import pytest
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, Side
 from sqlalchemy import delete, select
-from test_business_imports import confirm, request
-from test_crm import crm as crm
-from test_crm import login, post
 
 from app.communication.models import FileRecord
 from app.crm.codes import compact_request_number, request_number_value
 from app.crm.models import CounterpartyDocument, Request
+from tests.support.business import confirm, request
+from tests.support.crm import login, post
 
 
 @pytest.mark.parametrize(('value', 'number'), [(1, '1'), (1000, '1000'), (1001, 'A1'),

@@ -1,14 +1,12 @@
 """Concurrent manager decisions must record one cash fact and one recurrence."""
 
 from datetime import date, datetime, timezone
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
 from sqlalchemy import select
-from test_postgres_commerce import concurrent_posts, postgres_commerce  # noqa: F401
 
 from alembic import command as migrations
 from app.business.models import CalendarEntry, WorkflowReview
@@ -16,6 +14,8 @@ from app.business.routes import router
 from app.communication.models import FileRecord
 from app.core.models import AuditEvent
 from app.crm.models import Request
+from tests.support.paths import BACKEND_DIR
+from tests.support.postgres import concurrent_posts
 
 pytestmark = pytest.mark.postgres
 
@@ -49,7 +49,7 @@ def test_legacy_payments_files_and_refusals_survive_postgres_upgrade(legacy_cale
         req = db.get(Request, env["request_id"])
         req.commercial_stage, req.loss_reason = "quote_given", "no_budget"
         db.flush()
-        config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+        config = Config(str(BACKEND_DIR / "alembic.ini"))
         config.attributes["connection"] = conn
         migrations.upgrade(config, "head")
     with env["sessions"]() as db:

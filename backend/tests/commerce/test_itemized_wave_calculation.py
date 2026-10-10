@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from app.commerce.itemized import calculate_itemized
 from app.commerce.itemized import itemized_profile as current_profile
+from tests.support.itemized import quote_selection
 
 
 def itemized_profile():
@@ -19,28 +20,14 @@ def itemized_profile():
             rule.update(type='FIXED_GROUP', value='73800')
     return profile
 
-def _selection(identifier: str, group: str, quantity: str, price: str, bonus: str) -> dict:
-    return {
-        "quote_item": {
-            "id": identifier, "quote_id": "quote-1", "supplier_id": "supplier-1",
-            "source_request_item_id": identifier, "quantity": quantity,
-            "unit_price": price, "delivery_days": 14,
-        },
-        "nomenclature": {"name": "Стандартный образец" if group == "reference_standards" else "Колонка"},
-        "packing": {"display_name": "1 шт."},
-        "product_group": {"slug": group},
-        "currency_code": "USD", "markup_coefficient": "1.5",
-        "bonus_coefficient": bonus, "weight": None,
-    }
-
 
 def test_wave_quantity_shares_fixed_expenses_and_fee_and_columns_share_duty():
     profile = itemized_profile()
     profile["import_country_id"] = "country-1"
     profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "4997"}]
     selections = [
-        _selection("sample", "reference_standards", "2", "100", "1.15"),
-        _selection("columns", "columns", "2", "100", "1.70"),
+        quote_selection("sample", "reference_standards", "2", "100", "1.15"),
+        quote_selection("columns", "columns", "2", "100", "1.70"),
     ]
     result = calculate_itemized(
         profile, selections,
@@ -80,8 +67,8 @@ def test_fixed_group_duty_is_split_between_column_rows():
     result = calculate_itemized(
         profile,
         [
-            _selection("columns-a", "columns", "2", "100", "1"),
-            _selection("columns-b", "columns", "1", "100", "1"),
+            quote_selection("columns-a", "columns", "2", "100", "1"),
+            quote_selection("columns-b", "columns", "1", "100", "1"),
         ],
         [],
         [{"currency": "USD", "management_per_unit": "100", "quoted_units": "1",
@@ -99,7 +86,7 @@ def test_wave_logistics_and_transfer_fees_include_ruble_minimum():
     profile = itemized_profile()
     profile["import_country_id"] = "country-1"
     profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "0"}]
-    selection = _selection("sample", "reference_standards", "2", "1000", "1")
+    selection = quote_selection("sample", "reference_standards", "2", "1000", "1")
     selection["currency_code"] = "INR"
     expenses = [
         {"name": name, "amount": amount, "currency": currency,
@@ -141,7 +128,7 @@ def test_wave_percentage_uses_existing_purchase_and_current_logistics_budget():
     profile = itemized_profile()
     profile["import_country_id"] = "country-1"
     profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "0"}]
-    selection = _selection("sample", "reference_standards", "2", "1000", "1")
+    selection = quote_selection("sample", "reference_standards", "2", "1000", "1")
     selection["currency_code"] = "INR"
     result = calculate_itemized(profile, [selection], [
         {"name": "Логистика", "amount": "80000", "currency": "INR", "method": "BY_QUANTITY",
@@ -166,7 +153,7 @@ def test_request_percentage_minimum_is_not_shared_with_existing_wave_orders():
     profile["import_country_id"] = "country-1"
     profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "0"}]
     result = calculate_itemized(profile, [
-        _selection("sample", "reference_standards", "2", "100", "1"),
+        quote_selection("sample", "reference_standards", "2", "100", "1"),
     ], [{"name": "Отдельный перевод", "amount": "0.18", "currency": "RUB",
          "method": "BY_QUANTITY", "scope": "REQUEST", "stage": "GENERAL",
          "calculation_type": "PERCENTAGE", "percent_base": "PURCHASE",
@@ -188,8 +175,8 @@ def test_purine_rows_apply_markup_before_non_deductible_vat():
     profile["import_country_id"] = "country-1"
     profile["vat_deduction_mode"] = False
     profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "0"}]
-    first_selection = _selection("sample", "reference_standards", "2", "2500", "1.15")
-    second_selection = _selection("sample-small", "reference_standards", "2", "1000", "1.15")
+    first_selection = quote_selection("sample", "reference_standards", "2", "2500", "1.15")
+    second_selection = quote_selection("sample-small", "reference_standards", "2", "1000", "1.15")
     for selection, markup in ((first_selection, "1.8"), (second_selection, "1.7")):
         selection["currency_code"] = "CNY"
         selection["markup_coefficient"] = markup

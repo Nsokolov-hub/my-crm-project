@@ -3,8 +3,6 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
-from test_commerce import command, commerce  # noqa: F401
-
 from app.commerce.financial import existing_wave_components
 from app.commerce.itemized import itemized_profile
 from app.commerce.models import CalculationProfile, Execution, WaveAllocation
@@ -20,6 +18,7 @@ from app.crm.models import (
     QuoteSheet,
     Request,
 )
+from tests.support.commerce import command
 
 
 def test_profile_rates_wave_quantity_and_proposal(commerce):  # noqa: F811

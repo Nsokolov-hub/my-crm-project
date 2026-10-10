@@ -8,66 +8,13 @@ from uuid import uuid4
 import pytest
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import func, select
-from test_commerce import approve, command, get, prepare, wave
-from test_commerce import commerce as commerce
-from test_crm import crm as crm
-from test_crm import login, post
 
 from app.commerce.schemas import PaymentIn
-from app.crm.imports import xlsx
-from app.crm.models import Counterparty, Currency, Nomenclature, ProductGroup, QuoteItem, RequestItem
+from app.crm.models import Counterparty, Nomenclature, QuoteItem, RequestItem
 from app.crm.table_imports import QUOTE_COLUMNS, read_table
-
-
-def request(crm):
-    with crm["sessions"].begin() as db:
-        if not db.scalar(select(ProductGroup.id).where(ProductGroup.slug == "other")):
-            db.add(ProductGroup(name="Прочее", slug="other"))
-        if not db.scalar(select(Currency.id).where(Currency.code == "RUB")):
-            db.add(Currency(name="Рубль", code="RUB"))
-    client = post(crm, "/counterparties", {"name": "Рабочий клиент"})
-    return post(crm, "/requests", {"title": "Исходная заявка", "client_id": client["id"]})
-
-
-def preview(crm, request_id, columns, rows, kind="items"):
-    response = crm["client"].post(
-        f"/api/v1/requests/{request_id}/table-imports/preview",
-        files={
-            "file": (
-                "table.xlsx",
-                xlsx([columns, *rows]),
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-        },
-        data={"kind": kind},
-    )
-    assert response.status_code == 200, response.text
-    return response.json()
-
-
-def confirm(crm, request_id, batch_id, status=200, key=None):
-    return post(crm, f"/requests/{request_id}/table-imports/{batch_id}/confirm", {}, status, key=key)
-
-
-def quote_file(supplier_code, overrides=None):
-    row = {
-        "source_row": "1",
-        "supplier_code": str(supplier_code),
-        "article": "0341",
-        "name": "Новый товар",
-        "manufacturer": "0",
-        "cas": "0",
-        "linear_formula": "0",
-        "purity": "0",
-        "packing_value": "0",
-        "packing_unit": "0",
-        "quantity": "1",
-        "unit_price": "100,25",
-        "currency": "rub",
-        "delivery_days": "14",
-    }
-    row.update(overrides or {})
-    return [row.get(key, "") for key in QUOTE_COLUMNS]
+from tests.support.business import confirm, preview, quote_file, request
+from tests.support.commerce import approve, command, get, prepare, wave
+from tests.support.crm import login, post
 
 
 def test_client_bases_promotion_contacts_codes_and_scope(crm):

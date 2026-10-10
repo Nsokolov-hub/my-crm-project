@@ -9,14 +9,13 @@ from uuid import uuid4
 import pytest
 from PIL import Image
 from sqlalchemy import func, select
-from test_commerce import command, get, prepare
-from test_commerce import commerce as commerce
 
 from app.commerce.models import Calculation, CalculationProfile, Payment, PaymentAllocation, PaymentReversal
 from app.communication.models import FileRecord
 from app.communication.routes import router as communication_router
 from app.core.models import Notification, PermissionGrant
 from app.crm.models import Request, RequestItem
+from tests.support.commerce import command, get, prepare
 
 
 def set_scope(env, code, scope):

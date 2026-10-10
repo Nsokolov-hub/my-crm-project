@@ -3,36 +3,20 @@
 import io
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
 from openpyxl import load_workbook
 from sqlalchemy import select
-from test_business_imports import request
-from test_crm import crm, login, post  # noqa: F401
-from test_itemized_wave_calculation import _selection
 
 from app.business.models import SupplierMail, WorkflowReview
 from app.business.worker import reminders, send_mail
 from app.commerce.files import party_details, payment_bank
-from app.commerce.itemized import calculate_itemized, itemized_profile
-from app.commerce.models import CalculationProfile
+from app.commerce.itemized import calculate_itemized
 from app.core.models import Notification, OutboxEvent, PermissionGrant, User
-from app.crm.models import Country, Currency, Request, Task
-
-
-def configured_profile():
-    profile = itemized_profile()
-    profile["import_country_id"] = "country-test"
-    return profile
-
-
-def cmd(env, path, body=None, status=200, method="post", key=None):
-    result = getattr(env["client"], method)(
-        "/api/v1" + path, json={**(body or {}), "idempotency_key": key or str(uuid4())}
-    )
-    assert result.status_code == status, result.text
-    return result.json()
+from app.crm.models import Request, Task
+from tests.support.business import cmd, configured_profile, request, structured
+from tests.support.crm import login, post
+from tests.support.itemized import quote_selection
 
 
 @pytest.mark.parametrize(
@@ -50,7 +34,7 @@ def cmd(env, path, body=None, status=200, method="post", key=None):
     ],
 )
 def test_fee_scale_is_based_on_customs_value(basis, fee):
-    row = _selection("normal", "reference_standards", "1", basis, "1")
+    row = quote_selection("normal", "reference_standards", "1", basis, "1")
     row["currency_code"] = "RUB"
     result = calculate_itemized(configured_profile(), [row], [], [])
     assert Decimal(result["totals"]["customs_fee_1"]) == Decimal(fee)
@@ -60,10 +44,10 @@ def test_fee_scale_is_based_on_customs_value(basis, fee):
 
 def test_columns_are_separate_from_progressive_fees_and_strains_duty():
     rows = [
-        _selection("a", "columns", "2", "10000", "1"),
-        _selection("b", "columns", "1", "10000000", "1"),
-        _selection("c", "reference_standards", "2", "50000", "1"),
-        _selection("d", "strains", "1", "1000", "1"),
+        quote_selection("a", "columns", "2", "10000", "1"),
+        quote_selection("b", "columns", "1", "10000000", "1"),
+        quote_selection("c", "reference_standards", "2", "50000", "1"),
+        quote_selection("d", "strains", "1", "1000", "1"),
     ]
     for row in rows:
         row["currency_code"] = "RUB"
@@ -83,7 +67,7 @@ def test_columns_are_separate_from_progressive_fees_and_strains_duty():
 
 @pytest.mark.parametrize("mode,net,cost", [("DAP", "2650.00", "1325.00"), ("RUSSIA", "2100.00", "1100.00")])
 def test_supplier_modes_and_expenses(mode, net, cost):
-    row = _selection("a", "reference_standards", "1", "1000", "1")
+    row = quote_selection("a", "reference_standards", "1", "1000", "1")
     row.update(currency_code="RUB", calculation_type=mode, markup_coefficient="2")
     expense = {
         "name": "Дополнительный расход",
@@ -100,112 +84,6 @@ def test_supplier_modes_and_expenses(mode, net, cost):
     assert result["totals"]["profitability_percent"] == result["totals"]["margin_percent"]
     assert Decimal(result["totals"]["cost_profitability_percent"]) > Decimal(result["totals"]["profitability_percent"])
     assert result["totals"]["markup_amount"] == result["totals"]["profit"]
-
-
-def structured(env, mode="RUSSIA", markup="1.5", owner=None):
-    login(env)
-    req = request(env)
-    seller = post(
-        env,
-        "/sellers",
-        {
-            "name": "ОГК-ХИМ",
-            "currency": "RUB",
-            "details": {"Банк": "Банк A", "БИК": "123456789", "Расчётный счёт": "40700000000000000000"},
-        },
-    )
-    supplier = post(
-        env,
-        "/counterparties",
-        {
-            "name": "Aozeal",
-            "kind": "supplier",
-            "email": "sales@aozeal.example",
-            "details": {"calculation_type": mode, "contract": "C-123"},
-        },
-    )
-    group = post(env, "/product-groups", {"name": "Стандартные образцы", "slug": "reference_standards"})
-    n = post(
-        env,
-        "/nomenclatures",
-        {
-            "name": "Sample",
-            "article": "A123",
-            "manufacturer": "Aozeal",
-            "product_group_id": group["id"],
-            "packings": [{"value": "100", "unit": "mg"}],
-        },
-    )
-    with env["sessions"].begin() as db:
-        db.get(Request, req["id"]).seller_id = seller["id"]
-        if owner:
-            db.get(Request, req["id"]).owner_id = owner
-        country = Country(name="Россия", iso2="RU")
-        db.add(country)
-        db.flush()
-        profile = itemized_profile()
-        profile["import_country_id"] = country.id
-        saved = CalculationProfile(
-            name="2026",
-            status="published",
-            effective_from=date(2026, 1, 1),
-            definition=profile,
-            reason="Тест",
-            author_id=env["admin"].id,
-        )
-        db.add(saved)
-        db.flush()
-        profile_id = saved.id
-        currency_id = db.scalar(select(Currency.id).where(Currency.code == "RUB"))
-    quote = post(
-        env,
-        f"/requests/{req['id']}/quote-sheets",
-        {
-            "supplier_id": supplier["id"],
-            "items": [
-                {
-                    "nomenclature_id": n["id"],
-                    "packing_id": n["packings"][0]["id"],
-                    "quantity": "1",
-                    "unit_price": "1000",
-                    "currency_id": currency_id,
-                    "delivery_days": 7,
-                }
-            ],
-        },
-    )
-    req = env["client"].get("/api/v1/requests/" + req["id"]).json()
-    if mode == "IMPORT":
-        wave = cmd(
-            env,
-            "/waves",
-            {
-                "supplier_id": supplier["id"],
-                "route": "Москва",
-                "origin_country": "RU",
-                "owner_id": env["admin"].id,
-                "close_date": date.today().isoformat(),
-                "departure_date": date.today().isoformat(),
-                "arrival_date": (date.today() + timedelta(days=7)).isoformat(),
-            },
-        )
-        req = {
-            **req,
-            **cmd(
-                env,
-                f"/requests/{req['id']}/wave",
-                {"request_version": req["version"], "wave_id": wave["id"]},
-                method="put",
-            ),
-        }
-    data = {
-        "request_version": req["version"],
-        "profile_id": profile_id,
-        "selections": [{"quote_item_id": quote["items"][0]["id"], "markup_coefficient": markup}],
-        "expenses": [],
-        "delivery_required": False,
-    }
-    return req, data, seller, supplier
 
 
 def test_domestic_calculation_order_export_and_calendar_source(crm):  # noqa: F811

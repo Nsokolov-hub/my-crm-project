@@ -6,8 +6,6 @@ from decimal import Decimal
 
 import pytest
 from openpyxl import load_workbook
-from test_commerce import command, commerce  # noqa: F401
-from test_itemized_wave_calculation import _selection
 
 from app.commerce.financial import (
     selection_from_saved_line,
@@ -28,6 +26,8 @@ from app.crm.models import (
     QuoteSheet,
     Request,
 )
+from tests.support.commerce import command
+from tests.support.itemized import quote_selection
 
 
 def profile_definition(country_id):
@@ -54,9 +54,9 @@ def profile_definition(country_id):
 
 def test_whole_wave_crosses_fee_brackets_and_reallocates_every_order():
     profile = profile_definition("country")
-    first = _selection("first", "reference_standards", "2", "300", "1")
-    second = _selection("second", "reference_standards", "4", "200", "1")
-    third = _selection("third", "reference_standards", "4", "150", "1")
+    first = quote_selection("first", "reference_standards", "2", "300", "1")
+    second = quote_selection("second", "reference_standards", "4", "200", "1")
+    third = quote_selection("third", "reference_standards", "4", "150", "1")
     for row in (first, second, third):
         row["currency_code"] = "RUB"
     one = calculate_itemized(profile, [first], profile["default_expenses"], [])
@@ -91,7 +91,7 @@ def test_whole_wave_crosses_fee_brackets_and_reallocates_every_order():
 
 def test_vat_deduction_removes_import_vat_from_cost_but_not_cash_needed():
     profile = profile_definition("country")
-    row = _selection("first", "reference_standards", "2", "300", "1")
+    row = quote_selection("first", "reference_standards", "2", "300", "1")
     row["currency_code"] = "RUB"
     profile["vat_deduction_mode"] = False
     before = calculate_itemized(profile, [row], [], [])
@@ -110,8 +110,8 @@ def test_vat_deduction_removes_import_vat_from_cost_but_not_cash_needed():
 
 def test_fixed_internal_bonus_is_allocated_only_to_its_request():
     profile = profile_definition("country")
-    own = _selection("own", "reference_standards", "2", "300", "1")
-    peer = _selection("peer", "reference_standards", "2", "300", "1")
+    own = quote_selection("own", "reference_standards", "2", "300", "1")
+    peer = quote_selection("peer", "reference_standards", "2", "300", "1")
     for row in (own, peer):
         row["currency_code"] = "RUB"
     result = calculate_itemized(
@@ -128,13 +128,13 @@ def test_fixed_internal_bonus_is_allocated_only_to_its_request():
 def test_partial_accepted_snapshot_preserves_weight_for_shared_costs():
     profile = profile_definition("country")
     profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "0"}]
-    old = _selection("old", "reference_standards", "4", "150", "1")
+    old = quote_selection("old", "reference_standards", "4", "150", "1")
     old["currency_code"] = "RUB"
     old["weight"] = "8"
     saved = calculate_itemized(profile, [old], [], [])
     accepted = selection_from_saved_line(saved["lines"][0], "old-request", Decimal("1"), {"weight": "8"})
     assert accepted["weight"] == "2"
-    new = _selection("new", "reference_standards", "1", "150", "1")
+    new = quote_selection("new", "reference_standards", "1", "150", "1")
     new["currency_code"] = "RUB"
     new["weight"] = "2"
     recalculated = calculate_itemized(
@@ -180,7 +180,7 @@ def test_unknown_accepted_basis_cannot_silently_omit_common_expenses(kind, metho
 
 def test_shared_foreign_expense_rate_changes_wave_digest():
     profile = profile_definition("country")
-    rows = [_selection("own", "reference_standards", "2", "300", "1")]
+    rows = [quote_selection("own", "reference_standards", "2", "300", "1")]
     rows[0]["_purchase_rub"] = "600"
     expenses = [{"name": "Логистика", "amount": "1", "currency": "USD", "scope": "WAVE"}]
 

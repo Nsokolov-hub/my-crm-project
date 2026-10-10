@@ -7,7 +7,6 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
-from test_postgres_commerce import postgres_commerce as postgres_commerce
 
 from app.commerce.schemas import VersionCommand
 from app.core.db import utcnow

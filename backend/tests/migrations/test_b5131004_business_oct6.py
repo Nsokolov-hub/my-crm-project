@@ -2,15 +2,16 @@
 
 import importlib.util
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
+from tests.support.paths import BACKEND_DIR
+
 
 def test_oct6_backfill_and_rollback_preserve_drafts_and_recorded_budgets():
-    path = Path(__file__).parents[1] / "alembic/versions/b5131004_business_oct6.py"
+    path = BACKEND_DIR / "alembic/versions/b5131004_business_oct6.py"
     spec = importlib.util.spec_from_file_location("business_oct6_migration", path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)

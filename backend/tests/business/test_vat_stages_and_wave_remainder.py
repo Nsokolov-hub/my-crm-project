@@ -5,16 +5,13 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
-from test_business_oct5 import cmd, configured_profile, structured
-from test_business_oct6 import handoff, release, wave
-from test_business_oct7 import release as issue
-from test_crm import crm  # noqa: F401
-from test_itemized_wave_calculation import _selection
 
 from app.commerce.itemized import calculate_itemized
 from app.commerce.models import Calculation
 from app.core.models import AuditEvent, PermissionGrant
 from app.crm.models import Nomenclature, QuoteItem, Request
+from tests.support.business import cmd, configured_profile, handoff, issue, release, structured, wave_row
+from tests.support.itemized import quote_selection
 
 
 def current(env, request_id):
@@ -25,7 +22,7 @@ def current(env, request_id):
 def test_rounded_sale_extracts_vat_from_gross_and_recalculates_profit(rate):
     profile = configured_profile()
     profile.update(vat_rate=rate, round_sale_up_to_ruble=True)
-    row = _selection("line", "reference_standards", "4", "100.17", "1")
+    row = quote_selection("line", "reference_standards", "4", "100.17", "1")
     row.update(currency_code="RUB", calculation_type="RUSSIA")
     line = calculate_itemized(profile, [row], [], [])["lines"][0]
     total, tax, net = (Decimal(line[key]) for key in ("total", "tax", "net"))
@@ -44,7 +41,7 @@ def test_vat_matches_business_screenshot_851998():
     rows = []
     for index, (quantity, gross_price) in enumerate(((4, 79189), (2, 187971), (5, 31860))):
         purchase = Decimal(gross_price) / Decimal("1.22") - Decimal(".01")
-        row = _selection(str(index), "reference_standards", str(quantity), str(purchase), "1")
+        row = quote_selection(str(index), "reference_standards", str(quantity), str(purchase), "1")
         row.update(currency_code="RUB", calculation_type="RUSSIA", markup_coefficient="1")
         rows.append(row)
     result = calculate_itemized(profile, rows, [], [])
@@ -120,7 +117,7 @@ def test_wave_plan_ten_minus_three_and_quote_manufacturer(crm):  # noqa: F811
     quote_view = crm["client"].get(f"/api/v1/requests/{req['id']}/quote-items").json()["items"][0]
     assert quote_view["article"] == "A123"
     assert quote_view["manufacturer"] == "Производитель образца"
-    initial = wave(crm, req["wave_id"])
+    initial = wave_row(crm, req["wave_id"])
     cmd(crm, f"/waves/{initial['id']}/forecasts", {
         "version": initial["version"], "product_group_id": group_id, "target_quantity": "10",
         "unit_price_rub": "1000", "reason": "План запуска",
@@ -129,9 +126,9 @@ def test_wave_plan_ten_minus_three_and_quote_manufacturer(crm):  # noqa: F811
     calculation = cmd(crm, f"/requests/{req['id']}/calculations", data)
     _, execution = release(crm, req, calculation, "3")
     assert current(crm, req["id"])["commercial_stage"] == "composition_agreed"
-    assert Decimal(wave(crm, initial["id"])["forecasts"][0]["remaining_quantity"]) == 10
+    assert Decimal(wave_row(crm, initial["id"])["forecasts"][0]["remaining_quantity"]) == 10
     handoff(crm, req, execution)
-    forecast = wave(crm, initial["id"])["forecasts"][0]
+    forecast = wave_row(crm, initial["id"])["forecasts"][0]
     assert Decimal(forecast["target_quantity"]) == 10
     assert Decimal(forecast["filled_quantity"]) == 3
     assert Decimal(forecast["remaining_quantity"]) == 7
@@ -143,7 +140,7 @@ def test_wave_remainder_does_not_disclose_inaccessible_request_quantities(crm): 
     with crm["sessions"]() as db:
         quote = db.get(QuoteItem, data["selections"][0]["quote_item_id"])
         group_id = db.get(Nomenclature, quote.nomenclature_id).product_group_id
-    initial = wave(crm, req["wave_id"])
+    initial = wave_row(crm, req["wave_id"])
     cmd(crm, f"/waves/{initial['id']}/forecasts", {
         "version": initial["version"], "product_group_id": group_id, "target_quantity": "10",
         "unit_price_rub": "1000", "reason": "План запуска",
@@ -154,7 +151,7 @@ def test_wave_remainder_does_not_disclose_inaccessible_request_quantities(crm): 
     with crm["sessions"].begin() as db:
         db.get(Request, req["id"]).owner_id = crm["manager"].id
         db.query(PermissionGrant).filter_by(user_id=crm["admin"].id, code="requests.read").update({"scope": "own"})
-    visible = wave(crm, initial["id"])
+    visible = wave_row(crm, initial["id"])
     assert visible["allocations"] == []
     assert visible["forecasts"][0]["filled_quantity"] is None
     assert visible["forecasts"][0]["remaining_quantity"] is None

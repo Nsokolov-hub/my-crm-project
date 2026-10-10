@@ -8,10 +8,6 @@ from uuid import uuid4
 import pytest
 from openpyxl import load_workbook
 from sqlalchemy import select
-from test_business_imports import confirm, preview, request
-from test_business_oct5 import cmd, configured_profile, structured
-from test_crm import crm, login, post  # noqa: F401
-from test_itemized_wave_calculation import _selection
 
 from app.business.models import SupplierMail
 from app.business.worker import send_mail
@@ -21,11 +17,14 @@ from app.commerce.models import Calculation, CommercialDocument
 from app.core.config import settings
 from app.core.models import OutboxEvent
 from app.crm.models import QuoteItem, QuoteSheet
+from tests.support.business import cmd, configured_profile, confirm, issue, preview, request, structured
+from tests.support.crm import login, post
+from tests.support.itemized import quote_selection
 
 
 @pytest.mark.parametrize("kind,value", [("PERCENTAGE", "15"), ("MULTIPLIER", "1.15"), ("FIXED", "225")])
 def test_line_bonus_is_not_added_again_by_legacy_global_adjustment(kind, value):
-    row = _selection("line", "reference_standards", "1", "1000", "1.15")
+    row = quote_selection("line", "reference_standards", "1", "1000", "1.15")
     row.update(currency_code="RUB", calculation_type="RUSSIA")
     baseline = calculate_itemized(configured_profile(), [row], [], [])
     result = calculate_itemized(configured_profile(), [row], [], [], {
@@ -37,7 +36,7 @@ def test_line_bonus_is_not_added_again_by_legacy_global_adjustment(kind, value):
 
 
 def test_legacy_global_bonus_only_and_separate_service_fee_remain_supported():
-    row = _selection("line", "reference_standards", "1", "1000", "1")
+    row = quote_selection("line", "reference_standards", "1", "1000", "1")
     row.update(currency_code="RUB", calculation_type="RUSSIA")
     result = calculate_itemized(configured_profile(), [row], [], [], {
         "enabled": True, "type": "PERCENTAGE", "value": "15", "service_fee_percent": "2",
@@ -46,26 +45,18 @@ def test_legacy_global_bonus_only_and_separate_service_fee_remain_supported():
     assert Decimal(result["lines"][0]["detail"]["additional_service_fee"]) == 20
 
 
-def release(env, req, calculation, days=30):
-    return cmd(env, f"/requests/{req['id']}/proposals", {
-        "calculation_id": calculation["id"],
-        "valid_until": (date.today() + timedelta(days=days)).isoformat(),
-        "terms": "Оплата согласно договору.",
-    })
-
-
 def test_documents_have_five_day_lifetime_short_number_and_fixed_proposal_signature(crm):  # noqa: F811
     req, data, _, supplier = structured(crm)
     calculation = cmd(crm, f"/requests/{req['id']}/calculations", data)
     assert calculation["snapshot"]["lines"][0]["delivery_days"] == 7
     assert calculation["snapshot"]["lines"][0]["supplier_name"] == supplier["name"]
-    proposal = release(crm, req, calculation)
+    proposal = issue(crm, req, calculation)
     until = (date.today() + timedelta(days=5)).isoformat()
     assert proposal["valid_until"] == proposal["snapshot"]["valid_until"] == until
     assert proposal["display_number"] == f"{req['number']}-1"
     assert proposal["snapshot"]["signature"] == PROPOSAL_SIGNATURE
     assert proposal["snapshot"]["validity_notice"] == PROPOSAL_NOTICE
-    assert release(crm, req, calculation, days=2)["valid_until"] == (date.today() + timedelta(days=2)).isoformat()
+    assert issue(crm, req, calculation, days=2)["valid_until"] == (date.today() + timedelta(days=2)).isoformat()
     with crm["sessions"]() as db:
         document = db.get(CommercialDocument, proposal["id"])
         book = load_workbook(io.BytesIO(read_file(document.files["xlsx"])))
@@ -99,7 +90,7 @@ def test_documents_have_five_day_lifetime_short_number_and_fixed_proposal_signat
 def test_delete_quote_item_preserves_saved_documents_but_prevents_new_use(crm):  # noqa: F811
     req, data, _, _ = structured(crm)
     calculation = cmd(crm, f"/requests/{req['id']}/calculations", data)
-    proposal = release(crm, req, calculation)
+    proposal = issue(crm, req, calculation)
     before = crm["client"].get(f"/api/v1/documents/{proposal['id']}/file?format=pdf").content
     row = crm["client"].get(f"/api/v1/requests/{req['id']}/quote-items").json()["items"][0]
     key = str(uuid4())

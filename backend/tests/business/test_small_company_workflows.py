@@ -1,12 +1,11 @@
 """Daily workflow checks with real authentication and an isolated database."""
 
 from sqlalchemy import delete
-from test_crm import PASSWORD, login, post
-from test_crm import crm as crm
 
 from app import bootstrap
 from app.core.models import AppSetting
 from app.core.settings_registry import SETTING_META
+from tests.support.crm import PASSWORD, login, post
 
 
 def test_bootstrapped_admin_can_update_dictionary_and_assign_setting_permissions(crm, monkeypatch):

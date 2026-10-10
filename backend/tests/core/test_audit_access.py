@@ -3,11 +3,9 @@
 from decimal import Decimal
 from uuid import uuid4
 
-from test_crm import PASSWORD, login, post
-from test_crm import crm as crm  # noqa: F401
-
 from app.core.models import PermissionGrant, User
 from app.core.security import password_hasher
+from tests.support.crm import PASSWORD, login, post
 
 FINANCE = ("finance.purchase.read", "finance.calculations.read", "finance.reward.read", "finance.profit.read")
 

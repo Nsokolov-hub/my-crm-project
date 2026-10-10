@@ -5,12 +5,12 @@ import shutil
 import subprocess
 import tarfile
 import time
-from pathlib import Path
 
 import pytest
 
 from app.core.config import settings
 from app.core.init_roles import init_roles
+from tests.support.paths import REPO_DIR
 
 
 def get_hash(filepath):
@@ -67,7 +67,7 @@ def test_init_roles_idempotency_and_no_ddl():
 @pytest.mark.integration
 def test_backup_fails_if_storage_dir_missing(tmp_path):
     """Verify that backup raises an error if storage directory is missing (no silent empty archive)."""
-    script = Path(__file__).resolve().parents[2] / "scripts" / "recovery.py"
+    script = REPO_DIR / "scripts" / "recovery.py"
     missing_storage = tmp_path / "nonexistent_storage"
 
     res = subprocess.run(
@@ -89,7 +89,7 @@ def test_backup_fails_if_storage_dir_missing(tmp_path):
 
 def test_restore_requires_force_flag(tmp_path):
     """Verify that restore requires explicit --force flag."""
-    script = Path(__file__).resolve().parents[2] / "scripts" / "recovery.py"
+    script = REPO_DIR / "scripts" / "recovery.py"
     dummy_archive = tmp_path / "backup.tar.gz"
     dummy_archive.touch()
 
@@ -110,7 +110,7 @@ def test_restore_requires_force_flag(tmp_path):
 @pytest.mark.integration
 def test_restore_detects_tampered_dump_and_aborts(tmp_path):
     """Verify that checksum mismatch in db.dump or files.tar.gz immediately aborts restore."""
-    script = Path(__file__).resolve().parents[2] / "scripts" / "recovery.py"
+    script = REPO_DIR / "scripts" / "recovery.py"
 
     # Create storage with a file
     storage = tmp_path / "files"
@@ -177,7 +177,7 @@ def test_restore_detects_tampered_dump_and_aborts(tmp_path):
 @pytest.mark.integration
 def test_full_backup_and_restore_cycle_with_files(tmp_path):
     """Complete E2E cycle: backup -> disaster simulation -> restore -> verify data & file integrity."""
-    script = Path(__file__).resolve().parents[2] / "scripts" / "recovery.py"
+    script = REPO_DIR / "scripts" / "recovery.py"
 
     storage = tmp_path / "files"
     storage.mkdir(parents=True)

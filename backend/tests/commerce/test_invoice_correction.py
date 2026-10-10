@@ -4,10 +4,8 @@ import copy
 from datetime import date, timedelta
 from decimal import Decimal
 
-from test_commerce import command, get, prepare
-from test_commerce import commerce as commerce
-
 from app.crm.models import Counterparty
+from tests.support.commerce import command, fund, get, prepare
 
 
 def test_unpaid_invoice_can_be_voided_and_issued_again(commerce):
@@ -38,8 +36,6 @@ def test_unpaid_invoice_can_be_voided_and_issued_again(commerce):
 
 
 def test_invoice_with_confirmed_allocated_payment_cannot_be_voided(commerce):
-    from test_commerce import fund
-
     state = prepare(commerce, with_invoice=True)
     fund(commerce, state)
     invoice = state["invoice"]

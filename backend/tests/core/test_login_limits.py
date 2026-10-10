@@ -1,11 +1,10 @@
 """Sign-in throttling is per account and per client address, not shared by everyone behind a proxy."""
 
 from sqlalchemy import event
-from test_crm import PASSWORD
-from test_crm import crm as crm  # noqa: F401
 
 from app.core.config import settings
 from app.core.models import LoginAttempt
+from tests.support.crm import PASSWORD
 
 TEST_CLIENT_IP = "testclient"
 

@@ -5,7 +5,6 @@ import subprocess
 import sys
 import uuid
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from sqlalchemy import select
@@ -14,6 +13,7 @@ from app.commerce.models import CommercialDocument
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.models import User
+from tests.support.paths import REPO_DIR
 
 
 @pytest.fixture
@@ -98,7 +98,7 @@ def test_dry_run_makes_zero_changes(tmp_path, sample_payload):
     if not settings.database_url.startswith("postgresql"):
         pytest.skip("Requires PostgreSQL database")
 
-    script = Path(__file__).resolve().parents[2] / "scripts" / "migrate_legacy.py"
+    script = REPO_DIR / "scripts" / "migrate_legacy.py"
     data_file = tmp_path / "data.json"
     report_file = tmp_path / "report.json"
     data_file.write_text(json.dumps(sample_payload, ensure_ascii=False))
@@ -143,7 +143,7 @@ def test_commit_persists_data_and_repeat_is_idempotent(tmp_path, sample_payload)
     if not settings.database_url.startswith("postgresql"):
         pytest.skip("Requires PostgreSQL database")
 
-    script = Path(__file__).resolve().parents[2] / "scripts" / "migrate_legacy.py"
+    script = REPO_DIR / "scripts" / "migrate_legacy.py"
     data_file = tmp_path / "data.json"
     report_file = tmp_path / "commit_report.json"
     data_file.write_text(json.dumps(sample_payload, ensure_ascii=False))
@@ -247,7 +247,7 @@ def test_discrepancy_reporting_for_missing_dates_and_references(tmp_path):
         ],
     }
 
-    script = Path(__file__).resolve().parents[2] / "scripts" / "migrate_legacy.py"
+    script = REPO_DIR / "scripts" / "migrate_legacy.py"
     data_file = tmp_path / "bad_data.json"
     report_file = tmp_path / "discrepancies.json"
     data_file.write_text(json.dumps(bad_payload, ensure_ascii=False))

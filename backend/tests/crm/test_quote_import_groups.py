@@ -5,13 +5,12 @@ import io
 import pytest
 from openpyxl import load_workbook
 from sqlalchemy import func, select
-from test_business_imports import confirm, preview, quote_file, request
-from test_crm import crm as crm
-from test_crm import login, post
 
 from app.crm.imports import xlsx
 from app.crm.models import Nomenclature, ProductGroup, QuoteItem, QuoteSheet, RequestItem, TableImport
 from app.crm.table_imports import QUOTE_COLUMNS
+from tests.support.business import confirm, preview, quote_file, request
+from tests.support.crm import login, post
 
 
 def group(crm, name="Стандарты", slug="standards"):

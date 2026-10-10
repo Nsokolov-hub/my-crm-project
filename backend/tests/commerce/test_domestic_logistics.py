@@ -5,14 +5,13 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
-from test_business_imports import request
-from test_business_oct5 import cmd, structured
-from test_crm import crm, post  # noqa: F401
-from test_itemized_wave_calculation import _selection
 
 from app.commerce.itemized import calculate_itemized, itemized_profile
 from app.commerce.models import Calculation
 from app.crm.models import QuoteItem
+from tests.support.business import cmd, request, structured
+from tests.support.crm import post
+from tests.support.itemized import quote_selection
 
 
 @pytest.mark.parametrize("deduct_vat", [True, False])
@@ -20,9 +19,9 @@ def test_pickup_is_shared_but_cdek_and_moscow_are_added_only_to_current_calculat
     profile = itemized_profile()
     profile.update(import_country_id="country", vat_deduction_mode=deduct_vat)
     profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "0"}]
-    first = _selection("a", "reference_standards", "1", "1000", "1")
-    second = _selection("b", "reference_standards", "1", "2000", "1")
-    peer = _selection("peer", "reference_standards", "10", "3000", "1")
+    first = quote_selection("a", "reference_standards", "1", "1000", "1")
+    second = quote_selection("b", "reference_standards", "1", "2000", "1")
+    peer = quote_selection("peer", "reference_standards", "10", "3000", "1")
     for row in (first, second, peer):
         row["currency_code"] = "RUB"
     expenses = [
@@ -62,7 +61,7 @@ def test_pickup_is_shared_but_cdek_and_moscow_are_added_only_to_current_calculat
 def test_explicit_logistics_stages_work_with_custom_names_and_fractional_penny_allocation():
     profile = itemized_profile()
     profile.update(import_country_id="country")
-    rows = [_selection(str(i), "reference_standards", "1", "100", "1") for i in range(3)]
+    rows = [quote_selection(str(i), "reference_standards", "1", "100", "1") for i in range(3)]
     for row in rows:
         row["currency_code"] = "RUB"
     result = calculate_itemized(profile, rows[:2], [

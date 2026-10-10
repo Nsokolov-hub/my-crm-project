@@ -2,15 +2,16 @@
 
 import importlib.util
 from datetime import date
-from pathlib import Path
 
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
+from tests.support.paths import BACKEND_DIR
+
 
 def test_oct2_upgrade_preserves_legacy_records_and_seeds_compact_counter():
-    path = Path(__file__).parents[1] / "alembic/versions/b5131002_business_workflows.py"
+    path = BACKEND_DIR / "alembic/versions/b5131002_business_workflows.py"
     spec = importlib.util.spec_from_file_location("business_oct2_migration", path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)

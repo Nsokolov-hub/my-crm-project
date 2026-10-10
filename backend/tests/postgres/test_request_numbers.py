@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from sqlalchemy import delete, select
-from test_postgres_commerce import postgres_commerce as postgres_commerce
 
 from app.crm.codes import next_request_number
 from app.crm.models import NumberCounter, Request

@@ -1,31 +1,18 @@
 """Commerce concurrency acceptance checks against real PostgreSQL.
 
-Run: PYTHONPATH=backend .venv/bin/pytest backend/tests/test_postgres_commerce.py -q
+Run: PYTHONPATH=backend .venv/bin/pytest backend/tests/postgres/test_commerce_concurrency.py -q
 Uses POSTGRES_TEST_DATABASE_URL when set, otherwise the configured database URL.
 Every test creates and drops its own schema; public tables are never used.
 For an offline unit-test run, exclude the postgres marker with ``-m 'not postgres'``.
 """
 
-import os
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from decimal import Decimal
-from threading import Barrier, Lock
 from uuid import uuid4
 
 import pytest
-from alembic.config import Config
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select, text
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.schema import CreateSchema, DropSchema
-from test_commerce import approve, command, fund, get, prepare, wave
+from sqlalchemy import func, select
 
-from alembic import command as migrations
 from app.commerce.models import (
     Manufacturer,
     Payment,
@@ -34,163 +21,13 @@ from app.commerce.models import (
     Substance,
     WaveAllocation,
 )
-from app.commerce.routes import router
-from app.core.config import settings
-from app.core.db import get_db
-from app.core.errors import DomainError
-from app.core.models import AuditEvent, IdempotencyRecord, PermissionGrant, User
-from app.core.security import PERMISSIONS, current_user
-from app.crm.models import Counterparty, Request, RequestItem, Seller
+from app.core.models import AuditEvent, IdempotencyRecord
+from tests.support.commerce import approve, command, fund, get, prepare, wave
+from tests.support.postgres import concurrent_posts
 
 pytestmark = pytest.mark.postgres
 # Invoices must not be due in the past; a fixed calendar date expired on 2026-10-11.
 DUE_DATE = (date.today() + timedelta(days=10)).isoformat()
-
-
-@pytest.fixture
-def postgres_commerce(tmp_path, monkeypatch):
-    url = make_url(os.environ.get("POSTGRES_TEST_DATABASE_URL", settings.database_url))
-    if url.get_backend_name() != "postgresql":
-        pytest.skip("The postgres acceptance gate requires a PostgreSQL database URL")
-    schema = f"test_commerce_{uuid4().hex}"
-    admin = create_engine(url, connect_args={"connect_timeout": 5}, hide_parameters=True)
-    try:
-        with admin.begin() as connection:
-            connection.execute(CreateSchema(schema))
-    except OperationalError:
-        admin.dispose()
-        pytest.fail(
-            "PostgreSQL is unavailable. Start the local database or set POSTGRES_TEST_DATABASE_URL.",
-            pytrace=False,
-        )
-
-    engine = create_engine(
-        url,
-        connect_args={
-            "connect_timeout": 5,
-            "options": f"-csearch_path={schema} -cstatement_timeout=20000 -clock_timeout=10000",
-        },
-        pool_size=8,
-        max_overflow=0,
-        hide_parameters=True,
-    )
-    try:
-        with engine.begin() as connection:
-            assert connection.scalar(text("SELECT current_schema()")) == schema
-            ini_path = "alembic.ini" if os.path.exists("alembic.ini") else "backend/alembic.ini"
-            config = Config(ini_path)
-            config.attributes["connection"] = connection
-            migrations.upgrade(config, "head")
-        sessions = sessionmaker(engine, expire_on_commit=False)
-        monkeypatch.setattr(settings, "storage_dir", tmp_path / "files")
-        with sessions() as db:
-            owner = User(email="owner@example.test", name="Владелец", password_hash="fixture-only")
-            db.add(owner)
-            db.flush()
-            db.add_all(PermissionGrant(user_id=owner.id, code=code, scope="all") for code in PERMISSIONS)
-            seller = Seller(name="Тестовый продавец", currency="RUB", details={"tax_id": "TEST"})
-            client = Counterparty(name="Клиент", kind="client", owner_id=owner.id)
-            supplier = Counterparty(name="Поставщик", kind="supplier", owner_id=owner.id)
-            db.add_all([seller, client, supplier])
-            db.flush()
-            request = Request(
-                number="TEST-PG-001",
-                title="Конкурентная тестовая заявка",
-                seller_id=seller.id,
-                client_id=client.id,
-                owner_id=owner.id,
-                is_test=True,
-            )
-            db.add(request)
-            db.flush()
-            item = RequestItem(
-                request_id=request.id,
-                description="Этанол для теста",
-                cas="64-17-5",
-                quantity=Decimal("10"),
-                unit="pcs",
-                purity="99%",
-                packaging="1 штука",
-                allow_analogue=False,
-            )
-            db.add(item)
-            db.commit()
-            state = {
-                "owner_id": owner.id,
-                "seller_id": seller.id,
-                "client_id": client.id,
-                "supplier_id": supplier.id,
-                "request_id": request.id,
-                "item_id": item.id,
-                "sessions": sessions,
-                "barrier": None,
-                "backend_pids": [],
-            }
-
-        app = FastAPI()
-        app.include_router(router, prefix="/api/v1")
-        pid_lock = Lock()
-
-        @app.exception_handler(DomainError)
-        async def domain_error(_request, exc):
-            return JSONResponse(
-                {"code": exc.code, "message": exc.message, "field": exc.field},
-                status_code=exc.status,
-            )
-
-        def get_session():
-            with sessions() as db:
-                try:
-                    if state["barrier"] is not None:
-                        # Reserve independent connections and begin every transaction before
-                        # releasing any route. No service locks or queries are mocked.
-                        pid, active_schema = db.execute(
-                            text("SELECT pg_backend_pid(), current_schema()")
-                        ).one()
-                        assert active_schema == schema
-                        with pid_lock:
-                            state["backend_pids"].append(pid)
-                        state["barrier"].wait(timeout=10)
-                    yield db
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                    raise
-
-        app.dependency_overrides[get_db] = get_session
-        app.dependency_overrides[current_user] = lambda: owner
-        state["app"] = app
-        with TestClient(app) as api:
-            state["client"] = api
-            yield state
-    finally:
-        engine.dispose()
-        try:
-            with admin.begin() as connection:
-                connection.execute(DropSchema(schema, cascade=True))
-        finally:
-            admin.dispose()
-
-
-def concurrent_posts(env, requests):
-    """Perform simultaneous API calls and prove they used distinct PostgreSQL sessions."""
-    env["barrier"] = Barrier(len(requests))
-    env["backend_pids"] = []
-
-    def post(request):
-        path, payload = request
-        with TestClient(env["app"]) as client:
-            return client.post("/api/v1" + path, json=payload)
-
-    try:
-        with ThreadPoolExecutor(max_workers=len(requests)) as executor:
-            futures = [executor.submit(post, request) for request in requests]
-            responses = [future.result(timeout=30) for future in futures]
-    finally:
-        env["barrier"] = None
-    assert len(env["backend_pids"]) == len(requests)
-    assert len(set(env["backend_pids"])) == len(requests)
-    return responses
 
 
 def payment_payload(invoice_id, amount="1000", number="PAY-PG-001"):

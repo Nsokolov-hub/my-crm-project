@@ -1,7 +1,6 @@
 """Preserve legacy confirmations and file ownership while repairing refusals."""
 
 import importlib.util
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -10,6 +9,7 @@ from alembic.operations import Operations
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
+from tests.support.paths import BACKEND_DIR
 
 
 def test_payment_migration_preserves_facts_and_closes_only_uncommitted_refusals(monkeypatch):
@@ -31,7 +31,7 @@ def test_payment_migration_preserves_facts_and_closes_only_uncommitted_refusals(
     executions = sa.Table("executions", metadata, sa.Column("id", sa.String(36), primary_key=True),
                           sa.Column("request_id", sa.String(36)), sa.Column("quantity", sa.Integer()),
                           sa.Column("cancelled_quantity", sa.Integer()))
-    path = Path(__file__).parents[1] / "alembic/versions/b5131007_payment_calendar.py"
+    path = BACKEND_DIR / "alembic/versions/b5131007_payment_calendar.py"
     spec = importlib.util.spec_from_file_location("payment_migration", path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
