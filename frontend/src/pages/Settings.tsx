@@ -477,6 +477,11 @@ export function Settings() {
             { key: 'status', label: 'Состояние', render: (r) => <Badge value={r.status} /> },
             { key: 'progress', label: 'Прогресс' },
             { key: 'attempts', label: 'Попытки' },
+            {
+              key: 'next_attempt_at',
+              label: 'Следующая попытка',
+              render: (r) => date(r.next_attempt_at, true),
+            },
             { key: 'error', label: 'Причина ошибки' },
           ]}
         />

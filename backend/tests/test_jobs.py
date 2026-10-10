@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import app.business.models  # noqa: F401
 import app.commerce.models  # noqa: F401
 from app.communication import worker
 from app.communication.files import store_quarantine
@@ -125,7 +126,7 @@ def test_metadata_permissions_pagination_and_no_payload(jobs):
     assert data['items'][0]['id'] == first
     assert data['items'][0]['error'] == 'JOB_EXECUTION_FAILED'
     assert set(data['items'][0]) == {'id', 'kind', 'status', 'attempts', 'progress', 'version',
-                                     'created_at', 'started_at', 'finished_at', 'error'}
+                                     'created_at', 'started_at', 'finished_at', 'next_attempt_at', 'error'}
     assert 'private' not in response.text.lower() and '12345' not in response.text
     assert client.get('/api/v1/admin/jobs', params={'q': 'file.scan'}).json()['total'] == 1
     assert client.get('/api/v1/admin/jobs?page_size=101').status_code == 422
@@ -200,7 +201,9 @@ def test_retry_limit_backoff_versions_and_failure_notifications(jobs, monkeypatc
     assert run(jobs, now) == {'succeeded': 0, 'retried': 1, 'failed': 0}
     assert run(jobs, now + timedelta(seconds=1)) == {'succeeded': 0, 'retried': 0, 'failed': 0}
     for attempt in range(2, worker.MAX_ATTEMPTS + 1):
-        now += timedelta(minutes=6)
+        # A transient failure is retried only once its scheduled delay has passed.
+        assert run(jobs, now + worker.retry_delay(attempt - 1) - timedelta(seconds=1))['retried'] == 0
+        now += worker.retry_delay(attempt - 1)
         counts = run(jobs, now)
         assert counts['failed' if attempt == worker.MAX_ATTEMPTS else 'retried'] == 1
     assert len(calls) == worker.MAX_ATTEMPTS
@@ -215,7 +218,7 @@ def test_retry_limit_backoff_versions_and_failure_notifications(jobs, monkeypatc
         assert all(n.title == 'Фоновая операция требует внимания' for n in notifications)
     result = retry(jobs, job_id, 1 + worker.MAX_ATTEMPTS)
     for attempt in range(worker.MAX_ATTEMPTS):
-        now += timedelta(minutes=6)
+        now += worker.RETRY_MAX_DELAY
         run(jobs, now)
     with jobs['sessions']() as db:
         assert db.get(OutboxEvent, job_id).version == result['version'] + worker.MAX_ATTEMPTS
@@ -320,3 +323,39 @@ def test_worker_changes_disappear_when_outer_transaction_rolls_back(jobs):
         row = db.get(OutboxEvent, job_id)
         assert row.status == 'pending' and row.attempts == 0 and row.version == 1
         assert db.scalar(select(func.count()).select_from(Notification)) == 0
+
+
+def test_business_rejection_fails_at_once_without_retries(jobs, monkeypatch):
+    job_id = add_job(jobs)
+
+    def rejected(db, event):
+        raise DomainError('IMPORT_ROW_INVALID', 'Строка не прошла проверку', 422)
+
+    monkeypatch.setattr(worker, 'dispatch', rejected)
+    assert run(jobs) == {'succeeded': 0, 'retried': 0, 'failed': 1}
+    with jobs['sessions']() as db:
+        row = db.get(OutboxEvent, job_id)
+        assert row.status == 'failed' and row.attempts == 1 and row.error == 'IMPORT_ROW_INVALID'
+        assert row.next_attempt_at is None
+
+
+def test_event_waiting_for_retry_does_not_hold_back_newer_events(jobs, monkeypatch):
+    waiting = add_job(jobs)
+    newer = add_job(jobs)
+    handled = []
+
+    def flaky(db, event):
+        handled.append(event.id)
+        if event.id == waiting:
+            raise ConnectionError('scanner restarting')
+
+    monkeypatch.setattr(worker, 'dispatch', flaky)
+    now = utcnow()
+    with jobs['sessions'].begin() as db:
+        assert worker.process_events(db, limit=1, now=now) == {'succeeded': 0, 'retried': 1, 'failed': 0}
+    with jobs['sessions'].begin() as db:
+        assert worker.process_events(db, limit=1, now=now) == {'succeeded': 1, 'retried': 0, 'failed': 0}
+    assert handled == [waiting, newer]
+    with jobs['sessions']() as db:
+        scheduled = db.get(OutboxEvent, waiting).next_attempt_at.replace(tzinfo=None)
+        assert scheduled == (now + worker.retry_delay(1)).replace(tzinfo=None)

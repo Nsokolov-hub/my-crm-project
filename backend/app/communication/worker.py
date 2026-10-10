@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.communication.access import check_chat
@@ -27,12 +27,27 @@ from app.core.service import advisory, audit, notify
 from app.crm.models import ImportBatch, Task
 
 logger = logging.getLogger('crm.worker')
-MAX_ATTEMPTS = 5
+# Transient failures (scanner, mail server, storage, database) are retried with exponential backoff
+# for about five hours, so a restart of ClamAV or SMTP does not turn jobs into permanent failures.
+MAX_ATTEMPTS = 12
+RETRY_BASE_DELAY = timedelta(seconds=30)
+RETRY_MAX_DELAY = timedelta(hours=1)
+# Deterministic business rejections do not change on retry; they fail at once for quick feedback.
+# A version conflict (409) may resolve itself and is retried like a transient failure.
+PERMANENT_STATUSES = frozenset({400, 401, 403, 404, 410, 422})
 
 
 def safe_job_error(value: str | None) -> str:
     """Expose stable error codes, never exception text, paths, or legacy diagnostics."""
     return value if value and re.fullmatch(r'[A-Z][A-Z0-9_]{0,79}', value) else 'JOB_EXECUTION_FAILED'
+
+
+def retry_delay(attempt: int) -> timedelta:
+    return min(RETRY_MAX_DELAY, RETRY_BASE_DELAY * 2 ** (attempt - 1))
+
+
+def is_permanent(exc: Exception) -> bool:
+    return isinstance(exc, DomainError) and exc.status in PERMANENT_STATUSES
 
 
 def aware(value: datetime) -> datetime:
@@ -165,13 +180,12 @@ def process_events(db: Session, limit: int = 25, now: datetime | None = None) ->
     """Process a bounded batch within the caller's transaction; caller commits or rolls back."""
     now = aware(now or utcnow())
     counts = {'succeeded': 0, 'retried': 0, 'failed': 0}
-    events = db.scalars(select(OutboxEvent).where(OutboxEvent.status == 'pending')
-                        .order_by(OutboxEvent.created_at, OutboxEvent.id).limit(limit)
-                        .with_for_update(skip_locked=True)).all()
+    # Events waiting for their next attempt are not selected, so they cannot hold back newer ones.
+    events = db.scalars(select(OutboxEvent).where(
+        OutboxEvent.status == 'pending',
+        or_(OutboxEvent.next_attempt_at.is_(None), OutboxEvent.next_attempt_at <= now),
+    ).order_by(OutboxEvent.created_at, OutboxEvent.id).limit(limit).with_for_update(skip_locked=True)).all()
     for event in events:
-        delay = min(300, 2 ** event.attempts)
-        if event.attempts and event.started_at and aware(event.started_at) + timedelta(seconds=delay) > now:
-            continue
         event.attempts += 1
         event.version += 1
         event.started_at = now
@@ -186,13 +200,15 @@ def process_events(db: Session, limit: int = 25, now: datetime | None = None) ->
             event.progress = 100
             event.error = None
             event.finished_at = now
+            event.next_attempt_at = None
             counts['succeeded'] += 1
         except Exception as exc:
             event.error = safe_job_error(exc.code if isinstance(exc, DomainError) else None)
-            final = event.attempts >= MAX_ATTEMPTS
+            final = is_permanent(exc) or event.attempts >= MAX_ATTEMPTS
             event.status = 'failed' if final else 'pending'
             event.progress = 0
             event.finished_at = now if final else None
+            event.next_attempt_at = None if final else now + retry_delay(event.attempts)
             counts['failed' if final else 'retried'] += 1
             logger.warning('outbox_failed event_id=%s kind=%s attempts=%s error=%s',
                            event.id, event.kind, event.attempts, event.error)

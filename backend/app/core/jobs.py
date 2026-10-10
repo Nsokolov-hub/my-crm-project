@@ -17,7 +17,7 @@ from app.crm.models import ImportBatch
 
 router = APIRouter(tags=['Фоновые операции'])
 JOB_FIELDS = ('id', 'kind', 'status', 'attempts', 'progress', 'version', 'created_at',
-              'started_at', 'finished_at', 'error')
+              'started_at', 'finished_at', 'next_attempt_at', 'error')
 
 
 def job_view(row: Any) -> dict[str, Any]:
@@ -103,6 +103,7 @@ def retry_job(
         event.progress = 0
         event.started_at = None
         event.finished_at = None
+        event.next_attempt_at = None
         event.error = None
         event.version += 1
         result = job_view(event)
