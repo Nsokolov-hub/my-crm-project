@@ -27,6 +27,8 @@ def test_init_roles_idempotency_and_no_ddl():
     """Verify role initialization creates roles idempotently and restricts DDL."""
     if not settings.database_url.startswith("postgresql"):
         pytest.skip("Requires PostgreSQL database")
+    if not (settings.crm_api_password and settings.crm_backup_password):
+        pytest.skip("Requires CRM_API_PASSWORD and CRM_BACKUP_PASSWORD")
 
     # Run init_roles twice to verify idempotency on existing volume
     init_roles()

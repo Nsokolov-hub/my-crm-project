@@ -21,8 +21,9 @@ class Settings(BaseSettings):
     clamav_host: str = '127.0.0.1'
     clamav_port: int = 3310
     require_mfa: bool = False
-    crm_api_password: str = 'crm_api_password'
-    crm_backup_password: str = 'crm_backup_password'
+    # Role passwords are read only by app.core.init_roles; there are deliberately no defaults.
+    crm_api_password: str = ''
+    crm_backup_password: str = ''
     smtp_host: str = ''
     smtp_port: int = 587
     smtp_user: str = ''
@@ -36,6 +37,8 @@ class Settings(BaseSettings):
                 raise RuntimeError('Production SECRET_KEY must be independently generated')
             if not self.database_url.startswith('postgresql'):
                 raise RuntimeError('Production requires PostgreSQL')
+            if any(placeholder in self.database_url for placeholder in ('crm_api_password', 'replace-with')):
+                raise RuntimeError('Production DATABASE_URL still uses a default or example password')
             self.require_mfa = True
 
 
