@@ -38,7 +38,9 @@ async def context(request: Request, call_next):
     try:
         response = await call_next(request)
     except Exception:
-        logger.error(json.dumps({'event': 'unhandled_error', 'requestId': correlation}))
+        # The traceback is required to investigate a 500; the client only receives the request code.
+        logger.exception(json.dumps({'event': 'unhandled_error', 'requestId': correlation,
+                                     'method': request.method, 'path': request.url.path}))
         response = JSONResponse({'code': 'INTERNAL_ERROR', 'message': 'Операция не выполнена. Передайте код ошибки ответственному за сопровождение.', 'field': None, 'requestId': correlation}, status_code=500)
     duration = time.perf_counter() - start
     route = getattr(request.scope.get('route'), 'path', 'unmatched')
@@ -65,11 +67,15 @@ async def validation_error(request: Request, exc: RequestValidationError):
 
 @app.exception_handler(IntegrityError)
 async def constraint_error(request: Request, exc: IntegrityError):
+    constraint = getattr(getattr(getattr(exc, 'orig', None), 'diag', None), 'constraint_name', None)
+    logger.warning(json.dumps({'event': 'integrity_error', 'requestId': request.state.request_id,
+                               'constraint': constraint, 'error': type(getattr(exc, 'orig', exc)).__name__}))
     return JSONResponse({'code': 'DATA_CONFLICT', 'message': 'Данные уже существуют или нарушают ограничения. Обновите запись и проверьте связанные объекты.', 'field': None, 'requestId': request.state.request_id}, status_code=409)
 
 
 @app.exception_handler(OperationalError)
 async def transaction_error(request: Request, exc: OperationalError):
+    logger.error(json.dumps({'event': 'database_unavailable', 'requestId': request.state.request_id}), exc_info=exc)
     return JSONResponse({'code': 'TRANSACTION_RETRY', 'message': 'Операция временно недоступна. Повторите её с тем же ключом.', 'field': None, 'requestId': request.state.request_id}, status_code=503)
 
 
