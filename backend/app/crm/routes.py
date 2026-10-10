@@ -619,19 +619,13 @@ def edit_client(entity_id: str, body: ClientPatch, user: User = Depends(current_
     row.version += 1
     
     if archive_cascade:
-        # Cascade archive requests and items
+        # Archiving a counterparty also archives its requests; their items are left unchanged.
         requests = db.scalars(select(Request).where(Request.client_id == row.id, Request.archived.is_(False))).all()
         for req in requests:
             req_before = serialize(req)
             req.archived = True
             req.version += 1
-            db.add(req)
             audit(db, user, 'request', req.id, 'updated', req_before, serialize(req), "Client archived cascade")
-            
-            items = db.scalars(select(RequestItem).where(RequestItem.request_id == req.id)).all()
-            for it in items:
-                # Assuming RequestItem has archived? Wait, I added archived to ItemPatch! Let's check Item model.
-                pass
 
     audit(db, user, 'counterparty', row.id, 'updated', before, serialize(row), body.reason)
     return counterparty_view(db, row)
