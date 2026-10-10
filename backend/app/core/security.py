@@ -15,6 +15,8 @@ from app.core.errors import DomainError
 from app.core.models import AuthSession, PermissionGrant, User, UserRole
 
 password_hasher = PasswordHasher()
+# Holders of these rights must enroll a second factor when MFA is required (production).
+MFA_PRIVILEGED_PERMISSIONS = ('admin.users', 'profiles.write', 'payments.confirm')
 
 PERMISSIONS = {
     'procurement.write': 'Заказы поставщикам',
@@ -162,7 +164,8 @@ def current_user(request: Request, db: Session = Depends(get_db, scope="function
         if origin and origin not in settings.allowed_origins.split(','):
             raise DomainError('ORIGIN_FORBIDDEN', 'Источник запроса не разрешён', 403)
     request.state.auth_session = session
-    privileged = any(can(db, user, p) for p in ('admin.users', 'profiles.write', 'payments.confirm'))
-    if settings.require_mfa and privileged and not user.mfa_enabled and not request.url.path.startswith('/api/v1/auth/'):
+    # Permission lookups run only when MFA is actually enforced for this user and path.
+    if (settings.require_mfa and not user.mfa_enabled and not request.url.path.startswith('/api/v1/auth/')
+            and any(can(db, user, p) for p in MFA_PRIVILEGED_PERMISSIONS)):
         raise DomainError('MFA_REQUIRED', 'Настройте двухфакторную защиту в профиле', 403)
     return user
