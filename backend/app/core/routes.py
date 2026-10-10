@@ -15,7 +15,6 @@ from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
 from app.core.models import (
     AppSetting,
-    AuditEvent,
     AuthSession,
     LoginAttempt,
     PermissionGrant,
@@ -525,89 +524,6 @@ def set_setting(
     db.flush()
     audit(db, user, "setting", row.id, "updated", before, serialize(row))
     return serialize(row)
-
-
-@router.get("/admin/audit")
-def list_audit(
-    entity_id: str | None = None,
-    page: int = 1,
-    page_size: int = 25,
-    user: User = Depends(current_user),
-    db: Session = Depends(get_db, scope="function"),
-) -> dict[str, Any]:
-    require_permission(db, user, "audit.read")
-    stmt = select(AuditEvent)
-    if entity_id:
-        stmt = stmt.where(AuditEvent.entity_id == entity_id)
-    result = paginate(db, stmt.order_by(AuditEvent.created_at.desc()), page, page_size)
-    from app.commerce.financial import filter_calculation_snapshot
-    from app.core.security import can, has_request_permission
-
-    for row in result["items"]:
-        req_id = row.get("request_id")
-
-        can_purchase = (
-            has_request_permission(db, user, req_id, "finance.purchase.read")
-            if req_id
-            else can(db, user, "finance.purchase.read")
-        )
-        can_calculations = (
-            has_request_permission(db, user, req_id, "finance.calculations.read")
-            if req_id
-            else can(db, user, "finance.calculations.read")
-        )
-        can_reward = (
-            has_request_permission(db, user, req_id, "finance.reward.read")
-            if req_id
-            else can(db, user, "finance.reward.read")
-        )
-        can_profit = (
-            has_request_permission(db, user, req_id, "finance.profit.read")
-            if req_id
-            else can(db, user, "finance.profit.read")
-        )
-
-        if row["entity_type"] == "calculation":
-            if row.get("before") and "snapshot" in row["before"]:
-                row["before"]["snapshot"] = filter_calculation_snapshot(
-                    db, user, req_id, row["before"]["snapshot"]
-                )
-            if row.get("after") and "snapshot" in row["after"]:
-                row["after"]["snapshot"] = filter_calculation_snapshot(
-                    db, user, req_id, row["after"]["snapshot"]
-                )
-        elif row["entity_type"] == "quote":
-            if not can_purchase:
-                if row.get("before"):
-                    for field in ("price", "sample", "revision_reason"):
-                        row["before"].pop(field, None)
-                if row.get("after"):
-                    for field in ("price", "sample", "revision_reason"):
-                        row["after"].pop(field, None)
-        elif row["entity_type"] == "calculation_profile":
-            if row.get("before") and "definition" in row["before"]:
-                definition = row["before"]["definition"]
-                if not can_reward:
-                    definition.pop("reward_enabled", None)
-                    definition.pop("reward_label", None)
-                    definition.pop("reward_basis", None)
-                if not can_profit:
-                    definition.pop("constants", None)
-                    definition.pop("formulas", None)
-            if row.get("after") and "definition" in row["after"]:
-                definition = row["after"]["definition"]
-                if not can_reward:
-                    definition.pop("reward_enabled", None)
-                    definition.pop("reward_label", None)
-                    definition.pop("reward_basis", None)
-                if not can_profit:
-                    definition.pop("constants", None)
-                    definition.pop("formulas", None)
-        else:
-            if not (can_purchase and can_calculations and can_reward and can_profit):
-                row.pop("before", None)
-                row.pop("after", None)
-    return result
 
 
 class WizardInput(Input):

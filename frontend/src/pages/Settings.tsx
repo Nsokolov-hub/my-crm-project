@@ -464,7 +464,7 @@ export function Settings() {
             { key: 'entity_type', label: 'Объект' },
             { key: 'action', label: 'Действие' },
             { key: 'reason', label: 'Основание' },
-            { key: 'request_id', label: 'Код операции' },
+            { key: 'correlation_id', label: 'Код операции' },
           ]}
         />
       )}

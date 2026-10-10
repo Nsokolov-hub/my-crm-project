@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.errors import DomainError
-from app.core.service import request_id
+from app.core.service import correlation_id
 
 logger = logging.getLogger('crm')
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -32,7 +32,7 @@ async def context(request: Request, call_next):
     correlation = request.headers.get('X-Request-ID', '')
     if not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', correlation):
         correlation = str(uuid4())
-    token = request_id.set(correlation)
+    token = correlation_id.set(correlation)
     request.state.request_id = correlation
     start = time.perf_counter()
     try:
@@ -48,7 +48,7 @@ async def context(request: Request, call_next):
     if settings.environment == 'production':
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     logger.info(json.dumps({'event': 'http_request', 'requestId': correlation, 'method': request.method, 'route': route, 'status': response.status_code, 'duration_ms': round(duration * 1000, 2)}))
-    request_id.reset(token)
+    correlation_id.reset(token)
     return response
 
 
@@ -96,5 +96,5 @@ def metrics(request: Request):
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-for module in ['core.routes', 'crm.routes', 'crm.imports', 'crm.table_imports', 'analytics.routes', 'commerce.routes', 'communication.routes', 'business.routes']:
+for module in ['core.routes', 'audit.routes', 'crm.routes', 'crm.imports', 'crm.table_imports', 'analytics.routes', 'commerce.routes', 'communication.routes', 'business.routes']:
     app.include_router(import_module(f'app.{module}').router, prefix='/api/v1')

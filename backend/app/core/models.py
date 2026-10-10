@@ -77,7 +77,8 @@ class AuditEvent(Entity):
     before: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     after: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     reason: Mapped[str | None] = mapped_column(Text)
-    request_id: Mapped[str] = mapped_column(String(100), index=True)
+    # HTTP correlation code (X-Request-ID) of the operation, not a CRM request.
+    correlation_id: Mapped[str] = mapped_column(String(100), index=True)
 
 
 class IdempotencyRecord(Entity):

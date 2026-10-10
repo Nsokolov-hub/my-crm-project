@@ -62,7 +62,7 @@ def create_demo_accounts(credentials_file: Path, url: str = "http://127.0.0.1:80
                     action="demo_bootstrap",
                     after={"email": email, "role": name},
                     reason="Явное создание учебных аккаунтов на чистой базе",
-                    request_id="demo-bootstrap",
+                    correlation_id="demo-bootstrap",
                 ))
 
             credentials_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

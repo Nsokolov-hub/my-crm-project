@@ -13,7 +13,7 @@ from app.core.db import Entity
 from app.core.errors import DomainError
 from app.core.models import AuditEvent, IdempotencyRecord, Notification, User
 
-request_id: ContextVar[str] = ContextVar('request_id', default='background')
+correlation_id: ContextVar[str] = ContextVar('correlation_id', default='background')
 T = TypeVar('T', bound=Entity)
 
 
@@ -79,7 +79,7 @@ def audit(db: Session, user: User | None, entity_type: str, entity_id: str, acti
         if isinstance(value, list):
             return [clean(v) for v in value]
         return plain(value)
-    db.add(AuditEvent(actor_id=user.id if user else None, entity_type=entity_type, entity_id=entity_id, action=action, before=clean(before), after=clean(after), reason=reason, request_id=request_id.get()))
+    db.add(AuditEvent(actor_id=user.id if user else None, entity_type=entity_type, entity_id=entity_id, action=action, before=clean(before), after=clean(after), reason=reason, correlation_id=correlation_id.get()))
 
 
 def notify(db: Session, user_id: str, event_key: str, title: str, entity_type: str, entity_id: str) -> None:
