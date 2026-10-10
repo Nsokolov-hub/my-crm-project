@@ -27,7 +27,7 @@ from .models import Manufacturer, Product, Quote, Substance, SupplierRequest
 from .schemas import ProductIn, QuoteIn, RfqIn, SentIn, VerifyIn
 
 router = APIRouter(tags=["Закупки и каталог"])
-DB = Annotated[Session, Depends(get_db)]
+DB = Annotated[Session, Depends(get_db, scope="function")]
 Actor = Annotated[User, Depends(current_user)]
 
 

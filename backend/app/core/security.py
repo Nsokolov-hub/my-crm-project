@@ -144,7 +144,7 @@ def task_predicate(db: Session, user: User) -> Any:
         )
     )
 
-def current_user(request: Request, db: Session = Depends(get_db)) -> User:
+def current_user(request: Request, db: Session = Depends(get_db, scope="function")) -> User:
     token = request.cookies.get('crm_session')
     if not token:
         raise DomainError('UNAUTHENTICATED', 'Войдите в систему', 401)

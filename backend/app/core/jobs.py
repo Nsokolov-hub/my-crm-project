@@ -41,7 +41,7 @@ def jobs(
     q: str = Query(default='', max_length=100),
     status: Literal['pending', 'running', 'succeeded', 'failed'] | None = None,
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     require_permission(db, user, 'admin.settings')
     statement = select(*(getattr(OutboxEvent, key) for key in JOB_FIELDS))
@@ -85,7 +85,7 @@ def retry_job(
     body: RetryInput,
     idempotency_key: str | None = Header(default=None),
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     require_permission(db, user, 'admin.settings')
     if idempotency_key and body.idempotency_key and idempotency_key != body.idempotency_key:

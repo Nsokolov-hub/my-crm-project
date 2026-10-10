@@ -246,7 +246,7 @@ def dashboard(
     owner_id: str | None = None,
     include_test: bool = False,
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     return report_data(db, user, date_from, date_to, owner_id, include_test)
 
@@ -261,7 +261,7 @@ def drilldown(
     page: int = 1,
     page_size: int = 25,
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     from app.core.service import page as paginate
 
@@ -285,7 +285,7 @@ def drilldown(
 
 @router.get("/analytics/invoices")
 def invoices(
-    page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db)
+    page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     from app.commerce.models import CommercialDocument
     from app.commerce.payments import invoice_balance
@@ -318,7 +318,7 @@ def export(
     owner_id: str | None = None,
     include_test: bool = False,
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ) -> Response:
     from app.crm.imports import xlsx
 

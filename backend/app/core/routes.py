@@ -83,7 +83,7 @@ def user_view(db: Session, user: User) -> dict[str, Any]:
 
 @router.post("/auth/login")
 def login(
-    body: LoginInput, request: Request, response: Response, db: Session = Depends(get_db)
+    body: LoginInput, request: Request, response: Response, db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     email = str(body.email).lower()
     ip = request.client.host if request.client else "unknown"
@@ -152,7 +152,7 @@ def login(
 
 
 @router.get("/auth/me")
-def me(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def me(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     data = user_view(db, user)
     return {
         "user": data,
@@ -163,7 +163,7 @@ def me(request: Request, user: User = Depends(current_user), db: Session = Depen
 
 @router.post("/auth/logout")
 def logout(
-    request: Request, response: Response, user: User = Depends(current_user), db: Session = Depends(get_db)
+    request: Request, response: Response, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, bool]:
     request.state.auth_session.revoked = True
     response.delete_cookie("crm_session", path="/")
@@ -172,7 +172,7 @@ def logout(
 
 
 @router.post("/auth/mfa/setup")
-def mfa_setup(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, str]:
+def mfa_setup(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, str]:
     user = lock(db, User, user.id)
     if user.mfa_enabled:
         raise DomainError("MFA_ALREADY_ENABLED", "Второй фактор уже настроен", 409)
@@ -187,7 +187,7 @@ def mfa_setup(user: User = Depends(current_user), db: Session = Depends(get_db))
 
 @router.post("/auth/mfa/enable")
 def mfa_enable(
-    body: OTPInput, user: User = Depends(current_user), db: Session = Depends(get_db)
+    body: OTPInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, bool]:
     user = lock(db, User, user.id)
     if not user.mfa_secret or not pyotp.TOTP(cipher().decrypt(user.mfa_secret.encode()).decode()).verify(
@@ -203,7 +203,7 @@ def mfa_enable(
 
 @router.post("/auth/password")
 def change_password(
-    body: PasswordInput, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)
+    body: PasswordInput, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, bool]:
     try:
         password_hasher.verify(user.password_hash, body.current_password)
@@ -251,7 +251,7 @@ class UserPatch(Input):
 
 
 @router.get("/users")
-def directory(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def directory(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     rows = db.scalars(select(User).where(User.active.is_(True)).order_by(User.name)).all()
     return {
         "items": [{"id": r.id, "name": r.name} for r in rows],
@@ -262,7 +262,7 @@ def directory(user: User = Depends(current_user), db: Session = Depends(get_db))
 
 
 @router.get("/admin/permissions")
-def permissions(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def permissions(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     return {"items": [{"code": k, "name": v} for k, v in PERMISSIONS.items()]}
 
@@ -273,7 +273,7 @@ def users(
     page_size: int = 25,
     q: str = "",
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     stmt = select(User).where(or_(User.name.ilike(f"%{q}%"), User.email.ilike(f"%{q}%")))
@@ -308,7 +308,7 @@ def assign_grants(
 
 @router.post("/admin/users", status_code=201)
 def create_user(
-    body: UserInput, user: User = Depends(current_user), db: Session = Depends(get_db)
+    body: UserInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     row = User(
@@ -324,7 +324,7 @@ def create_user(
 
 @router.patch("/admin/users/{entity_id}")
 def edit_user(
-    entity_id: str, body: UserPatch, user: User = Depends(current_user), db: Session = Depends(get_db)
+    entity_id: str, body: UserPatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     from app.crm.models import Counterparty, Task
     from app.crm.models import Request as CRMRequest
@@ -389,7 +389,7 @@ def edit_user(
 
 
 @router.get("/admin/roles")
-def roles(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def roles(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     rows = db.scalars(select(Role).order_by(Role.name)).all()
     return {
@@ -411,7 +411,7 @@ def roles(user: User = Depends(current_user), db: Session = Depends(get_db)) -> 
 
 @router.post("/admin/roles")
 def create_role(
-    body: RoleInput, user: User = Depends(current_user), db: Session = Depends(get_db)
+    body: RoleInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     row = Role(name=body.name)
@@ -424,7 +424,7 @@ def create_role(
 
 @router.put("/admin/roles/{entity_id}")
 def edit_role(
-    entity_id: str, body: RoleInput, user: User = Depends(current_user), db: Session = Depends(get_db)
+    entity_id: str, body: RoleInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     row = lock(db, Role, entity_id)
@@ -456,7 +456,7 @@ def get_settings_meta() -> dict[str, Any]:
 
 
 @router.get("/settings")
-def list_settings(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def list_settings(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, "admin.settings")
     # Возвращаем только актуальные настройки
     stmt = select(AppSetting).where(AppSetting.status == "published").order_by(AppSetting.key)
@@ -465,7 +465,7 @@ def list_settings(user: User = Depends(current_user), db: Session = Depends(get_
 
 @router.post("/settings")
 def set_setting(
-    body: SettingInput, user: User = Depends(current_user), db: Session = Depends(get_db)
+    body: SettingInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     # Валидация по схеме из реестра
     if body.key in SETTING_META:
@@ -531,7 +531,7 @@ def list_audit(
     page: int = 1,
     page_size: int = 25,
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     require_permission(db, user, "audit.read")
     stmt = select(AuditEvent)
@@ -615,7 +615,7 @@ class WizardInput(Input):
 
 @router.post("/setup/wizard")
 def setup_wizard(
-    body: WizardInput, user: User = Depends(current_user), db: Session = Depends(get_db)
+    body: WizardInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     require_permission(db, user, "admin.settings")
 

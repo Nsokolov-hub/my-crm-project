@@ -211,7 +211,7 @@ def parse_rows(data: bytes, mapping: dict[str, str], mode: str = "general") -> l
 
 
 @router.get("/imports/template.xlsx")
-def template(user: User = Depends(current_user), db: Session = Depends(get_db)) -> Response:
+def template(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> Response:
     require_permission(db, user, "imports.write")
     return Response(
         xlsx([list(COLUMNS.values())]),
@@ -221,7 +221,7 @@ def template(user: User = Depends(current_user), db: Session = Depends(get_db)) 
 
 
 @router.get("/imports/template-calls.xlsx")
-def calls_template(user: User = Depends(current_user), db: Session = Depends(get_db)) -> Response:
+def calls_template(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> Response:
     require_permission(db, user, "calls.write")
     require_permission(db, user, "clients.write")
     return Response(
@@ -237,7 +237,7 @@ def preview(
     mapping: str = Form("{}"),
     mode: str = Form("general"),
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     if mode not in ("general", "calls"):
         raise DomainError("IMPORT_MODE_INVALID", "Неизвестный режим импорта")
@@ -371,7 +371,7 @@ def owned_batch(db: Session, user: User, entity_id: str) -> ImportBatch:
 
 @router.get("/imports")
 def batches(
-    page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db)
+    page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     if not can(db, user, "imports.write") and not can(db, user, "calls.write"):
         require_permission(db, user, "imports.write")
@@ -389,7 +389,7 @@ def batch_detail(
     page: int = 1,
     page_size: int = 100,
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     row = owned_batch(db, user, entity_id)
     return {
@@ -419,7 +419,7 @@ def confirm(
     body: Confirmation,
     idempotency_key: str | None = Header(default=None),
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     owned_batch(db, user, entity_id)
     require_permission(db, user, "clients.write")
@@ -573,7 +573,7 @@ def process_import(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/imports/{entity_id}/errors.xlsx")
 def errors_file(
-    entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)
+    entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> Response:
     owned_batch(db, user, entity_id)
     require_permission(db, user, "exports.download")

@@ -120,7 +120,7 @@ def validate_member(db: Session, user_id: str, chat: Chat) -> User:
 
 
 @router.post('/chats', status_code=201)
-def create_chat(body: ChatInput, user: User = Depends(current_user), db: Session = Depends(get_db),
+def create_chat(body: ChatInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
                 idempotency_key: Annotated[str | None, Header()] = None) -> dict:
     require_permission(db, user, 'chats.use')
     if body.entity_id:
@@ -156,7 +156,7 @@ def create_chat(body: ChatInput, user: User = Depends(current_user), db: Session
 
 @router.get('/chats')
 def chats(page: int = 1, page_size: int = 25, q: str = '', entity_id: str | None = None,
-          user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+          user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     from app.commerce.models import Wave
     from app.crm.models import Request as CRMRequest
     require_permission(db, user, 'chats.use')
@@ -176,7 +176,7 @@ def chats(page: int = 1, page_size: int = 25, q: str = '', entity_id: str | None
 
 
 @router.get('/chats/unread-count')
-def unread_chat_count(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, int]:
+def unread_chat_count(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, int]:
     from app.commerce.models import Wave
     from app.crm.models import Request as CRMRequest
 
@@ -205,12 +205,12 @@ def unread_chat_count(user: User = Depends(current_user), db: Session = Depends(
 
 
 @router.get('/chats/{entity_id}')
-def get_chat(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+def get_chat(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     return chat_view(db, *check_chat(db, user, entity_id))
 
 
 @router.patch('/chats/{entity_id}')
-def edit_chat(entity_id: str, body: ChatPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+def edit_chat(entity_id: str, body: ChatPatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     row, member = check_chat(db, user, entity_id, for_update=True)
     if row.owner_id != user.id:
         raise DomainError('CHAT_OWNER_REQUIRED', 'Изменить чат может его создатель', 403)
@@ -223,7 +223,7 @@ def edit_chat(entity_id: str, body: ChatPatch, user: User = Depends(current_user
 
 
 @router.post('/chats/{entity_id}/members')
-def add_member(entity_id: str, body: MemberInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+def add_member(entity_id: str, body: MemberInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     row, member = check_chat(db, user, entity_id, for_update=True)
     if row.owner_id != user.id or row.kind == 'direct':
         raise DomainError('CHAT_MEMBERS_FORBIDDEN', 'Состав группы изменяет её создатель; состав личного чата неизменяем', 403)
@@ -248,7 +248,7 @@ def add_member(entity_id: str, body: MemberInput, user: User = Depends(current_u
 
 @router.delete('/chats/{entity_id}/members/{member_id}')
 def remove_member(entity_id: str, member_id: str, version: int = Query(ge=1),
-                  user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+                  user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     row, member = check_chat(db, user, entity_id, for_update=True)
     if row.kind == 'direct' or row.owner_id != user.id:
         raise DomainError('CHAT_MEMBERS_FORBIDDEN', 'Состав группы изменяет её создатель', 403)
@@ -289,7 +289,7 @@ def message_view(db: Session, user: User, row: Message) -> dict:
 
 
 @router.post('/chats/{entity_id}/messages', status_code=201)
-def send_message(entity_id: str, body: MessageInput, user: User = Depends(current_user), db: Session = Depends(get_db),
+def send_message(entity_id: str, body: MessageInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
                  idempotency_key: Annotated[str | None, Header()] = None) -> dict:
     check_chat(db, user, entity_id)
 
@@ -333,7 +333,7 @@ def send_message(entity_id: str, body: MessageInput, user: User = Depends(curren
 
 @router.get('/chats/{entity_id}/messages')
 def messages(entity_id: str, after: str | None = None, limit: int = Query(default=50, ge=1, le=100),
-             user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+             user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     chat, member = check_chat(db, user, entity_id)
     cursor = 0
     if after:
@@ -355,7 +355,7 @@ def messages(entity_id: str, after: str | None = None, limit: int = Query(defaul
 
 
 @router.post('/chats/{entity_id}/read')
-def read_chat(entity_id: str, body: ReadInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+def read_chat(entity_id: str, body: ReadInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     chat, member = check_chat(db, user, entity_id, for_update=True)
     through = chat.last_sequence if body.through is None else body.through
     if through > chat.last_sequence:
@@ -389,7 +389,7 @@ def notification_scope(db, user):
 
 @router.get('/notifications')
 def notifications(read: bool | None = None, page: int = 1, page_size: int = 25,
-                  user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+                  user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     guards = notification_scope(db, user)
     statement = select(Notification).where(Notification.user_id == user.id, *guards)
     if read is not None:
@@ -401,7 +401,7 @@ def notifications(read: bool | None = None, page: int = 1, page_size: int = 25,
 
 
 @router.post('/notifications/{entity_id}/read')
-def read_notification(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+def read_notification(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     row = db.scalar(select(Notification).where(Notification.id == entity_id, Notification.user_id == user.id, *notification_scope(db, user)).with_for_update())
     if row is None:
         raise DomainError('NOT_FOUND', 'Уведомление не найдено', 404)
@@ -412,7 +412,7 @@ def read_notification(entity_id: str, user: User = Depends(current_user), db: Se
 @router.post('/files', status_code=201)
 def upload_file(file: Annotated[UploadFile, File()], entity_type: Annotated[str, Form()],
                 entity_id: Annotated[str, Form()], classification: Annotated[str, Form()] = 'general',
-                user: User = Depends(current_user), db: Session = Depends(get_db),
+                user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
                 idempotency_key: Annotated[str | None, Header()] = None) -> dict:
     require_permission(db, user, 'files.upload')
     source = check_entity(db, user, entity_type, entity_id)
@@ -462,7 +462,7 @@ def upload_file(file: Annotated[UploadFile, File()], entity_type: Annotated[str,
 
 @router.get('/files')
 def files(entity_type: str, entity_id: str, page: int = 1, page_size: int = 25,
-          user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+          user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     source = check_entity(db, user, entity_type, entity_id)
     request_id = entity_id if entity_type == 'request' else getattr(source, 'request_id', None)
     allowed = ['general']
@@ -480,12 +480,12 @@ def files(entity_type: str, entity_id: str, page: int = 1, page_size: int = 25,
 
 
 @router.get('/files/{entity_id}')
-def get_file(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+def get_file(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     return file_view(check_file(db, user, entity_id))
 
 
 @router.get('/files/{entity_id}/download')
-def download_file(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> StreamingResponse:
+def download_file(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> StreamingResponse:
     row = check_file(db, user, entity_id)
     request_id = row.request_id
     if not request_id:

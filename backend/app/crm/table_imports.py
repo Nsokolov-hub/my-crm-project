@@ -465,7 +465,7 @@ def preview(
     file: UploadFile = File(),
     mapping: str = Form("{}"),
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ):
     if kind not in ("items", "quotes"):
         raise DomainError("IMPORT_KIND", "Неизвестный вид импорта", 422)
@@ -535,7 +535,7 @@ def owned_batch(db, user, request_id, batch_id):
 
 @router.get("/requests/{request_id}/table-imports/{batch_id}/errors.xlsx")
 def error_file(
-    request_id: str, batch_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)
+    request_id: str, batch_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ):
     batch = owned_batch(db, user, request_id, batch_id)
     require_permission(db, user, "exports.download", request_id)
@@ -551,7 +551,7 @@ def error_file(
 
 
 @router.get("/requests/{request_id}/quote-import/template.xlsx")
-def quote_template(request_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def quote_template(request_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
     check_request(db, user, request_id, "quotes.write")
     require_permission(db, user, "exports.download", request_id)
     rows = []
@@ -624,7 +624,7 @@ def confirm(
     body: Input,
     idempotency_key: str | None = Header(default=None),
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ):
     owned_batch(db, user, request_id, batch_id)
 

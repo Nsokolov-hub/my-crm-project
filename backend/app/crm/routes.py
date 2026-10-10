@@ -90,7 +90,7 @@ CALL_RESULT_LABELS = dict(CALL_RESULTS)
 
 
 @router.get('/dictionaries/{key}')
-def dictionary(key: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def dictionary(key: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     dictionaries = {
         'call_results': ('results', 'calls.write'),
         'loss_reasons': ('reasons', 'requests.write'),
@@ -295,7 +295,7 @@ def structured_item_fields(db: Session, data: dict[str, Any], previous: RequestI
 
 
 @router.get('/product-groups')
-def product_groups(q: str = '', active: bool = True, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def product_groups(q: str = '', active: bool = True, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'catalog.read')
     stmt = select(ProductGroup).where(ProductGroup.active == active)
     if q:
@@ -304,7 +304,7 @@ def product_groups(q: str = '', active: bool = True, user: User = Depends(curren
 
 
 @router.post('/product-groups', status_code=201)
-def create_product_group(body: ProductGroupInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def create_product_group(body: ProductGroupInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'catalog.write')
     advisory(db, 'catalog.product_groups')
     if db.scalar(select(ProductGroup.id).where(or_(ProductGroup.slug == body.slug, ProductGroup.name == body.name))):
@@ -318,7 +318,7 @@ class ProductGroupPatch(BaseModel):
 
 
 @router.patch('/product-groups/{entity_id}')
-def edit_product_group(entity_id: str, body: ProductGroupPatch, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def edit_product_group(entity_id: str, body: ProductGroupPatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
     require_permission(db, user, 'catalog.write')
     advisory(db, 'catalog.product_groups')
     row = db.get(ProductGroup, entity_id)
@@ -335,13 +335,13 @@ def edit_product_group(entity_id: str, body: ProductGroupPatch, user: User = Dep
 
 
 @router.get('/currencies')
-def currencies(active: bool = True, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def currencies(active: bool = True, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'catalog.read')
     return paginate(db, select(Currency).where(Currency.active == active).order_by(Currency.code), 1, 100)
 
 
 @router.post('/currencies', status_code=201)
-def create_currency(body: CurrencyInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def create_currency(body: CurrencyInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     if not can(db, user, 'admin.settings'):
         require_permission(db, user, 'profiles.write')
     advisory(db, 'catalog.currencies')
@@ -351,7 +351,7 @@ def create_currency(body: CurrencyInput, user: User = Depends(current_user), db:
 
 
 @router.get('/countries')
-def countries(q: str = '', active: bool = True, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def countries(q: str = '', active: bool = True, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'catalog.read')
     stmt = select(Country).where(Country.active == active)
     if q:
@@ -360,7 +360,7 @@ def countries(q: str = '', active: bool = True, user: User = Depends(current_use
 
 
 @router.post('/countries', status_code=201)
-def create_country(body: CountryInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def create_country(body: CountryInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     if not can(db, user, 'profiles.write'):
         require_catalog_create(db, user)
     advisory(db, 'catalog.countries')
@@ -374,7 +374,7 @@ def nomenclatures(
     q: str = '', product_group_id: str | None = None, page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100), active: bool = True,
     cas: str = '', manufacturer: str = '', article: str = '',
-    user: User = Depends(current_user), db: Session = Depends(get_db),
+    user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     require_permission(db, user, 'catalog.read')
     stmt = select(Nomenclature).where(Nomenclature.active == active)
@@ -391,7 +391,7 @@ def nomenclatures(
 
 
 @router.post('/nomenclatures', status_code=201)
-def create_nomenclature(body: NomenclatureInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def create_nomenclature(body: NomenclatureInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_catalog_create(db, user)
     advisory(db, 'catalog.article-import')
     group = require_group(db, body.product_group_id)
@@ -414,7 +414,7 @@ def create_nomenclature(body: NomenclatureInput, user: User = Depends(current_us
 
 
 @router.get('/nomenclatures/{entity_id}')
-def nomenclature_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def nomenclature_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'catalog.read')
     row = db.get(Nomenclature, entity_id)
     if not row:
@@ -423,7 +423,7 @@ def nomenclature_detail(entity_id: str, user: User = Depends(current_user), db: 
 
 
 @router.patch('/nomenclatures/{entity_id}')
-def edit_nomenclature(entity_id: str, body: NomenclaturePatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def edit_nomenclature(entity_id: str, body: NomenclaturePatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     advisory(db, 'catalog.article-import')
     row = lock(db, Nomenclature, entity_id)
     if not can(db, user, 'catalog.write'):
@@ -445,7 +445,7 @@ def edit_nomenclature(entity_id: str, body: NomenclaturePatch, user: User = Depe
 
 
 @router.get('/nomenclatures/{entity_id}/packings')
-def packings(entity_id: str, active: bool = True, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def packings(entity_id: str, active: bool = True, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'catalog.read')
     if not db.get(Nomenclature, entity_id):
         raise DomainError('NOT_FOUND', 'Номенклатура не найдена', 404)
@@ -453,7 +453,7 @@ def packings(entity_id: str, active: bool = True, user: User = Depends(current_u
 
 
 @router.post('/nomenclatures/{entity_id}/packings', status_code=201)
-def create_packing(entity_id: str, body: PackingInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def create_packing(entity_id: str, body: PackingInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_catalog_create(db, user)
     advisory(db, 'catalog.article-import')
     require_nomenclature(db, entity_id)
@@ -471,7 +471,7 @@ def create_packing(entity_id: str, body: PackingInput, user: User = Depends(curr
 
 
 @router.patch('/packings/{entity_id}')
-def edit_packing(entity_id: str, body: PackingPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def edit_packing(entity_id: str, body: PackingPatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'catalog.write')
     advisory(db, 'catalog.article-import')
     row = lock(db, Packing, entity_id)
@@ -486,7 +486,7 @@ def edit_packing(entity_id: str, body: PackingPatch, user: User = Depends(curren
 
 
 @router.get('/counterparties')
-def clients(q: str = '', kind: str | None = None, client_base: str | None = None, contact_eligible: bool = False, page: int = 1, page_size: int = 25, sort: str = 'name', direction: str = 'asc', archived: bool = False, filter_name: str = '', filter_tax_id: str = '', filter_profile: str = '', filter_city: str = '', filter_phone: str = '', filter_email: str = '', user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def clients(q: str = '', kind: str | None = None, client_base: str | None = None, contact_eligible: bool = False, page: int = 1, page_size: int = 25, sort: str = 'name', direction: str = 'asc', archived: bool = False, filter_name: str = '', filter_tax_id: str = '', filter_profile: str = '', filter_city: str = '', filter_phone: str = '', filter_email: str = '', user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'clients.read')
     stmt = select(Counterparty).where(client_predicate(db, user), Counterparty.archived == archived)
     if contact_eligible:
@@ -549,7 +549,7 @@ def counterparty_view(db: Session, row: Counterparty) -> dict:
 
 
 @router.get('/counterparty-owners')
-def counterparty_owners(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+def counterparty_owners(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     require_permission(db, user, 'clients.read')
     rows = db.scalars(select(User).where(User.active.is_(True)).order_by(User.name, User.id))
     return {'items': [{'id': row.id, 'name': row.name} for row in rows]}
@@ -566,7 +566,7 @@ def search_match(value: Any, parts: list[str]) -> bool:
 
 
 @router.post('/counterparties', status_code=201)
-def create_client(body: ClientInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def create_client(body: ClientInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'clients.write')
     data = body.model_dump()
     data['owner_id'] = body.owner_id or user.id
@@ -578,12 +578,12 @@ def create_client(body: ClientInput, user: User = Depends(current_user), db: Ses
 
 
 @router.get('/counterparties/{entity_id}')
-def client_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def client_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     return counterparty_view(db, check_client(db, user, entity_id))
 
 
 @router.post('/counterparties/{entity_id}/promote')
-def promote_client(entity_id: str, body: PromoteClientInput, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def promote_client(entity_id: str, body: PromoteClientInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
     check_client(db, user, entity_id, 'clients.write')
     row = lock(db, Counterparty, entity_id)
     if row.archived:
@@ -599,7 +599,7 @@ def promote_client(entity_id: str, body: PromoteClientInput, user: User = Depend
 
 
 @router.patch('/counterparties/{entity_id}')
-def edit_client(entity_id: str, body: ClientPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def edit_client(entity_id: str, body: ClientPatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     check_client(db, user, entity_id, 'clients.write')
     row = lock(db, Counterparty, entity_id)
     check_version(row, body.version)
@@ -645,7 +645,7 @@ def counterparty_document_view(db: Session, user: User, row: CounterpartyDocumen
 
 @router.get('/counterparties/{entity_id}/documents')
 def counterparty_documents(entity_id: str, archived: bool = False, page: int = 1, page_size: int = 100,
-                           user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+                           user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     check_client(db, user, entity_id)
     result = paginate(db, select(CounterpartyDocument).where(
         CounterpartyDocument.counterparty_id == entity_id, CounterpartyDocument.archived == archived
@@ -658,7 +658,7 @@ def counterparty_documents(entity_id: str, archived: bool = False, page: int = 1
 @router.post('/counterparties/{entity_id}/documents', status_code=201)
 def upload_counterparty_document(entity_id: str, file: UploadFile = File(), category: str = Form('other'),
                                  idempotency_key: str | None = Header(default=None),
-                                 user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+                                 user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     from app.communication.routes import upload_file
     client = check_client(db, user, entity_id, 'clients.write')
     if client.archived:
@@ -678,7 +678,7 @@ def upload_counterparty_document(entity_id: str, file: UploadFile = File(), cate
 
 @router.get('/counterparty-documents/{entity_id}/download')
 def download_counterparty_document(entity_id: str, user: User = Depends(current_user),
-                                   db: Session = Depends(get_db)):
+                                   db: Session = Depends(get_db, scope="function")):
     from app.communication.routes import download_file
     row = db.get(CounterpartyDocument, entity_id)
     if not row:
@@ -689,7 +689,7 @@ def download_counterparty_document(entity_id: str, user: User = Depends(current_
 
 @router.patch('/counterparty-documents/{entity_id}')
 def archive_counterparty_document(entity_id: str, body: CounterpartyDocumentPatch,
-                                  user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+                                  user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     row = lock(db, CounterpartyDocument, entity_id)
     check_client(db, user, row.counterparty_id, 'clients.write')
     check_version(row, body.version)
@@ -702,7 +702,7 @@ def archive_counterparty_document(entity_id: str, body: CounterpartyDocumentPatc
 
 
 @router.get('/counterparties/{entity_id}/contacts')
-def contacts(entity_id: str, q: str = '', user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def contacts(entity_id: str, q: str = '', user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     check_client(db, user, entity_id)
     stmt = select(Contact).where(Contact.client_id == entity_id, Contact.archived.is_(False))
     if q:
@@ -711,7 +711,7 @@ def contacts(entity_id: str, q: str = '', user: User = Depends(current_user), db
 
 
 @router.post('/counterparties/{entity_id}/contacts', status_code=201)
-def create_contact(entity_id: str, body: ContactInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def create_contact(entity_id: str, body: ContactInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     client = check_client(db, user, entity_id, 'clients.write')
     if client.client_base != 'working' or client.archived:
         raise DomainError('WORKING_CLIENT_REQUIRED', 'Выберите действующего контрагента рабочей базы', 422)
@@ -719,7 +719,7 @@ def create_contact(entity_id: str, body: ContactInput, user: User = Depends(curr
 
 
 @router.get('/contacts')
-def contact_registry(q: str = '', page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def contact_registry(q: str = '', page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
     require_permission(db, user, 'clients.read')
     accessible = select(Counterparty.id).where(client_predicate(db, user), Counterparty.client_base == 'working', Counterparty.archived.is_(False))
     stmt = select(Contact).where(Contact.client_id.in_(accessible), Contact.archived.is_(False))
@@ -733,12 +733,12 @@ def contact_registry(q: str = '', page: int = 1, page_size: int = 25, user: User
 
 
 @router.post('/contacts', status_code=201)
-def create_registry_contact(body: ContactCreateInput, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_registry_contact(body: ContactCreateInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
     return create_contact(body.client_id, ContactInput(**body.model_dump(exclude={'client_id'})), user, db)
 
 
 @router.get('/contacts/{entity_id}')
-def contact_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def contact_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
     row = db.get(Contact, entity_id)
     if not row:
         raise DomainError('NOT_FOUND', 'Контакт не найден', 404)
@@ -747,7 +747,7 @@ def contact_detail(entity_id: str, user: User = Depends(current_user), db: Sessi
 
 
 @router.patch('/contacts/{entity_id}')
-def edit_contact(entity_id: str, body: ContactPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def edit_contact(entity_id: str, body: ContactPatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     row = lock(db, Contact, entity_id)
     check_client(db, user, row.client_id, 'clients.write')
     check_version(row, body.version)
@@ -760,7 +760,7 @@ def edit_contact(entity_id: str, body: ContactPatch, user: User = Depends(curren
 
 
 @router.get('/tasks')
-def tasks(status: str | None = None, q: str = '', entity_id: str | None = None, overdue: bool = False, page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def tasks(status: str | None = None, q: str = '', entity_id: str | None = None, overdue: bool = False, page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'tasks.read')
     stmt = select(Task).where(task_predicate(db, user))
     if status:
@@ -783,7 +783,7 @@ def tasks(status: str | None = None, q: str = '', entity_id: str | None = None, 
 
 
 @router.post('/tasks', status_code=201)
-def create_task(body: TaskInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def create_task(body: TaskInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'tasks.write')
     check_link(db, user, body.entity_type, body.entity_id)
     assignee = active_user(db, body.assignee_id or user.id)
@@ -797,7 +797,7 @@ def create_task(body: TaskInput, user: User = Depends(current_user), db: Session
 
 
 @router.post('/tasks/bulk-calls', status_code=201)
-def create_bulk_call_tasks(body: BulkCallTaskInput, idempotency_key: str | None = Header(default=None), user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def create_bulk_call_tasks(body: BulkCallTaskInput, idempotency_key: str | None = Header(default=None), user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'tasks.write')
     require_permission(db, user, 'requests.assign')
     if len(set(body.client_ids)) != len(body.client_ids):
@@ -831,7 +831,7 @@ def create_bulk_call_tasks(body: BulkCallTaskInput, idempotency_key: str | None 
 
 
 @router.patch('/tasks/{entity_id}')
-def edit_task(entity_id: str, body: TaskPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def edit_task(entity_id: str, body: TaskPatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'tasks.write')
     row = lock(db, Task, entity_id)
     if scope_for(db, user, 'tasks.write') != 'all' and user.id not in (row.assignee_id, row.author_id):
@@ -874,7 +874,7 @@ def valid_call(db: Session, result: str, next_at: Any, reason: str | None) -> No
 
 
 @router.get('/calls')
-def calls(client_id: str | None = None, page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def calls(client_id: str | None = None, page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'clients.read')
     stmt = select(Call).where(Call.client_id.in_(select(Counterparty.id).where(client_predicate(db, user))))
     if client_id:
@@ -902,7 +902,7 @@ def notify_call_result(db: Session, row: Call, version: int | None = None) -> No
 
 
 @router.post('/calls', status_code=201)
-def create_call(body: CallInput, idempotency_key: str | None = Header(default=None), user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def create_call(body: CallInput, idempotency_key: str | None = Header(default=None), user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'calls.write')
     check_client(db, user, body.client_id, 'clients.write')
     contact_matches(db, body.contact_id, body.client_id)
@@ -940,7 +940,7 @@ def create_call(body: CallInput, idempotency_key: str | None = Header(default=No
 
 
 @router.patch('/calls/{entity_id}')
-def edit_call(entity_id: str, body: CallPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def edit_call(entity_id: str, body: CallPatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'calls.write')
     row = lock(db, Call, entity_id)
     check_client(db, user, row.client_id, 'clients.write')
@@ -956,7 +956,7 @@ def edit_call(entity_id: str, body: CallPatch, user: User = Depends(current_user
 
 
 @router.get('/requests')
-def requests(q: str = '', stage: str | None = None, client_id: str | None = None, owner_id: str | None = None, page: int = 1, page_size: int = 25, sort: str = 'created_at', direction: str = 'desc', user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def requests(q: str = '', stage: str | None = None, client_id: str | None = None, owner_id: str | None = None, page: int = 1, page_size: int = 25, sort: str = 'created_at', direction: str = 'desc', user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'requests.read')
     stmt = select(Request).where(request_predicate(db, user), Request.archived.is_(False))
     if q:
@@ -976,7 +976,7 @@ def requests(q: str = '', stage: str | None = None, client_id: str | None = None
 
 
 @router.post('/requests', status_code=201)
-def create_request(body: RequestInput, idempotency_key: str | None = Header(default=None), user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def create_request(body: RequestInput, idempotency_key: str | None = Header(default=None), user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'requests.write')
     client = check_client(db, user, body.client_id)
     if client.client_base != 'working' or client.kind not in ('client', 'both') or client.archived:
@@ -998,7 +998,7 @@ def create_request(body: RequestInput, idempotency_key: str | None = Header(defa
 
 
 @router.get('/requests/{entity_id}')
-def request_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def request_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     row = check_request(db, user, entity_id)
     result = serialize(row)
     result['client_name'] = db.get(Counterparty, row.client_id).name
@@ -1022,7 +1022,7 @@ def request_detail(entity_id: str, user: User = Depends(current_user), db: Sessi
 
 
 @router.patch('/requests/{entity_id}')
-def edit_request(entity_id: str, body: RequestPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def edit_request(entity_id: str, body: RequestPatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     check_request(db, user, entity_id, 'requests.write')
     row = lock(db, Request, entity_id)
     check_version(row, body.version)
@@ -1078,7 +1078,7 @@ def edit_request(entity_id: str, body: RequestPatch, user: User = Depends(curren
 
 
 @router.put('/requests/{entity_id}/members')
-def share_request(entity_id: str, body: ShareInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def share_request(entity_id: str, body: ShareInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     check_request(db, user, entity_id, 'requests.assign')
     row = lock(db, Request, entity_id)
     check_version(row, body.version)
@@ -1092,7 +1092,7 @@ def share_request(entity_id: str, body: ShareInput, user: User = Depends(current
 
 
 @router.get('/requests/{entity_id}/items')
-def items(entity_id: str, q: str = '', page: int = 1, page_size: int = 100, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def items(entity_id: str, q: str = '', page: int = 1, page_size: int = 100, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     check_request(db, user, entity_id)
     stmt = select(RequestItem).where(RequestItem.request_id == entity_id, RequestItem.quote_only.is_(False))
     if q:
@@ -1109,7 +1109,7 @@ def items(entity_id: str, q: str = '', page: int = 1, page_size: int = 100, user
 
 
 @router.post('/requests/{entity_id}/items', status_code=201)
-def create_item(entity_id: str, body: ItemInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def create_item(entity_id: str, body: ItemInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     check_request(db, user, entity_id, 'requests.write')
     parent = lock(db, Request, entity_id)
     row = RequestItem(request_id=entity_id, **structured_item_fields(db, body.model_dump()))
@@ -1120,7 +1120,7 @@ def create_item(entity_id: str, body: ItemInput, user: User = Depends(current_us
 
 
 @router.post('/requests/{entity_id}/items/start')
-def start_items(entity_id: str, body: StartItemsInput, idempotency_key: str | None = Header(default=None), user: User = Depends(current_user), db: Session = Depends(get_db)):
+def start_items(entity_id: str, body: StartItemsInput, idempotency_key: str | None = Header(default=None), user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
     check_request(db, user, entity_id, 'requests.write')
 
     def operation():
@@ -1142,7 +1142,7 @@ def start_items(entity_id: str, body: StartItemsInput, idempotency_key: str | No
 
 
 @router.patch('/request-items/{entity_id}')
-def edit_item(entity_id: str, body: ItemPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def edit_item(entity_id: str, body: ItemPatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     initial = db.get(RequestItem, entity_id)
     if not initial:
         raise DomainError('NOT_FOUND', 'Позиция не найдена', 404)
@@ -1174,7 +1174,7 @@ def edit_item(entity_id: str, body: ItemPatch, user: User = Depends(current_user
 
 
 @router.get('/request-items/{entity_id}/revisions')
-def item_revisions(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def item_revisions(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     row = db.get(RequestItem, entity_id)
     if not row:
         raise DomainError('NOT_FOUND', 'Позиция не найдена', 404)
@@ -1187,7 +1187,7 @@ def item_revisions(entity_id: str, user: User = Depends(current_user), db: Sessi
 
 
 @router.get('/requests/{entity_id}/history')
-def history(entity_id: str, page: int = 1, page_size: int = 50, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def history(entity_id: str, page: int = 1, page_size: int = 50, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     check_request(db, user, entity_id)
     ids = [entity_id, *db.scalars(select(RequestItem.id).where(RequestItem.request_id == entity_id))]
     result = paginate(db, select(AuditEvent).where(AuditEvent.entity_id.in_(ids)).order_by(AuditEvent.created_at.desc()), page, page_size)
@@ -1281,7 +1281,7 @@ def latest_price(
 @router.get('/quote-items/latest')
 def latest_quote_item(
     supplier_id: str, nomenclature_id: str, packing_id: str, currency_id: str | None = None,
-    user: User = Depends(current_user), db: Session = Depends(get_db),
+    user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     require_permission(db, user, 'finance.purchase.read')
     require_supplier(db, supplier_id)
@@ -1298,7 +1298,7 @@ def quote_item_history(
     supplier_id: str | None = None, nomenclature_id: str | None = None,
     packing_id: str | None = None, currency_id: str | None = None,
     page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=100),
-    user: User = Depends(current_user), db: Session = Depends(get_db),
+    user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     require_permission(db, user, 'finance.purchase.read')
     stmt = select(QuoteItem).join(QuoteSheet, QuoteSheet.id == QuoteItem.quote_id).where(
@@ -1319,7 +1319,7 @@ def quote_item_history(
 @router.get('/requests/{entity_id}/quote-items')
 def request_quote_items(
     entity_id: str, page: int = Query(1, ge=1), page_size: int = Query(100, ge=1, le=100), ids: str = '', load_all: bool = Query(False, alias="all"),
-    user: User = Depends(current_user), db: Session = Depends(get_db),
+    user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     check_request(db, user, entity_id)
     stmt = select(QuoteItem).join(QuoteSheet, QuoteSheet.id == QuoteItem.quote_id).where(
@@ -1342,7 +1342,7 @@ def request_quote_items(
 @router.get('/requests/{entity_id}/quote-sheets')
 def request_quote_sheets(
     entity_id: str, page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100),
-    user: User = Depends(current_user), db: Session = Depends(get_db),
+    user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     check_request(db, user, entity_id)
     result = paginate(db, select(QuoteSheet).where(QuoteSheet.request_id == entity_id, QuoteSheet.archived.is_(False)).order_by(QuoteSheet.created_at.desc()), page, page_size)
@@ -1352,7 +1352,7 @@ def request_quote_sheets(
 
 
 @router.get('/quote-sheets/{entity_id}')
-def quote_sheet_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def quote_sheet_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     row = db.get(QuoteSheet, entity_id)
     if not row:
         raise DomainError('NOT_FOUND', 'Квота не найдена', 404)
@@ -1370,7 +1370,7 @@ def archive_quote(db, user, row):
 
 @router.post('/quote-items/{entity_id}/delete')
 def delete_quote_item(entity_id: str, body: VersionCommand,
-                      user: User = Depends(current_user), db: Session = Depends(get_db)):
+                      user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
     row = db.get(QuoteItem, entity_id)
     if not row:
         raise DomainError('NOT_FOUND', 'Позиция квоты не найдена', 404)
@@ -1398,7 +1398,7 @@ def delete_quote_item(entity_id: str, body: VersionCommand,
 
 @router.post('/quote-sheets/{entity_id}/delete')
 def delete_quote_sheet(entity_id: str, body: VersionCommand,
-                       user: User = Depends(current_user), db: Session = Depends(get_db)):
+                       user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
     row = db.get(QuoteSheet, entity_id)
     if not row:
         raise DomainError('NOT_FOUND', 'Квота не найдена', 404)
@@ -1424,7 +1424,7 @@ def delete_quote_sheet(entity_id: str, body: VersionCommand,
 @router.post('/requests/{entity_id}/quote-sheets', status_code=201)
 def create_quote_sheet(
     entity_id: str, body: QuoteSheetInput, idempotency_key: str | None = Header(default=None),
-    user: User = Depends(current_user), db: Session = Depends(get_db),
+    user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     check_request(db, user, entity_id, 'quotes.write')
     require_supplier(db, body.supplier_id)
@@ -1510,18 +1510,18 @@ def create_quote_sheet(
 
 
 @router.get('/sellers')
-def sellers(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def sellers(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     return paginate(db, select(Seller).where(Seller.archived.is_(False)).order_by(Seller.name), 1, 100)
 
 
 @router.post('/sellers', status_code=201)
-def create_seller(body: SellerInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def create_seller(body: SellerInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'admin.settings')
     return save(db, user, Seller(**body.model_dump()), 'seller')
 
 
 @router.patch('/sellers/{entity_id}')
-def update_seller(entity_id: str, body: SellerUpdate, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def update_seller(entity_id: str, body: SellerUpdate, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'admin.settings')
     row = lock(db, Seller, entity_id)
     check_version(row, body.version)
