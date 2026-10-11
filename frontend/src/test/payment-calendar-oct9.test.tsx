@@ -3,6 +3,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { PaymentCalendar, WorkflowApprovals } from '../pages/Business';
 import { api, download } from '../lib/api';
+import { today } from '../lib/format';
+import { paymentConfirmationFields } from '../pages/PaymentCalendar';
 
 const permissions = vi.hoisted(() => ({ manager: true }));
 vi.mock('../app/Auth', () => ({
@@ -99,7 +101,7 @@ it('shows invoice attachment and confirms payment with the actual date, exceptio
     expect.anything(),
   );
   fireEvent.click(screen.getByRole('button', { name: 'Согласовать или отклонить' }));
-  fireEvent.change(screen.getByLabelText('Фактическая дата оплаты'), {
+  fireEvent.change(screen.getByLabelText('Дата оплаты'), {
     target: { value: '2026-10-08' },
   });
   fireEvent.click(screen.getByLabelText('Платёж вне платёжных дней'));
@@ -124,6 +126,29 @@ it('shows invoice attachment and confirms payment with the actual date, exceptio
   );
 });
 
+it('lets the leader approve a payment for a later day while the fact stays limited to today', async () => {
+  renderCalendar();
+  fireEvent.click(await screen.findByText(pending.purpose));
+  fireEvent.click(screen.getByRole('button', { name: 'Согласовать или отклонить' }));
+  expect(screen.getByRole('option', { name: 'Согласовать оплату' })).toBeInTheDocument();
+  const day = screen.getByLabelText('Дата оплаты');
+  expect(day).not.toHaveAttribute('max');
+  fireEvent.change(day, { target: { value: '2099-01-06' } });
+  fireEvent.change(screen.getByLabelText(/Комментарий/), {
+    target: { value: 'Оплатить во вторник' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+  await waitFor(() =>
+    expect(api).toHaveBeenCalledWith(
+      '/workflow-approvals/review/decision',
+      expect.objectContaining({
+        body: expect.objectContaining({ decision: 'approved', actual_date: '2099-01-06' }),
+      }),
+    ),
+  );
+  expect(paymentConfirmationFields[0].max).toBe(today());
+});
+
 it('allows rejection without supplying an actual cash date', async () => {
   renderCalendar();
   fireEvent.click(await screen.findByText(pending.purpose));
@@ -131,7 +156,7 @@ it('allows rejection without supplying an actual cash date', async () => {
   fireEvent.change(screen.getByLabelText(/Решение/, { selector: 'select' }), {
     target: { value: 'rejected' },
   });
-  fireEvent.change(screen.getByLabelText('Фактическая дата оплаты'), { target: { value: '' } });
+  fireEvent.change(screen.getByLabelText('Дата оплаты'), { target: { value: '' } });
   fireEvent.change(screen.getByLabelText(/Комментарий/), { target: { value: 'Ошибочный счёт' } });
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
   await waitFor(() =>
@@ -263,7 +288,7 @@ it('records the actual payment date through the common approvals page too', asyn
   fireEvent.change(screen.getByLabelText(/Решение/, { selector: 'select' }), {
     target: { value: 'approved' },
   });
-  fireEvent.change(screen.getByLabelText('Фактическая дата оплаты'), {
+  fireEvent.change(screen.getByLabelText('Дата оплаты'), {
     target: { value: '2026-10-08' },
   });
   fireEvent.change(screen.getByLabelText(/Комментарий/), {

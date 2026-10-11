@@ -1,7 +1,7 @@
 """Plans, actual cash dates, manager decisions, invoice ACLs and dated balances."""
 
 import io
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -36,6 +36,13 @@ def decide(env, entry, decision="approved", actual_date="2026-10-08", **extra):
     return cmd(env, f"/workflow-approvals/{entry['review_id']}/decision", {
         "version": entry["review_version"], "decision": decision, "reason": "Решение руководителя",
         "actual_date": actual_date, **extra}, status=status)
+
+
+def payment_day_after(days):
+    day = date.today() + timedelta(days=days)
+    while day.weekday() not in (1, 3):
+        day += timedelta(days=1)
+    return day.isoformat()
 
 
 def calendar(env, **filters):
@@ -145,11 +152,39 @@ def test_actual_date_and_clean_invoice_are_required_for_approval(crm):  # noqa: 
     invoice(crm, row, status="quarantined")
     row = submit(crm, row)
     assert decide(crm, row, actual_date=None, status=422)["field"] == "actual_date"
-    assert decide(crm, row, actual_date="2099-01-01", status=422)["code"] == "ACTUAL_DATE_FUTURE"
     assert decide(crm, row, status=422)["code"] == "PAYMENT_INVOICE_NOT_READY"
+    assert decide(crm, row, actual_date=payment_day_after(7), status=422)["code"] == "PAYMENT_INVOICE_NOT_READY"
     with crm["sessions"].begin() as db:
         db.query(FileRecord).filter_by(calendar_entry_id=row["id"]).update({"status": "clean"})
     decide(crm, row)
+
+
+def test_approval_for_a_later_day_plans_the_payment_and_its_fact_is_confirmed_on_the_day(crm):  # noqa: F811
+    login(crm)
+    balance(crm)
+    row = planned(crm)
+    invoice(crm, row)
+    row = submit(crm, row)
+    later = payment_day_after(7)
+    weekend = (date.fromisoformat(later) + timedelta(days=4)).isoformat()
+    assert decide(crm, row, actual_date=weekend, status=422)["field"] == "actual_date"
+    decide(crm, row, actual_date=later)
+    data = calendar(crm, to_date=later)
+    entry = data["items"][0]
+    assert entry["status"] == "approved" and entry["actual_date"] is None
+    assert entry["planned_date"] == later
+    summary = data["summary"][0]
+    assert Decimal(summary["planned_expense"]) == 100 and Decimal(summary["expense"]) == 0
+    assert Decimal(summary["current_balance"]) == 1000
+    with crm["sessions"]() as db:
+        assert db.query(AuditEvent).filter_by(entity_id=row["id"], action="approved").count() == 1
+        assert db.query(AuditEvent).filter_by(entity_id=row["id"], action="confirmed").count() == 0
+    confirm = f"/payment-calendar/{entry['id']}/confirm"
+    early = cmd(crm, confirm, {"version": entry["version"], "actual_date": later}, status=422)
+    assert early["code"] == "ACTUAL_DATE_FUTURE"
+    paid = cmd(crm, confirm, {"version": entry["version"], "actual_date": "2026-10-08"})
+    assert paid["status"] == "confirmed" and paid["actual_date"] == "2026-10-08"
+    assert Decimal(calendar(crm, to_date=later)["summary"][0]["current_balance"]) == 900
 
 
 def test_dated_balances_reset_at_start_of_day_without_recounting_old_payments(crm):  # noqa: F811

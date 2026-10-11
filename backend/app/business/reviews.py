@@ -179,7 +179,7 @@ def review_decision(review_id: str, data: ReviewDecision, db: DB, user: Actor):
             if entry.version != row.source_version or entry.status != "pending":
                 error("REVIEW_STALE", "Платёж изменился", 409)
             if data.decision == "approved":
-                cashflow.confirm(db, user, entry, data.actual_date, data.outside_payment_days or entry.outside_payment_days)
+                cashflow.approve(db, user, entry, data.actual_date, data.outside_payment_days or entry.outside_payment_days)
             else:
                 entry.status = "rejected"
                 entry.version += 1

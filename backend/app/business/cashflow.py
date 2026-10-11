@@ -61,6 +61,23 @@ def validate_invoice(db, entry, *, confirming=False):
         error("PAYMENT_INVOICE_NOT_READY", "Дождитесь успешной проверки счёта или загрузите исправный файл")
 
 
+def approve(db, user, row, payment_date, outside_payment_days):
+    """A leader's decision: a day already reached records the payment, a later day plans it for that day."""
+    if not payment_date:
+        error("ACTUAL_DATE_REQUIRED", "Укажите дату оплаты", field="actual_date")
+    if payment_date <= company_today():
+        return confirm(db, user, row, payment_date, outside_payment_days)
+    validate_day(db, row.direction, payment_date, outside_payment_days, "actual_date")
+    validate_invoice(db, row, confirming=True)
+    before = serialize(row)
+    # Approved payments stay in the plan until someone confirms the fact on the day.
+    row.planned_date = payment_date
+    row.outside_payment_days = row.outside_payment_days or outside_payment_days
+    row.status = "approved"
+    row.version += 1
+    audit(db, user, "calendar_entry", row.id, "approved", before=before, after=serialize(row))
+
+
 def confirm(db, user, row, actual_date, outside_payment_days):
     if not actual_date:
         error("ACTUAL_DATE_REQUIRED", "Укажите фактическую дату оплаты", field="actual_date")
