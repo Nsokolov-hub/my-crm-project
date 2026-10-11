@@ -3,8 +3,8 @@
 
 import argparse
 import os
-from pathlib import Path
 import secrets
+from pathlib import Path
 
 
 def main() -> None:

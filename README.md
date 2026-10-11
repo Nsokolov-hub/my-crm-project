@@ -50,7 +50,7 @@ docker compose exec api python -m app.bootstrap \
 
 ```bash
 DATABASE_URL=sqlite:// PYTHONPATH=backend pytest backend/tests -m 'not postgres and not integration' -q
-ruff check backend
+ruff check backend scripts
 pnpm --dir frontend install --frozen-lockfile
 pnpm --dir frontend test
 pnpm --dir frontend build

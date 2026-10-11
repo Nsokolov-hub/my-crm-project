@@ -22,7 +22,7 @@ jobs:
         # The development lock holds every runtime pin as well.
         run: pip-audit -r backend/requirements-dev.lock
       - name: Check code style
-        run: ruff check backend
+        run: ruff check backend scripts
       - name: Check types
         # Modules listed in backend/pyproject.toml still have known errors; all others must pass.
         working-directory: backend
