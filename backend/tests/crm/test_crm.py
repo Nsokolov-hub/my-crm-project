@@ -471,3 +471,20 @@ def test_search_copies_stay_out_of_views_and_history(crm):
     assert history and snapshots
     for value in views + snapshots:
         assert not {'search_text', 'search_fields'} & set(value)
+
+
+def test_supplier_details_used_in_calculations_are_checked_when_saved(crm):
+    login(crm)
+
+    def create(details, status):
+        return post(crm, '/counterparties', {'name': f'Поставщик {len(str(details))}', 'kind': 'supplier',
+                                             'details': details}, status=status)
+
+    for details in ({'calculation_type': 'EXPORT'}, {'Логистика по умолчанию': 'тысяча'},
+                    {'Логистика по умолчанию': '-5'}, {'Валюта логистики': 'Доллар'}, {'rfq_email': 'sales@'}):
+        assert create(details, 422)['code'] == 'VALIDATION_ERROR'
+    supplier = create({'calculation_type': 'DAP', 'Логистика по умолчанию': '1500,50', 'Валюта логистики': 'usd',
+                       'rfq_email': 'sales@aozeal.example', 'Дополнительные сведения': 'любой текст'}, 201)
+    response = crm['client'].patch(f"/api/v1/counterparties/{supplier['id']}", json={
+        'version': supplier['version'], 'details': {**supplier['details'], 'calculation_type': 'IMPORTS'}})
+    assert response.status_code == 422
