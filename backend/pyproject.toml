@@ -63,8 +63,12 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = [
     "app.analytics.routes",
+    "app.business.absences",
+    "app.business.calendar",
     "app.business.cashflow",
-    "app.business.routes",
+    "app.business.reports",
+    "app.business.supplier_mail",
+    "app.business.supplier_orders",
     "app.commerce.calculator",
     "app.commerce.documents",
     "app.commerce.financial",

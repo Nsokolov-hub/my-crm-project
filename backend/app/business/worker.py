@@ -20,7 +20,7 @@ ESCALATION_BATCH = 500
 
 def reminders(db, now=None):
     """Tell managers about tasks two days overdue and payments not confirmed after their date."""
-    from .routes import local_date, managers
+    from .common import local_date, managers
 
     now = now or utcnow()
     today = local_date(now)

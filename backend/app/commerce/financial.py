@@ -765,7 +765,7 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             if default_logistics:
                 effective_expenses = [row for row in effective_expenses
                                       if row.get("stage") != "INTERNATIONAL_LOGISTICS"] + [default_logistics]
-        from app.business.routes import delivery_expense
+        from app.business.supplier_orders import delivery_expense
         delivery = delivery_expense(db, req, data.delivery_city, data.delivery_required)
         effective_expenses = [row for row in effective_expenses if not row.get('name', '').startswith('Доставка СДЭК до 15 кг:') and row.get('name') != 'НДС доставки СДЭК']
         if delivery:
@@ -1051,7 +1051,7 @@ def save_calculation(request_id: str, data: CalculationIn, db: DB, user: Actor):
         )
         db.add(obj)
         db.flush()
-        from app.business.routes import review_calculation
+        from app.business.reviews import review_calculation
         review_calculation(db, user, obj)
         audit(
             db,

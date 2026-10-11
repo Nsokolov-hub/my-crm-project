@@ -73,8 +73,8 @@ def check_entity(db: Session, user: User, entity_type: str, entity_id: str):
     if entity_type == "wave":
         return check_wave(db, user, entity_id)
     if entity_type == "calendar_entry":
+        from app.business.common import calendar_visible
         from app.business.models import CalendarEntry
-        from app.business.routes import calendar_visible
         row = db.get(CalendarEntry, entity_id)
         if row is None:
             raise DomainError("NOT_FOUND", "Платёж недоступен", 404)

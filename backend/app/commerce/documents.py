@@ -210,7 +210,7 @@ def issue_proposal(request_id: str, data: ProposalIn, db: DB, user: Actor):
         calc = db.get(Calculation, data.calculation_id)
         if not calc or calc.request_id != request_id:
             error("CALCULATION_REQUIRED", "Для выпуска КП нужен сохранённый расчёт этой заявки")
-        from app.business.routes import require_calculation_approved
+        from app.business.reviews import require_calculation_approved
         require_calculation_approved(db, calc)
         valid_until = document_expiry(data.valid_until)
         if data.previous_id:

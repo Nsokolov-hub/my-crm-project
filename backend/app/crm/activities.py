@@ -112,7 +112,7 @@ def create_task(body: TaskInput, user: User = Depends(current_user), db: Session
     require_permission(db, user, 'tasks.write')
     check_link(db, user, body.entity_type, body.entity_id)
     assignee = active_user(db, body.assignee_id or user.id)
-    from app.business.routes import ensure_available
+    from app.business.absences import ensure_available
     ensure_available(db, assignee.id)
     check_link(db, assignee, body.entity_type, body.entity_id)
     row = Task(**body.model_dump(exclude={'assignee_id'}), assignee_id=assignee.id, author_id=user.id)
@@ -128,7 +128,7 @@ def create_bulk_call_tasks(body: BulkCallTaskInput, idempotency_key: str | None 
     if len(set(body.client_ids)) != len(body.client_ids):
         raise DomainError('CLIENT_DUPLICATE', 'Уберите повторяющихся клиентов', 422, 'client_ids')
     assignee = active_user(db, body.assignee_id)
-    from app.business.routes import ensure_available
+    from app.business.absences import ensure_available
     ensure_available(db, assignee.id)
     if not can(db, assignee, 'clients.read') or not can(db, assignee, 'tasks.read'):
         raise DomainError('ASSIGNEE_ACCESS_REQUIRED', 'У сотрудника должны быть права просмотра клиентов и задач', 422, 'assignee_id')
@@ -170,7 +170,9 @@ def edit_task(entity_id: str, body: TaskPatch, user: User = Depends(current_user
     if body.assignee_id:
         assignee = active_user(db, body.assignee_id)
         check_link(db, assignee, row.entity_type, row.entity_id)
-    from app.business.routes import ensure_available, local_date, submit_review
+    from app.business.absences import ensure_available
+    from app.business.common import local_date
+    from app.business.reviews import submit_review
     if body.assignee_id:
         ensure_available(db, body.assignee_id)
     late = local_date(utcnow()) > local_date(row.due_at)
@@ -250,7 +252,7 @@ def create_call(body: CallInput, idempotency_key: str | None = Header(default=No
                 row.task_id = existing_task.id
                 notify(db, assignee.id, f'task:{existing_task.id}', 'Время звонка перенесено', 'task', existing_task.id)
             else:
-                from app.business.routes import ensure_available
+                from app.business.absences import ensure_available
                 ensure_available(db, assignee.id)
                 task = Task(title='Связаться с клиентом', entity_type='counterparty', entity_id=body.client_id, author_id=user.id, assignee_id=assignee.id, due_at=body.next_at)
                 db.add(task)
