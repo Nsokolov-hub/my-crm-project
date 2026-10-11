@@ -23,6 +23,7 @@ from app.core.security import (
     require_permission,
     scope_for,
     task_predicate,
+    users_with_permission,
 )
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
 from app.core.service import page as paginate
@@ -889,10 +890,9 @@ def notify_call_result(db: Session, row: Call, version: int | None = None) -> No
     client = db.get(Counterparty, row.client_id)
     author = db.get(User, row.author_id)
     title = f'{author.name if author else "Сотрудник"}: {client.name if client else "Клиент"} — {CALL_RESULT_LABELS.get(row.result, row.result)}'[:250]
-    for leader in db.scalars(select(User).where(User.active.is_(True))):
-        if can(db, leader, 'approvals.decide'):
-            key = f'call:{row.id}' if version is None else f'call:{row.id}:v{version}'
-            notify(db, leader.id, key, title, 'counterparty', row.client_id)
+    key = f'call:{row.id}' if version is None else f'call:{row.id}:v{version}'
+    for leader in users_with_permission(db, 'approvals.decide'):
+        notify(db, leader.id, key, title, 'counterparty', row.client_id)
 
 
 @router.post('/calls', status_code=201)

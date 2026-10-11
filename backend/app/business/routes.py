@@ -29,6 +29,7 @@ from app.core.security import (
     request_predicate,
     require_permission,
     task_predicate,
+    users_with_permission,
 )
 from app.core.service import advisory, audit, check_version, idem, lock, notify, page, plain, serialize
 from app.crm.models import Counterparty, Nomenclature, Packing, QuoteItem, RequestItem, Seller
@@ -50,11 +51,7 @@ TARIFFS = json.loads((Path(__file__).parent / "delivery_tariffs.json").read_text
 
 
 def managers(db):
-    return [
-        user
-        for user in db.scalars(select(User).where(User.active.is_(True)))
-        if can(db, user, "approvals.decide")
-    ]
+    return users_with_permission(db, "approvals.decide")
 
 
 def local_date(value):

@@ -22,7 +22,7 @@ from app.core.config import settings
 from app.core.db import SessionLocal, utcnow
 from app.core.errors import DomainError
 from app.core.models import AppSetting, OutboxEvent, User
-from app.core.security import can
+from app.core.security import users_with_permission
 from app.core.service import advisory, audit, notify
 from app.crm.models import ImportBatch, Task
 
@@ -241,10 +241,9 @@ def process_events(db: Session, limit: int = 25, now: datetime | None = None) ->
                 audit(db, None, 'job', event.id, 'failed', after={'kind': event.kind, 'status': event.status,
                                                                'attempts': event.attempts, 'error': event.error})
                 # No payload, filenames, amounts, or technical exception messages in alerts.
-                for target in db.scalars(select(User).where(User.active.is_(True))):
-                    if can(db, target, 'admin.settings'):
-                        notify(db, target.id, f'job-failed:{event.id}:{event.version}',
-                               'Фоновая операция требует внимания', 'job', event.id)
+                for target in users_with_permission(db, 'admin.settings'):
+                    notify(db, target.id, f'job-failed:{event.id}:{event.version}',
+                           'Фоновая операция требует внимания', 'job', event.id)
     db.flush()
     return counts
 

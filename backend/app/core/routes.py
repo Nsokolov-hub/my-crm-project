@@ -145,11 +145,8 @@ def login(
         max_age=settings.session_hours * 3600,
         path="/",
     )
-    return {
-        "user": user_view(db, user),
-        "csrf_token": csrf,
-        "permissions": user_view(db, user)["permissions"],
-    }
+    view = user_view(db, user)
+    return {"user": view, "csrf_token": csrf, "permissions": view["permissions"]}
 
 
 @router.get("/auth/me")
