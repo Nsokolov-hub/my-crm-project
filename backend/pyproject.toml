@@ -75,8 +75,12 @@ module = [
     "app.commerce.schemas",
     "app.communication.access",
     "app.communication.routes",
+    "app.crm.activities",
+    "app.crm.catalogue",
+    "app.crm.counterparties",
     "app.crm.imports",
-    "app.crm.routes",
+    "app.crm.quotes",
+    "app.crm.requests",
     "app.crm.schemas",
     "app.crm.table_imports",
 ]

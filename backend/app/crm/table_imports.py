@@ -26,6 +26,7 @@ from app.core.models import User
 from app.core.routes import Input
 from app.core.security import check_request, current_user, require_permission
 from app.core.service import advisory, audit, idem, lock, serialize
+from app.crm.catalogue import packing_name
 from app.crm.imports import string_value, xlsx
 from app.crm.models import (
     Counterparty,
@@ -38,7 +39,8 @@ from app.crm.models import (
     RequestItemRevision,
     TableImport,
 )
-from app.crm.routes import create_quote_sheet, packing_name, structured_item_fields
+from app.crm.quotes import create_quote_sheet
+from app.crm.requests import structured_item_fields
 from app.crm.schemas import ItemInput, QuoteItemInput, QuoteSheetInput
 
 router = APIRouter(tags=["Импорт заявок и квот"])

@@ -12,7 +12,7 @@ from app.commerce.schemas import VersionCommand
 from app.core.db import utcnow
 from app.core.models import User
 from app.crm.models import Currency, Nomenclature, Packing, QuoteItem, QuoteSheet
-from app.crm.routes import delete_quote_sheet
+from app.crm.quotes import delete_quote_sheet
 
 pytestmark = pytest.mark.postgres
 

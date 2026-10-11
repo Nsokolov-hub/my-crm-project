@@ -1022,52 +1022,6 @@
         }
       }
     },
-    "/api/v1/dictionaries/{key}": {
-      "get": {
-        "tags": [
-          "CRM"
-        ],
-        "summary": "Dictionary",
-        "operationId": "dictionary_api_v1_dictionaries__key__get",
-        "parameters": [
-          {
-            "name": "key",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Key"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Dictionary Api V1 Dictionaries  Key  Get"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Сеанс отсутствует или отозван"
-          },
-          "403": {
-            "description": "Недостаточно прав"
-          },
-          "409": {
-            "description": "Конфликт версии или повторяемости"
-          },
-          "422": {
-            "description": "Ошибка предметной валидации"
-          }
-        }
-      }
-    },
     "/api/v1/product-groups": {
       "get": {
         "tags": [
@@ -2807,6 +2761,186 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Edit Contact Api V1 Contacts  Entity Id  Patch"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/sellers": {
+      "get": {
+        "tags": [
+          "CRM"
+        ],
+        "summary": "Sellers",
+        "operationId": "sellers_api_v1_sellers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Sellers Api V1 Sellers Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "CRM"
+        ],
+        "summary": "Create Seller",
+        "operationId": "create_seller_api_v1_sellers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SellerInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Create Seller Api V1 Sellers Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/sellers/{entity_id}": {
+      "patch": {
+        "tags": [
+          "CRM"
+        ],
+        "summary": "Update Seller",
+        "operationId": "update_seller_api_v1_sellers__entity_id__patch",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SellerUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Seller Api V1 Sellers  Entity Id  Patch"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/dictionaries/{key}": {
+      "get": {
+        "tags": [
+          "CRM"
+        ],
+        "summary": "Dictionary",
+        "operationId": "dictionary_api_v1_dictionaries__key__get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Dictionary Api V1 Dictionaries  Key  Get"
                 }
               }
             }
@@ -4569,140 +4703,6 @@
             "content": {
               "application/json": {
                 "schema": {}
-              }
-            }
-          },
-          "401": {
-            "description": "Сеанс отсутствует или отозван"
-          },
-          "403": {
-            "description": "Недостаточно прав"
-          },
-          "409": {
-            "description": "Конфликт версии или повторяемости"
-          },
-          "422": {
-            "description": "Ошибка предметной валидации"
-          }
-        }
-      }
-    },
-    "/api/v1/sellers": {
-      "get": {
-        "tags": [
-          "CRM"
-        ],
-        "summary": "Sellers",
-        "operationId": "sellers_api_v1_sellers_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Sellers Api V1 Sellers Get"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Сеанс отсутствует или отозван"
-          },
-          "403": {
-            "description": "Недостаточно прав"
-          },
-          "409": {
-            "description": "Конфликт версии или повторяемости"
-          },
-          "422": {
-            "description": "Ошибка предметной валидации"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "CRM"
-        ],
-        "summary": "Create Seller",
-        "operationId": "create_seller_api_v1_sellers_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SellerInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Create Seller Api V1 Sellers Post"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Сеанс отсутствует или отозван"
-          },
-          "403": {
-            "description": "Недостаточно прав"
-          },
-          "409": {
-            "description": "Конфликт версии или повторяемости"
-          },
-          "422": {
-            "description": "Ошибка предметной валидации"
-          }
-        }
-      }
-    },
-    "/api/v1/sellers/{entity_id}": {
-      "patch": {
-        "tags": [
-          "CRM"
-        ],
-        "summary": "Update Seller",
-        "operationId": "update_seller_api_v1_sellers__entity_id__patch",
-        "parameters": [
-          {
-            "name": "entity_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Entity Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SellerUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Update Seller Api V1 Sellers  Entity Id  Patch"
-                }
               }
             }
           },
