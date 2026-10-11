@@ -12,4 +12,26 @@
 
 П2 и П3 отделены контрактами; интеграции не включаются без подключения и настройки. УПД отсутствует.
 
+## Устройство backend
+
+Каждый пакет (`core`, `crm`, `commerce`, `business`, `communication`, `analytics`, `audit`) делится на модули поддоменов. Например, в `crm` это `catalogue`, `counterparties`, `activities`, `requests` и `quotes`, а общие проверки лежат в `crm/common.py`. Модуль поддомена содержит эндпоинты и функции, которыми пользуются другие модули. `routes.py` пакета только собирает роутеры поддоменов, и подключает его один `app.main`.
+
+Правила проверяет `backend/tests/core/test_architecture.py`:
+
+- обработчик HTTP-запроса не импортируется и не вызывается как функция: общая работа вынесена в обычные функции, например `communication.attachments.attach_file` или `crm.quotes.record_quote_sheet`;
+- `routes.py` пакета импортирует только `app.main`, помощники берутся из модуля, которому они принадлежат.
+
+Общие основы лежат в `core`: базовая схема запроса `core.schemas.Input`, параметры эндпоинтов `core.db.DB` (сессия запроса) и `core.security.Actor` (пользователь).
+
+## Параллельные модели
+
+Часть предметной области существует в двух вариантах. Удалять старый вариант можно только после проверки рабочих данных.
+
+| Область | Текущая модель | Ранняя модель | Состояние |
+|---|---|---|---|
+| Квоты поставщиков | `QuoteSheet` / `QuoteItem` (`crm.quotes`) | `Quote` (`commerce.procurement`) | Интерфейс читает и создаёт только листы квот. Создание и пересмотр ранних квот (`POST /requests/{id}/quotes`, `POST /quotes/{id}/revise`) помечены в API как устаревшие. |
+| Каталог | `Nomenclature` / `Packing` / `ProductGroup` | `Product` / `Substance` / `Manufacturer` | Ранний каталог ещё показывается и подтверждается на странице «Каталог». |
+| Методика расчёта | `itemized-v2` (`commerce.itemized`) | формульные профили `decimal-dsl-1` (`commerce.calculator`) | Формульный расчёт работает только с ранними квотами. |
+| Согласования | `WorkflowReview` (`/workflow-approvals`: платежи, расчёты, задачи) | — | `Approval` (`/approvals`) — отдельная действующая функция: руководитель согласует исполнения заявки. |
+
 Технические ориентиры: [FastAPI Docker](https://fastapi.tiangolo.com/deployment/docker/), [SQLAlchemy versioning](https://docs.sqlalchemy.org/en/20/orm/versioning.html).

@@ -5888,6 +5888,7 @@
         ],
         "summary": "Add Quote",
         "operationId": "add_quote_api_v1_requests__request_id__quotes_post",
+        "deprecated": true,
         "parameters": [
           {
             "name": "request_id",
@@ -5940,6 +5941,7 @@
         ],
         "summary": "Revise Quote",
         "operationId": "revise_quote_api_v1_quotes__quote_id__revise_post",
+        "deprecated": true,
         "parameters": [
           {
             "name": "quote_id",

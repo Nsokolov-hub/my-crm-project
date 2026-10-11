@@ -275,7 +275,9 @@ def list_quotes(
     return {"items": [quote_view(db, user, quote) for quote in items], "page": page, "page_size": page_size}
 
 
-@router.post("/requests/{request_id}/quotes")
+# The interface records quotes as quote sheets (crm.quotes); these two commands of the earlier quote
+# model stay for existing data and integrations only.
+@router.post("/requests/{request_id}/quotes", deprecated=True)
 def add_quote(request_id: str, data: QuoteIn, db: DB, user: Actor):
     check_request(db, user, request_id, "quotes.write")
     
@@ -293,7 +295,7 @@ def add_quote(request_id: str, data: QuoteIn, db: DB, user: Actor):
     )
 
 
-@router.post("/quotes/{quote_id}/revise")
+@router.post("/quotes/{quote_id}/revise", deprecated=True)
 def revise_quote(quote_id: str, data: QuoteIn, db: DB, user: Actor):
     previous = db.get(Quote, quote_id)
     if not previous:
