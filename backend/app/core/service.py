@@ -13,7 +13,9 @@ from app.core.db import Entity
 from app.core.errors import DomainError
 from app.core.models import AuditEvent, IdempotencyRecord, Notification, User
 
-correlation_id: ContextVar[str] = ContextVar('correlation_id', default='background')
+# Work outside an HTTP request (worker, scripts) has no request code.
+BACKGROUND = 'background'
+correlation_id: ContextVar[str] = ContextVar('correlation_id', default=BACKGROUND)
 T = TypeVar('T', bound=Entity)
 # Stays well below the bind parameter limits of SQLite and PostgreSQL.
 PREFETCH_CHUNK = 5000

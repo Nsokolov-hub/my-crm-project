@@ -16,10 +16,11 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.errors import DomainError
+from app.core.logs import configure_logging
 from app.core.service import correlation_id
 
 logger = logging.getLogger('crm')
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+configure_logging()
 REQUESTS = Counter('crm_http_requests_total', 'HTTP requests', ['method', 'route', 'status'])
 LATENCY = Histogram('crm_http_duration_seconds', 'API latency', ['method', 'route'])
 

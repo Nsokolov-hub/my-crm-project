@@ -102,3 +102,25 @@ git checkout <target_tag>
 docker compose build api web
 docker compose up -d --no-build
 ```
+
+## 7. Журналы и наблюдение
+
+Сервисы `api` и `worker` пишут журнал в стандартный поток. Каждая запись — одна строка JSON со следующими полями:
+
+- `time` — время в UTC;
+- `level` — уровень;
+- `logger` — источник;
+- `event` или `message` — что произошло;
+- `requestId` — код HTTP-запроса;
+- `exception` — трассировка ошибки целиком, в той же строке.
+
+Такой журнал без настройки шаблонов принимают Loki, Vector, Elastic и другие сборщики.
+
+Сообщение об ошибке в интерфейсе содержит код запроса. По нему можно найти записи этого запроса (нужна утилита `jq`):
+
+```bash
+docker compose logs --no-log-prefix api | jq -c 'select(.requestId == "КОД-ИЗ-СООБЩЕНИЯ")'
+docker compose logs --no-log-prefix api worker | jq -c 'select(.level == "error" or .level == "warning")'
+```
+
+Метрики Prometheus (`crm_http_requests_total`, `crm_http_duration_seconds`) отдаёт `GET /metrics` только запросам с самого хоста API, поэтому снаружи их не видно.
