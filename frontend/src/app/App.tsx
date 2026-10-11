@@ -1,19 +1,39 @@
+import { lazy } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './Auth';
 import { Layout } from './Layout';
 import { Loading } from '../components/ui';
 import { Login } from '../pages/Login';
-import { Dashboard, Analytics } from '../pages/Dashboard';
-import { Clients, Calls, Tasks } from '../pages/Clients';
-import { Contacts } from '../pages/Contacts';
-import { Requests } from '../pages/Requests';
-import { RequestDetail } from '../pages/RequestDetail';
-import { Catalog } from '../pages/Catalog';
-import { Waves } from '../pages/Fulfillment';
-import { Chats, Notifications } from '../pages/Communication';
-import { Registry } from '../pages/Registry';
-import { PaymentCalendar, SupplierOrders, EmployeeAbsences } from '../pages/Business';
-import { Settings, Guide } from '../pages/Settings';
+
+// Sections load on their first visit, so signing in does not download the whole application.
+const Dashboard = lazy(() => import('../pages/Dashboard').then((m) => ({ default: m.Dashboard })));
+const Analytics = lazy(() => import('../pages/Dashboard').then((m) => ({ default: m.Analytics })));
+const Clients = lazy(() => import('../pages/Clients').then((m) => ({ default: m.Clients })));
+const Calls = lazy(() => import('../pages/Clients').then((m) => ({ default: m.Calls })));
+const Tasks = lazy(() => import('../pages/Clients').then((m) => ({ default: m.Tasks })));
+const Contacts = lazy(() => import('../pages/Contacts').then((m) => ({ default: m.Contacts })));
+const Requests = lazy(() => import('../pages/Requests').then((m) => ({ default: m.Requests })));
+const RequestDetail = lazy(() =>
+  import('../pages/RequestDetail').then((m) => ({ default: m.RequestDetail })),
+);
+const Catalog = lazy(() => import('../pages/Catalog').then((m) => ({ default: m.Catalog })));
+const Waves = lazy(() => import('../pages/Fulfillment').then((m) => ({ default: m.Waves })));
+const Chats = lazy(() => import('../pages/Communication').then((m) => ({ default: m.Chats })));
+const Notifications = lazy(() =>
+  import('../pages/Communication').then((m) => ({ default: m.Notifications })),
+);
+const Registry = lazy(() => import('../pages/Registry').then((m) => ({ default: m.Registry })));
+const PaymentCalendar = lazy(() =>
+  import('../pages/Business').then((m) => ({ default: m.PaymentCalendar })),
+);
+const SupplierOrders = lazy(() =>
+  import('../pages/Business').then((m) => ({ default: m.SupplierOrders })),
+);
+const EmployeeAbsences = lazy(() =>
+  import('../pages/Business').then((m) => ({ default: m.EmployeeAbsences })),
+);
+const Settings = lazy(() => import('../pages/Settings').then((m) => ({ default: m.Settings })));
+const Guide = lazy(() => import('../pages/Settings').then((m) => ({ default: m.Guide })));
 
 function AuthenticatedApp() {
   const auth = useAuth();

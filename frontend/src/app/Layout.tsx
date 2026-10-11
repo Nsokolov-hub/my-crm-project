@@ -22,8 +22,9 @@ import {
   CheckCheck,
 } from 'lucide-react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useAuth } from './Auth';
+import { Loading } from '../components/ui';
 import { api } from '../lib/api';
 import { useApi } from '../lib/hooks';
 import type { Page } from '../lib/types';
@@ -253,7 +254,9 @@ export function Layout() {
           </div>
         </header>
         <main id="main-content" className="main-content">
-          <Outlet />
+          <Suspense fallback={<Loading />}>
+            <Outlet />
+          </Suspense>
         </main>
         <footer className="app-footer">
           <span>Реактив CRM</span>
