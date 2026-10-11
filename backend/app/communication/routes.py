@@ -19,6 +19,7 @@ from app.communication.attachments import attach_file, file_download
 from app.communication.models import Chat, ChatMember, FileRecord, Message, MessageFile
 from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
+from app.core.events import publish
 from app.core.models import Notification, OutboxEvent, User
 from app.core.schemas import Input
 from app.core.security import (
@@ -316,6 +317,7 @@ def send_message(entity_id: str, body: MessageInput, user: User = Depends(curren
                                             'entity_type': 'chat', 'entity_id': chat.id}))
         # Sending does not implicitly mark older messages as read.
         db.flush()
+        publish(db, 'chat', [target.user_id for target in members], chat=chat.id)
         audit(db, user, 'chat', chat.id, 'message_sent', after={'message_id': row.id, 'sequence': row.sequence})
         return message_view(db, user, row)
 
@@ -355,6 +357,7 @@ def read_chat(entity_id: str, body: ReadInput, user: User = Depends(current_user
         raise DomainError('READ_CURSOR_INVALID', 'Нельзя прочитать ещё не существующие сообщения', 422, 'through')
     member.read_sequence = max(member.read_sequence, through)
     member.version += 1
+    publish(db, 'chat', [user.id], chat=chat.id)
     return chat_view(db, chat, member)
 
 
@@ -399,6 +402,7 @@ def read_notification(entity_id: str, user: User = Depends(current_user), db: Se
     if row is None:
         raise DomainError('NOT_FOUND', 'Уведомление не найдено', 404)
     row.read = True
+    publish(db, 'notification', [user.id])
     return serialize(row)
 
 

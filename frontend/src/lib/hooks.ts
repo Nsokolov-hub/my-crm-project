@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import { useLive } from './liveEvents';
 import { queryClient } from './queryClient';
 import { createRequestKey } from './requestKey';
 /**
@@ -79,4 +80,44 @@ export function useDirtyProtection(dirty: boolean) {
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [dirty]);
+}
+
+// Polling is a fallback while live events arrive, so it runs this many times less often then.
+const LIVE_SLOWDOWN = 6;
+
+/**
+ * Calls `refresh` every `intervalMs` while the tab is visible (six times less often while live
+ * events arrive) and once at once when a hidden tab becomes visible. `null` turns polling off.
+ */
+export function usePolling(refresh: () => void, intervalMs: number | null) {
+  const live = useLive();
+  const latest = useRef(refresh);
+  useEffect(() => {
+    latest.current = refresh;
+  });
+  useEffect(() => {
+    if (intervalMs === null) return;
+    const period = live ? intervalMs * LIVE_SLOWDOWN : intervalMs;
+    let timer: number | undefined;
+    const stop = () => {
+      if (timer !== undefined) window.clearInterval(timer);
+      timer = undefined;
+    };
+    const start = () => {
+      stop();
+      if (document.visibilityState !== 'hidden')
+        timer = window.setInterval(() => latest.current(), period);
+    };
+    const visibility = () => {
+      if (document.visibilityState === 'hidden') return stop();
+      latest.current();
+      start();
+    };
+    start();
+    document.addEventListener('visibilitychange', visibility);
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', visibility);
+    };
+  }, [intervalMs, live]);
 }

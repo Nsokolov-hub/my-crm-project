@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import Entity
 from app.core.errors import DomainError
+from app.core.events import publish
 from app.core.models import AuditEvent, IdempotencyRecord, Notification, User
 
 # Work outside an HTTP request (worker, scripts) has no request code.
@@ -118,6 +119,7 @@ def notify(db: Session, user_id: str, event_key: str, title: str, entity_type: s
     if not db.scalar(select(Notification.id).where(Notification.user_id == user_id, Notification.event_key == event_key)):
         db.add(Notification(user_id=user_id, event_key=event_key, title=title, entity_type=entity_type, entity_id=entity_id))
         db.flush()
+        publish(db, 'notification', [user_id])
 
 
 def notify_many(db: Session, notices: Iterable[tuple[str, str, str, str, str]]) -> None:

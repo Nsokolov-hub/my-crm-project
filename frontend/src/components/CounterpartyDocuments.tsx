@@ -1,9 +1,10 @@
 import { Archive, Download, Paperclip } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useAuth } from '../app/Auth';
 import { api, download } from '../lib/api';
 import { date } from '../lib/format';
-import { useApi, useCommand } from '../lib/hooks';
+import { useApi, useCommand, usePolling } from '../lib/hooks';
+import { useLiveEvents } from '../lib/liveEvents';
 import { createRequestKey } from '../lib/requestKey';
 import type { Entity, Page } from '../lib/types';
 import { Badge, Button, DataTable, ErrorBox, Loading, Pagination, Section } from './ui';
@@ -33,14 +34,13 @@ export function CounterpartyDocuments({ counterpartyId }: { counterpartyId: stri
   const canWrite = auth.can('clients.write');
   const canUpload = canWrite && auth.can('files.upload');
 
-  useEffect(() => {
-    if (
-      !documents.data?.items.some((row) => ['pending', 'quarantined'].includes(String(row.status)))
-    )
-      return;
-    const timer = setInterval(documents.refresh, 5000);
-    return () => clearInterval(timer);
-  }, [documents.data, documents.refresh]);
+  const scanning = Boolean(
+    documents.data?.items.some((row) => ['pending', 'quarantined'].includes(String(row.status))),
+  );
+  usePolling(documents.refresh, scanning ? 5000 : null);
+  useLiveEvents((event) => {
+    if (event.kind === 'file' || event.kind === 'resync') documents.refresh();
+  });
 
   async function upload(event: React.FormEvent) {
     event.preventDefault();

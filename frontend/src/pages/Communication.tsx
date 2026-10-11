@@ -26,7 +26,8 @@ import {
 } from '../components/ui';
 import { api, download } from '../lib/api';
 import { date } from '../lib/format';
-import { useApi, useCommand } from '../lib/hooks';
+import { useApi, useCommand, usePolling } from '../lib/hooks';
+import { useLiveEvents } from '../lib/liveEvents';
 import { createRequestKey } from '../lib/requestKey';
 import type { Entity, Field, Page } from '../lib/types';
 export function FilesPanel({
@@ -49,12 +50,13 @@ export function FilesPanel({
   const pendingUpload = useRef<{ signature: string; key: string } | undefined>(undefined);
   const receivedFile = useRef<File | undefined>(undefined);
   const fileInput = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (!files.data?.items.some((f) => f.status === 'quarantined' || f.status === 'pending'))
-      return;
-    const timer = setInterval(files.refresh, 5000);
-    return () => clearInterval(timer);
-  }, [files.data, files.refresh]);
+  const scanning = Boolean(
+    files.data?.items.some((f) => f.status === 'quarantined' || f.status === 'pending'),
+  );
+  usePolling(refreshFiles, scanning ? 5000 : null);
+  useLiveEvents((event) => {
+    if (event.kind === 'file' || event.kind === 'resync') refreshFiles();
+  });
   const upload = useCallback(
     async (file: File) => {
       setBusy(true);
@@ -247,6 +249,7 @@ export function ChatRoom({ chat, onBack }: { chat: Entity; onBack?: () => void }
   const markedRead = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
   const operation = useCommand();
+  const reload = useRef<() => void>(() => {});
   useEffect(() => {
     let stopped = false;
     let loading = false;
@@ -287,15 +290,20 @@ export function ChatRoom({ chat, onBack }: { chat: Entity; onBack?: () => void }
       }
     }
     void load();
-    const timer = setInterval(() => void load(), 4000);
+    reload.current = () => void load();
     const online = () => void load();
     window.addEventListener('online', online);
     return () => {
       stopped = true;
-      clearInterval(timer);
+      reload.current = () => {};
       window.removeEventListener('online', online);
     };
   }, [chat.id]);
+  usePolling(() => reload.current(), 4000);
+  useLiveEvents((event) => {
+    if (event.kind === 'resync' || (event.kind === 'chat' && event.chat === chat.id))
+      reload.current();
+  });
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages.length]);

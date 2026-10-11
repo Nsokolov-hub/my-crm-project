@@ -22,6 +22,7 @@ from app.communication.models import FileRecord
 from app.core.config import settings
 from app.core.db import SessionLocal, utcnow
 from app.core.errors import DomainError
+from app.core.events import publish
 from app.core.logs import configure_logging
 from app.core.models import AppSetting, OutboxEvent, User
 from app.core.security import users_with_permission
@@ -175,6 +176,7 @@ def dispatch(db: Session, event: OutboxEvent) -> None:
         audit(db, None, 'file', row.id, 'scan_completed', after={'status': row.status, 'sha256': row.sha256})
         notify(db, row.author_id, f'file-verdict:{row.id}',
                'Файл проверен и доступен' if clean else 'Вложение заблокировано антивирусом', 'file', row.id)
+        publish(db, 'file', [row.author_id], file=row.id)
         return
     if event.kind == 'notification':
         user = db.get(User, payload['user_id'])
