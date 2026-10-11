@@ -7,6 +7,7 @@ from threading import Barrier, Lock
 from uuid import uuid4
 
 import pytest
+import sqlalchemy as sa
 from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -26,6 +27,21 @@ from app.core.models import PermissionGrant, User
 from app.core.security import PERMISSIONS, current_user
 from app.crm.models import Counterparty, Request, RequestItem, Seller
 from tests.support.paths import BACKEND_DIR
+
+
+def insert_row(connection, model, **values):
+    """Insert one row with the model's Python-side defaults, skipping columns the schema does not have yet."""
+    table = sa.Table(model.__tablename__, sa.MetaData(), autoload_with=connection)
+    row = {}
+    for column in model.__table__.columns:
+        if column.key in values:
+            row[column.name] = values[column.key]
+        elif column.default is not None and column.default.is_scalar:
+            row[column.name] = column.default.arg
+        elif column.default is not None and column.default.is_callable:
+            row[column.name] = column.default.arg(None)
+    connection.execute(table.insert().values({name: value for name, value in row.items() if name in table.c}))
+    return row["id"]
 
 
 @pytest.fixture
@@ -63,49 +79,36 @@ def postgres_commerce(tmp_path, monkeypatch):
             migrations.upgrade(config, "head")
         sessions = sessionmaker(engine, expire_on_commit=False)
         monkeypatch.setattr(settings, "storage_dir", tmp_path / "files")
+        with engine.begin() as connection:
+            # Core inserts into the reflected schema: works at whatever revision a test migrated to.
+            owner_id = insert_row(connection, User, email="owner@example.test", name="Владелец",
+                                  password_hash="fixture-only")
+            for code in PERMISSIONS:
+                insert_row(connection, PermissionGrant, user_id=owner_id, code=code, scope="all")
+            seller_id = insert_row(connection, Seller, name="Тестовый продавец", currency="RUB",
+                                   details={"tax_id": "TEST"})
+            client_id = insert_row(connection, Counterparty, name="Клиент", kind="client", owner_id=owner_id,
+                                   internal_code=1)
+            supplier_id = insert_row(connection, Counterparty, name="Поставщик", kind="supplier",
+                                     owner_id=owner_id, internal_code=2)
+            request_id = insert_row(connection, Request, number="TEST-PG-001", title="Конкурентная тестовая заявка",
+                                    seller_id=seller_id, client_id=client_id, owner_id=owner_id, is_test=True)
+            item_id = insert_row(connection, RequestItem, request_id=request_id, description="Этанол для теста",
+                                 cas="64-17-5", quantity=Decimal("10"), unit="pcs", purity="99%",
+                                 packaging="1 штука", allow_analogue=False)
         with sessions() as db:
-            owner = User(email="owner@example.test", name="Владелец", password_hash="fixture-only")
-            db.add(owner)
-            db.flush()
-            db.add_all(PermissionGrant(user_id=owner.id, code=code, scope="all") for code in PERMISSIONS)
-            seller = Seller(name="Тестовый продавец", currency="RUB", details={"tax_id": "TEST"})
-            client = Counterparty(name="Клиент", kind="client", owner_id=owner.id)
-            supplier = Counterparty(name="Поставщик", kind="supplier", owner_id=owner.id)
-            db.add_all([seller, client, supplier])
-            db.flush()
-            request = Request(
-                number="TEST-PG-001",
-                title="Конкурентная тестовая заявка",
-                seller_id=seller.id,
-                client_id=client.id,
-                owner_id=owner.id,
-                is_test=True,
-            )
-            db.add(request)
-            db.flush()
-            item = RequestItem(
-                request_id=request.id,
-                description="Этанол для теста",
-                cas="64-17-5",
-                quantity=Decimal("10"),
-                unit="pcs",
-                purity="99%",
-                packaging="1 штука",
-                allow_analogue=False,
-            )
-            db.add(item)
-            db.commit()
-            state = {
-                "owner_id": owner.id,
-                "seller_id": seller.id,
-                "client_id": client.id,
-                "supplier_id": supplier.id,
-                "request_id": request.id,
-                "item_id": item.id,
-                "sessions": sessions,
-                "barrier": None,
-                "backend_pids": [],
-            }
+            owner = db.get(User, owner_id)
+        state = {
+            "owner_id": owner_id,
+            "seller_id": seller_id,
+            "client_id": client_id,
+            "supplier_id": supplier_id,
+            "request_id": request_id,
+            "item_id": item_id,
+            "sessions": sessions,
+            "barrier": None,
+            "backend_pids": [],
+        }
 
         app = FastAPI()
         app.include_router(router, prefix="/api/v1")

@@ -78,6 +78,7 @@ from app.crm.schemas import (
     TaskInput,
     TaskPatch,
 )
+from app.crm.text_search import search_parts
 
 router = APIRouter(tags=['CRM'])
 
@@ -536,30 +537,12 @@ def clients(q: str = '', kind: str | None = None, client_base: str | None = None
         'internal_code': Counterparty.internal_code,
     }.get(sort, Counterparty.name)
     stmt = stmt.order_by(col.desc() if direction == 'desc' else col, Counterparty.id)
-    query_parts = search_parts(q)
-    filter_parts = {key: search_parts(value) for key, value in filters.items()}
-    if not query_parts and not any(filter_parts.values()):
-        return add_counterparty_owners(db, paginate(db, stmt, page, page_size))
-    if page < 1 or not 1 <= page_size <= 100:
-        raise DomainError('PAGINATION_INVALID', 'Размер страницы от 1 до 100; номер от 1', 422)
-    start = (page - 1) * page_size
-    items = []
-    total = 0
-    for row in db.scalars(stmt).yield_per(500):
-        details = row.details if isinstance(row.details, dict) else {}
-        values = {
-            'name': row.name, 'tax_id': row.tax_id, 'phone': row.phone, 'email': row.email,
-            'internal_code': row.internal_code,
-            'profile': details.get('profile'), 'city': details.get('city'),
-        }
-        if query_parts and not search_match(' '.join(str(value or '') for value in values.values()), query_parts):
-            continue
-        if any(parts and not search_match(values[key], parts) for key, parts in filter_parts.items()):
-            continue
-        if start <= total < start + page_size:
-            items.append(serialize(row))
-        total += 1
-    return add_counterparty_owners(db, {'items': items, 'total': total, 'page': page, 'page_size': page_size})
+    for part in search_parts(q):
+        stmt = stmt.where(Counterparty.search_text.contains(part, autoescape=True))
+    for key, value in filters.items():
+        for part in search_parts(value):
+            stmt = stmt.where(Counterparty.search_fields[key].as_string().contains(part, autoescape=True))
+    return add_counterparty_owners(db, paginate(db, stmt, page, page_size))
 
 
 def add_counterparty_owners(db: Session, result: dict) -> dict:
@@ -579,16 +562,6 @@ def counterparty_owners(user: User = Depends(current_user), db: Session = Depend
     require_permission(db, user, 'clients.read')
     rows = db.scalars(select(User).where(User.active.is_(True)).order_by(User.name, User.id))
     return {'items': [{'id': row.id, 'name': row.name} for row in rows]}
-
-
-def search_parts(value: str) -> list[str]:
-    return [part for part in (''.join(char for char in word.casefold().replace('ё', 'е') if char.isalnum())
-                              for word in value.split()) if part]
-
-
-def search_match(value: Any, parts: list[str]) -> bool:
-    normalized = ''.join(char for char in str(value or '').casefold().replace('ё', 'е') if char.isalnum())
-    return all(part in normalized for part in parts)
 
 
 @router.post('/counterparties', status_code=201)

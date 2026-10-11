@@ -429,3 +429,31 @@ def test_contact_search_with_q(crm):
     res = crm["client"].get(f"/api/v1/counterparties/{client['id']}/contacts?q=Смирнов")
     assert res.status_code == 200
     assert len(res.json()["items"]) == 0
+
+
+def test_counterparty_search_runs_in_sql_and_follows_edits(crm):
+    from tests.support.queries import statements_while
+
+    login(crm)
+    target = post(crm, '/counterparties', {'name': 'ООО «Ёлочка»', 'phone': '+7 (812) 555-01-02',
+                                           'details': {'city': 'Санкт-Петербург'}})
+    for index in range(12):
+        post(crm, '/counterparties', {'name': f'Посторонняя компания {index}'})
+
+    def search(**params):
+        response = crm['client'].get('/api/v1/counterparties', params=params)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    seen = statements_while(crm, lambda: search(q='елочка 8125550102'))
+    assert search(q='елочка 8125550102')['total'] == 1
+    # The page and its total come from SQL; the table is not read row by row into Python.
+    assert not any('FROM counterparties' in sql and 'LIMIT' not in sql and 'count(' not in sql.lower()
+                   for sql in seen if 'search_text' not in sql)
+    assert search(filter_city='петербург', filter_phone='555 01')['items'][0]['id'] == target['id']
+
+    response = crm['client'].patch(f"/api/v1/counterparties/{target['id']}", json={
+        'version': target['version'], 'name': 'ООО «Сосна»'})
+    assert response.status_code == 200, response.text
+    assert search(q='елочка')['total'] == 0
+    assert search(q='сосна')['items'][0]['id'] == target['id']
