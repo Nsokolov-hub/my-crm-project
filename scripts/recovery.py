@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -89,10 +90,61 @@ def extract_db_args(db_url: str):
     return args, parsed.path.lstrip("/"), parsed.username or "crm", parsed.password or ""
 
 
+# Encrypted archives get this suffix (https://age-encryption.org).
+AGE_SUFFIX = ".age"
+
+
+def age_tool() -> str:
+    tool = shutil.which("age")
+    if not tool:
+        sys.exit("ERROR: encrypted backups need the age tool in PATH (apt install age, brew install age).")
+    return tool
+
+
+def encrypt(archive: Path, recipients: list[str]) -> Path:
+    """Encrypt the archive to the age public keys and delete the plaintext copy.
+
+    Only the holders of the matching private keys can restore it, so the key that decrypts backups
+    does not have to live on the server that makes them.
+    """
+    target = archive.with_name(archive.name + AGE_SUFFIX)
+    command = [age_tool()]
+    for recipient in recipients:
+        command += ["-r", recipient]
+    try:
+        subprocess.run([*command, "-o", str(target), str(archive)], check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        target.unlink(missing_ok=True)
+        sys.exit(f"ERROR: Encryption failed: {e.stderr.decode('utf-8', errors='replace')}")
+    archive.unlink()
+    return target
+
+
+def decrypt(archive: Path, identity: str, workdir: Path) -> Path:
+    target = workdir / archive.name.removesuffix(AGE_SUFFIX)
+    try:
+        subprocess.run([age_tool(), "-d", "-i", identity, "-o", str(target), str(archive)], check=True,
+                       capture_output=True)
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"ERROR: Decryption failed: {e.stderr.decode('utf-8', errors='replace')}")
+    return target
+
+
+def upload(archive: Path, command: str) -> None:
+    """Copy the archive off the server with the configured command; {archive} is its path."""
+    arguments = [part.replace("{archive}", str(archive)) for part in shlex.split(command)]
+    if "{archive}" not in command:
+        arguments.append(str(archive))
+    result = subprocess.run(arguments)
+    if result.returncode != 0:
+        sys.exit(f"ERROR: Upload command failed with exit code {result.returncode}; the local copy {archive} is kept.")
+
+
 def apply_retention(output_dir: Path, keep_count: int):
     if keep_count <= 0:
         return
-    backups = sorted(output_dir.glob("backup_*.tar.gz"), key=lambda p: p.stat().st_mtime, reverse=True)
+    backups = sorted([*output_dir.glob("backup_*.tar.gz"), *output_dir.glob(f"backup_*.tar.gz{AGE_SUFFIX}")],
+                     key=lambda p: p.stat().st_mtime, reverse=True)
     if len(backups) > keep_count:
         for old in backups[keep_count:]:
             print(f"Retention policy: removing old backup {old.name}")
@@ -234,7 +286,15 @@ def backup(args):
             tar.add(files_tar, arcname="files.tar.gz")
             tar.add(manifest_path, arcname="manifest.json")
 
-    # 5. Apply retention policy
+    # 5. Encrypt, copy off the server, then rotate the local copies
+    recipients = args.encrypt_to or env.get("BACKUP_AGE_RECIPIENTS", "").split()
+    if recipients:
+        print(f"[{backup_id}] Encrypting the archive for {len(recipients)} recipient(s)...")
+        archive_path = encrypt(archive_path, recipients)
+    upload_command = args.upload_command or env.get("BACKUP_UPLOAD_COMMAND", "")
+    if upload_command:
+        print(f"[{backup_id}] Copying the archive off the server...")
+        upload(archive_path, upload_command)
     if args.retention:
         apply_retention(out_dir, args.retention)
 
@@ -270,6 +330,13 @@ def restore(args):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
+
+        if archive_path.name.endswith(AGE_SUFFIX):
+            identity = args.identity or env.get("BACKUP_AGE_IDENTITY")
+            if not identity:
+                sys.exit("ERROR: The archive is encrypted: pass --identity with the age private key file.")
+            print("Decrypting backup archive...")
+            archive_path = decrypt(archive_path, identity, tmp)
 
         # 1. Safe extraction of archive
         print("Extracting backup archive...")
@@ -383,14 +450,20 @@ def main():
     backup_parser.add_argument("--mode", choices=["auto", "host", "docker"], default="auto", help="Способ выполнения (auto/host/docker)")
     backup_parser.add_argument("--compose-storage", action="store_true", help="Копировать хранилище файлов из контейнера api (/data/files)")
     backup_parser.add_argument("--retention", type=int, default=0, help="Количество сохраняемых последних копий (ротация)")
+    backup_parser.add_argument("--encrypt-to", action="append", metavar="AGE_PUBLIC_KEY",
+                               help="Зашифровать архив открытым ключом age (можно несколько; по умолчанию BACKUP_AGE_RECIPIENTS)")
+    backup_parser.add_argument("--upload-command",
+                               help="Команда копирования архива за пределы сервера, {archive} — путь к нему "
+                                    "(по умолчанию BACKUP_UPLOAD_COMMAND), например: rclone copy {archive} offsite:crm")
 
     restore_parser = subparsers.add_parser("restore", help="Восстановить из резервной копии")
-    restore_parser.add_argument("input_archive", help="Путь к архиву .tar.gz")
+    restore_parser.add_argument("input_archive", help="Путь к архиву .tar.gz или зашифрованному .tar.gz.age")
     restore_parser.add_argument("--database-url", help="URL базы данных (по умолчанию из .env)")
     restore_parser.add_argument("--storage-dir", help="Директория файлов (по умолчанию из .env)")
     restore_parser.add_argument("--mode", choices=["auto", "host", "docker"], default="auto", help="Способ выполнения (auto/host/docker)")
     restore_parser.add_argument("--compose-storage", action="store_true", help="Восстанавливать хранилище файлов в контейнер api (/data/files)")
     restore_parser.add_argument("--force", action="store_true", help="Обязательный флаг для подтверждения перезаписи")
+    restore_parser.add_argument("--identity", help="Файл закрытого ключа age для зашифрованного архива (по умолчанию BACKUP_AGE_IDENTITY)")
 
     args = parser.parse_args()
     if args.command == "backup":
