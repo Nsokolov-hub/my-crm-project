@@ -245,3 +245,99 @@ def test_full_backup_and_restore_cycle_with_files(tmp_path):
 
     # RTO should be within threshold (< 10 seconds)
     assert rto < 10.0
+
+
+def recovery_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("recovery", REPO_DIR / "scripts" / "recovery.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def fake_age(tmp_path, monkeypatch):
+    """A stand-in for the age tool: encryption prefixes the recipients, decryption needs one of them."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    tool = bin_dir / "age"
+    tool.write_text(f"""#!{os.sys.executable}
+import sys
+args = sys.argv[1:]
+output, source = args[args.index("-o") + 1], args[-1]
+data = open(source, "rb").read()
+if "-d" in args:
+    key = open(args[args.index("-i") + 1]).read().strip()
+    header, _, body = data.partition(b"\\n")
+    if key.encode() not in header.split(b","):
+        sys.exit("no identity matched any of the recipients")
+    open(output, "wb").write(body)
+else:
+    recipients = [args[i + 1] for i, arg in enumerate(args) if arg == "-r"]
+    open(output, "wb").write(",".join(recipients).encode() + b"\\n" + data)
+""")
+    tool.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return tool
+
+
+def test_archives_are_encrypted_for_the_recipients_only(tmp_path, fake_age):
+    recovery = recovery_module()
+    archive = tmp_path / "backup_1.tar.gz"
+    archive.write_bytes(b"dump and files")
+    encrypted = recovery.encrypt(archive, ["age1office", "age1offsite"])
+    assert encrypted.name == "backup_1.tar.gz.age" and not archive.exists()
+    assert b"dump and files" in encrypted.read_bytes() and encrypted.read_bytes() != b"dump and files"
+    key = tmp_path / "offsite.key"
+    key.write_text("age1offsite")
+    restored = recovery.decrypt(encrypted, str(key), tmp_path)
+    assert restored.read_bytes() == b"dump and files"
+    key.write_text("age1stranger")
+    with pytest.raises(SystemExit, match="Decryption failed"):
+        recovery.decrypt(encrypted, str(key), tmp_path)
+
+
+def test_encryption_needs_the_age_tool(tmp_path, monkeypatch):
+    recovery = recovery_module()
+    monkeypatch.setenv("PATH", str(tmp_path))
+    archive = tmp_path / "backup_1.tar.gz"
+    archive.write_bytes(b"data")
+    with pytest.raises(SystemExit, match="age tool"):
+        recovery.encrypt(archive, ["age1office"])
+    assert archive.exists()
+
+
+def test_upload_command_gets_the_archive_and_failures_keep_the_local_copy(tmp_path):
+    recovery = recovery_module()
+    archive = tmp_path / "backup_1.tar.gz.age"
+    archive.write_bytes(b"encrypted")
+    offsite = tmp_path / "offsite"
+    offsite.mkdir()
+    copy = f"{os.sys.executable} -c \"import shutil, sys; shutil.copy(sys.argv[1], sys.argv[2])\""
+    recovery.upload(archive, f"{copy} {{archive}} {offsite}")
+    assert (offsite / archive.name).read_bytes() == b"encrypted"
+    with pytest.raises(SystemExit, match="Upload command failed"):
+        recovery.upload(archive, f"{os.sys.executable} -c \"raise SystemExit(3)\"")
+    assert archive.exists()
+
+
+def test_retention_counts_encrypted_archives_too(tmp_path):
+    recovery = recovery_module()
+    for index, name in enumerate(["backup_1.tar.gz", "backup_2.tar.gz.age", "backup_3.tar.gz.age"]):
+        path = tmp_path / name
+        path.write_bytes(b"x")
+        os.utime(path, (1_000 + index, 1_000 + index))
+    recovery.apply_retention(tmp_path, 2)
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["backup_2.tar.gz.age", "backup_3.tar.gz.age"]
+
+
+def test_restoring_an_encrypted_archive_needs_the_private_key(tmp_path):
+    archive = tmp_path / "backup_1.tar.gz.age"
+    archive.write_bytes(b"encrypted")
+    res = subprocess.run(
+        [os.sys.executable, str(REPO_DIR / "scripts" / "recovery.py"), "restore", str(archive), "--force",
+         "--database-url", "postgresql://crm@localhost/crm", "--mode", "host"],
+        capture_output=True, text=True, cwd=tmp_path,
+    )
+    assert res.returncode != 0 and "--identity" in res.stderr

@@ -22,11 +22,12 @@ import {
   CheckCheck,
 } from 'lucide-react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useAuth } from './Auth';
 import { Loading } from '../components/ui';
 import { api } from '../lib/api';
-import { useApi } from '../lib/hooks';
+import { useApi, usePolling } from '../lib/hooks';
+import { connectLiveEvents, disconnectLiveEvents, useLiveEvents } from '../lib/liveEvents';
 import type { Page } from '../lib/types';
 import '../styles/communication-v2.scss';
 import '../styles/business.scss';
@@ -65,14 +66,10 @@ export function Layout() {
   const [search, setSearch] = useState('');
   const notifications = useApi<Page>('/notifications?read=false&page_size=1');
   const refreshNotifications = notifications.refresh;
+  usePolling(refreshNotifications, 30000);
   useEffect(() => {
-    const refresh = () => refreshNotifications?.();
-    const timer = window.setInterval(refresh, 30000);
-    window.addEventListener('crm:notifications-read', refresh);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener('crm:notifications-read', refresh);
-    };
+    window.addEventListener('crm:notifications-read', refreshNotifications);
+    return () => window.removeEventListener('crm:notifications-read', refreshNotifications);
   }, [refreshNotifications]);
   const name = auth.session?.user.name || 'Сотрудник';
   const availableLinks = links.filter((link) => !link.permission || auth.can(link.permission));
@@ -82,25 +79,27 @@ export function Layout() {
   const canSeeAnalytics = auth.can('analytics.read');
   const canUseChats = auth.can('chats.use');
   const [unreadChats, setUnreadChats] = useState(0);
-  useEffect(() => {
+  const refreshChats = useCallback(() => {
     if (!canUseChats) return;
-    let active = true;
-    const refresh = () => {
-      void api<{ unread: number }>('/chats/unread-count')
-        .then((result) => {
-          if (active) setUnreadChats(result.unread);
-        })
-        .catch(() => undefined);
-    };
-    refresh();
-    const timer = window.setInterval(refresh, 10000);
-    window.addEventListener('crm:chats-read', refresh);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-      window.removeEventListener('crm:chats-read', refresh);
-    };
+    void api<{ unread: number }>('/chats/unread-count')
+      .then((result) => setUnreadChats(result.unread))
+      .catch(() => undefined);
   }, [canUseChats]);
+  useEffect(() => {
+    refreshChats();
+    window.addEventListener('crm:chats-read', refreshChats);
+    return () => window.removeEventListener('crm:chats-read', refreshChats);
+  }, [refreshChats]);
+  usePolling(refreshChats, canUseChats ? 10000 : null);
+  // One event stream per tab while signed in; the badges refresh as soon as something happens.
+  useEffect(() => {
+    connectLiveEvents();
+    return disconnectLiveEvents;
+  }, []);
+  useLiveEvents((event) => {
+    if (event.kind === 'notification' || event.kind === 'resync') refreshNotifications();
+    if (event.kind === 'chat' || event.kind === 'resync') refreshChats();
+  });
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">

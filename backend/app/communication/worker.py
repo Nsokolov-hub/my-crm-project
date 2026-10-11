@@ -4,6 +4,7 @@ The row lock remains held until side effects and completion commit together. A w
 rolls the transaction back; PostgreSQL SKIP LOCKED permits multiple worker processes.
 """
 import argparse
+import json
 import logging
 import re
 import signal
@@ -21,6 +22,8 @@ from app.communication.models import FileRecord
 from app.core.config import settings
 from app.core.db import SessionLocal, utcnow
 from app.core.errors import DomainError
+from app.core.events import publish
+from app.core.logs import configure_logging
 from app.core.models import AppSetting, OutboxEvent, User
 from app.core.security import users_with_permission
 from app.core.service import advisory, audit, notify
@@ -173,6 +176,7 @@ def dispatch(db: Session, event: OutboxEvent) -> None:
         audit(db, None, 'file', row.id, 'scan_completed', after={'status': row.status, 'sha256': row.sha256})
         notify(db, row.author_id, f'file-verdict:{row.id}',
                'Файл проверен и доступен' if clean else 'Вложение заблокировано антивирусом', 'file', row.id)
+        publish(db, 'file', [row.author_id], file=row.id)
         return
     if event.kind == 'notification':
         user = db.get(User, payload['user_id'])
@@ -238,8 +242,8 @@ def process_events(db: Session, limit: int = 25, now: datetime | None = None) ->
             event.finished_at = now if final else None
             event.next_attempt_at = None if final else now + retry_delay(event.attempts)
             counts['failed' if final else 'retried'] += 1
-            logger.warning('outbox_failed event_id=%s kind=%s attempts=%s error=%s',
-                           event.id, event.kind, event.attempts, event.error)
+            logger.warning(json.dumps({'event': 'outbox_failed', 'eventId': event.id, 'kind': event.kind,
+                                       'attempts': event.attempts, 'error': event.error, 'final': final}))
             if final:
                 if event.kind == 'file.scan':
                     row = db.scalar(select(FileRecord).where(FileRecord.id == event.payload.get('file_id'))
@@ -293,13 +297,13 @@ def main() -> None:
     parser.add_argument('--once', action='store_true')
     parser.add_argument('--interval', type=float, default=2.0)
     args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
+    configure_logging()
 
     running = True
 
     def _sig_handler(signum, _frame):
         nonlocal running
-        logger.info('Received signal %s, initiating graceful worker shutdown...', signum)
+        logger.info(json.dumps({'event': 'worker_stopping', 'signal': signum}))
         running = False
 
     signal.signal(signal.SIGTERM, _sig_handler)
@@ -313,9 +317,9 @@ def main() -> None:
             if remind:
                 last_reminder = time.monotonic()
             if any(counts.values()):
-                logger.info('outbox_batch %s', counts)
+                logger.info(json.dumps({'event': 'outbox_batch', **counts}))
         except Exception:
-            logger.exception('worker_iteration_failed')
+            logger.exception(json.dumps({'event': 'worker_iteration_failed'}))
             if args.once:
                 raise
         if args.once:
@@ -325,7 +329,7 @@ def main() -> None:
         while running and time.monotonic() < sleep_until:
             time.sleep(0.1)
 
-    logger.info('Worker loop finished cleanly.')
+    logger.info(json.dumps({'event': 'worker_stopped'}))
 
 
 if __name__ == '__main__':

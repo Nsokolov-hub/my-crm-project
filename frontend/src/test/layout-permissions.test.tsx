@@ -6,7 +6,8 @@ import { useAuth } from '../app/Auth';
 
 vi.mock('../app/Auth', () => ({ useAuth: vi.fn() }));
 vi.mock('../lib/hooks', () => ({
-  useApi: () => ({ data: { unread: 0 }, loading: false, error: undefined }),
+  useApi: () => ({ data: { unread: 0 }, loading: false, error: undefined, refresh: () => {} }),
+  usePolling: () => undefined,
 }));
 
 function renderLayout(permissions: string[]) {

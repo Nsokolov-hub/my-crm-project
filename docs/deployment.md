@@ -77,6 +77,29 @@ docker compose exec api printenv ALLOWED_ORIGINS
 * Формирует `manifest.json` с версией, датой, SHA-256 дампа и архива файлов. Пофайловые хеши записываются только при резервировании файлов с диска хоста, не из Docker volume.
 * Параметр `--retention 7` автоматически удаляет устаревшие копии, сохраняя 7 последних.
 
+### Шифрование и копия за пределами сервера
+
+Копия на том же сервере не спасёт от отказа диска, пожара или шифровальщика, а незашифрованный архив содержит все данные компании. Поэтому:
+
+1. Создайте пару ключей [age](https://age-encryption.org) на компьютере администратора, а не на сервере: `age-keygen -o crm-backup.key`. Закрытый ключ храните офлайн, например в сейфе или менеджере паролей. Можно завести две пары, офиса и резервную, и указать обе.
+2. Укажите в `.env` сервера открытые ключи (строки `age1…`) и команду копирования, например:
+
+   ```bash
+   BACKUP_AGE_RECIPIENTS=age1... age1...
+   BACKUP_UPLOAD_COMMAND=rclone copy {archive} offsite:crm-backups
+   ```
+
+   На сервере нужны утилиты `age` и, для этого примера, `rclone` (`apt install age rclone`). Подойдёт любая команда: `aws s3 cp {archive} s3://…`, `scp {archive} backup@host:/srv/crm/`. Если `{archive}` не указан, путь к архиву добавляется в конец команды.
+3. `./scripts/backup.sh --mode docker --compose-storage --retention 7` создаёт `backup_<TIMESTAMP>.tar.gz.age`, удаляет незашифрованный архив и копирует результат. Если копирование не удалось, скрипт завершается с ошибкой, а локальная копия остаётся.
+
+Восстановление зашифрованной копии требует закрытого ключа:
+
+```bash
+./scripts/restore.sh backups/backup_<TIMESTAMP>.tar.gz.age --force --mode docker --compose-storage --identity /путь/к/crm-backup.key
+```
+
+Проверяйте восстановление регулярно, например раз в квартал, на отдельном стенде: копия, которую ни разу не восстанавливали, может оказаться непригодной.
+
 ### Восстановление из резервной копии
 ```bash
 ./scripts/restore.sh backups/backup_<TIMESTAMP>.tar.gz --force --mode docker --compose-storage
@@ -102,3 +125,28 @@ git checkout <target_tag>
 docker compose build api web
 docker compose up -d --no-build
 ```
+
+## 7. Журналы и наблюдение
+
+Сервисы `api` и `worker` пишут журнал в стандартный поток. Каждая запись — одна строка JSON со следующими полями:
+
+- `time` — время в UTC;
+- `level` — уровень;
+- `logger` — источник;
+- `event` или `message` — что произошло;
+- `requestId` — код HTTP-запроса;
+- `exception` — трассировка ошибки целиком, в той же строке.
+
+Такой журнал без настройки шаблонов принимают Loki, Vector, Elastic и другие сборщики.
+
+Сообщение об ошибке в интерфейсе содержит код запроса. По нему можно найти записи этого запроса (нужна утилита `jq`):
+
+```bash
+docker compose logs --no-log-prefix api | jq -c 'select(.requestId == "КОД-ИЗ-СООБЩЕНИЯ")'
+docker compose logs --no-log-prefix api worker | jq -c 'select(.level == "error" or .level == "warning")'
+```
+
+Метрики Prometheus (`crm_http_requests_total`, `crm_http_duration_seconds`) отдаёт `GET /metrics` только запросам с самого хоста API, поэтому снаружи их не видно.
+
+Живые обновления интерфейса идут через поток событий `GET /api/v1/events`. В nginx образа `web` для него отключена буферизация, а Caddy такие ответы передаёт сразу. Если перед CRM стоит другой прокси, отключите для этого пути буферизацию и поставьте тайм-аут чтения не меньше минуты: API присылает keep-alive раз в 25 секунд. Без потока интерфейс продолжает работать на опросе сервера.
+

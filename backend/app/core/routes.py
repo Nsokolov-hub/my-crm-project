@@ -1,3 +1,5 @@
+import asyncio
+import json
 import secrets
 import time
 from collections import defaultdict
@@ -7,6 +9,7 @@ from typing import Any, Literal
 import pyotp
 from argon2.exceptions import VerificationError
 from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import EmailStr, Field, ValidationError
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
@@ -14,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
+from app.core.events import hub
 from app.core.models import (
     AppSetting,
     AuthSession,
@@ -616,3 +620,33 @@ def setup_wizard(
 from app.core.jobs import router as jobs_router  # noqa: E402
 
 router.include_router(jobs_router)
+
+
+# Keep-alive comments hold the connection open through proxies; a stream ends after STREAM_SECONDS
+# and the browser reconnects, which checks the session again.
+KEEPALIVE_SECONDS = 25.0
+STREAM_SECONDS = 30 * 60.0
+
+
+@router.get("/events", include_in_schema=False)
+async def events(request: Request, user: User = Depends(current_user)) -> StreamingResponse:
+    """Server-sent events telling the user's open pages what to reload (see app.core.events)."""
+    user_id = user.id
+    queue = hub.subscribe(user_id)
+
+    async def stream():
+        try:
+            yield "retry: 5000\n\n"
+            deadline = time.monotonic() + STREAM_SECONDS
+            while time.monotonic() < deadline and not await request.is_disconnected():
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=KEEPALIVE_SECONDS)
+                except TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                yield f"event: {event['kind']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            hub.unsubscribe(user_id, queue)
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})

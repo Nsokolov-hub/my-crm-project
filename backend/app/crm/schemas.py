@@ -1,9 +1,47 @@
-from decimal import Decimal
+import re
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
-from pydantic import AwareDatetime, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    EmailStr,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from app.core.schemas import Input
+
+# Supplier card details that calculations and supplier mail use. They are checked when the card is
+# saved instead of failing later in a calculation; every other key stays free text as entered.
+CALCULATION_TYPES = ('IMPORT', 'DAP', 'RUSSIA')
+
+
+def checked_details(details: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not details:
+        return details
+    if details.get('calculation_type') not in (None, '', *CALCULATION_TYPES):
+        raise ValueError('Тип расчёта поставщика: IMPORT, DAP или RUSSIA')
+    amount = details.get('Логистика по умолчанию')
+    if amount not in (None, ''):
+        try:
+            value = Decimal(str(amount).replace(',', '.').strip())
+        except InvalidOperation:
+            raise ValueError('Логистика по умолчанию: укажите сумму числом') from None
+        if not value.is_finite() or value < 0:
+            raise ValueError('Логистика по умолчанию: укажите неотрицательную сумму')
+    currency = details.get('Валюта логистики')
+    if currency not in (None, '') and not re.fullmatch(r'[A-Za-z]{3}', str(currency).strip()):
+        raise ValueError('Валюта логистики: трёхбуквенный код, например USD')
+    email = details.get('rfq_email')
+    if email not in (None, ''):
+        try:
+            TypeAdapter(EmailStr).validate_python(str(email).strip())
+        except ValidationError:
+            raise ValueError('Почта для запросов поставщику указана неверно') from None
+    return details
 
 
 class ClientInput(Input):
@@ -17,6 +55,11 @@ class ClientInput(Input):
     owner_id: str | None = None
     details: dict[str, Any] = {}
     source: str | None = Field(default=None, max_length=250)
+
+    @field_validator('details')
+    @classmethod
+    def known_details(cls, value):
+        return checked_details(value)
 
     @model_validator(mode='after')
     def cold_clients_only(self):
@@ -46,6 +89,11 @@ class ClientPatch(Input):
     details: dict[str, Any] = Field(default=None)
     archived: bool = Field(default=None)
     reason: str | None = None
+
+    @field_validator('details')
+    @classmethod
+    def known_details(cls, value):
+        return checked_details(value)
 
 
 class ContactInput(Input):

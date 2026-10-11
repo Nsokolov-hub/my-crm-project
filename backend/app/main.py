@@ -1,7 +1,9 @@
+import asyncio
 import json
 import logging
 import re
 import time
+from contextlib import asynccontextmanager, suppress
 from importlib import import_module
 from uuid import uuid4
 
@@ -16,14 +18,31 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.errors import DomainError
+from app.core.events import hub
+from app.core.logs import configure_logging
 from app.core.service import correlation_id
 
 logger = logging.getLogger('crm')
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+configure_logging()
 REQUESTS = Counter('crm_http_requests_total', 'HTTP requests', ['method', 'route', 'status'])
 LATENCY = Histogram('crm_http_duration_seconds', 'API latency', ['method', 'route'])
 
-app = FastAPI(title='Реактив CRM', version='0.1.0', docs_url='/api/docs', redoc_url=None, description='CRM продаж и закупок химической продукции. Настраиваемые финансовые профили, права и шаблоны. Количества и деньги — десятичные строки.', responses={401: {'description': 'Сеанс отсутствует или отозван'}, 403: {'description': 'Недостаточно прав'}, 409: {'description': 'Конфликт версии или повторяемости'}, 422: {'description': 'Ошибка предметной валидации'}})
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Live events need PostgreSQL LISTEN/NOTIFY; without it pages simply keep polling.
+    listener = (asyncio.create_task(hub.listen(settings.database_url))
+                if settings.database_url.startswith('postgresql') else None)
+    try:
+        yield
+    finally:
+        if listener:
+            listener.cancel()
+            with suppress(asyncio.CancelledError):
+                await listener
+
+
+app = FastAPI(lifespan=lifespan, title='Реактив CRM', version='0.1.0', docs_url='/api/docs', redoc_url=None, description='CRM продаж и закупок химической продукции. Настраиваемые финансовые профили, права и шаблоны. Количества и деньги — десятичные строки.', responses={401: {'description': 'Сеанс отсутствует или отозван'}, 403: {'description': 'Недостаточно прав'}, 409: {'description': 'Конфликт версии или повторяемости'}, 422: {'description': 'Ошибка предметной валидации'}})
 app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins.split(','), allow_credentials=True, allow_methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], allow_headers=['Content-Type', 'X-CSRF-Token', 'Idempotency-Key'], expose_headers=['X-Request-ID', 'Content-Disposition'])
 
 
