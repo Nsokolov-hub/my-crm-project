@@ -37,6 +37,16 @@ export const paymentConfirmationFields: Field[] = [
   },
   { name: 'outside_payment_days', label: 'Платёж вне платёжных дней', type: 'checkbox' },
 ];
+// A leader may approve a payment ahead of its day; only the confirmed fact is limited to today.
+export const paymentDecisionFields: Field[] = [
+  {
+    name: 'actual_date',
+    label: 'Дата оплаты',
+    type: 'date',
+    help: 'Сегодня или раньше — оплата подтверждается и меняет остаток. Будущая дата — платёж согласован и стоит в плане на этот день, оплату подтвердите в день платежа.',
+  },
+  paymentConfirmationFields[1],
+];
 const calendarFields: Field[] = [
   {
     name: 'direction',
@@ -864,11 +874,11 @@ export function PaymentCalendar() {
               type: 'select',
               required: true,
               options: [
-                { value: 'approved', label: 'Подтвердить оплату' },
+                { value: 'approved', label: 'Согласовать оплату' },
                 { value: 'rejected', label: 'Отклонить' },
               ],
             },
-            ...paymentConfirmationFields,
+            ...paymentDecisionFields,
             { name: 'reason', label: 'Комментарий', type: 'textarea', required: true },
           ]}
           onClose={() => setDeciding(false)}

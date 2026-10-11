@@ -78,7 +78,7 @@ def cmd(env, path, body=None, status=200, method="post", key=None):
     return result.json()
 
 
-def structured(env, mode="RUSSIA", markup="1.5", owner=None):
+def structured(env, mode="RUSSIA", markup="1.5", owner=None, wave_kind="work"):
     login(env)
     req = request(env)
     seller = post(
@@ -156,6 +156,7 @@ def structured(env, mode="RUSSIA", markup="1.5", owner=None):
             env,
             "/waves",
             {
+                "kind": wave_kind,
                 "supplier_id": supplier["id"],
                 "route": "Москва",
                 "origin_country": "RU",
@@ -185,7 +186,21 @@ def structured(env, mode="RUSSIA", markup="1.5", owner=None):
 
 
 def wave_row(env, wave_id):
-    return next(row for row in env["client"].get("/api/v1/waves").json()["items"] if row["id"] == wave_id)
+    response = env["client"].get(f"/api/v1/waves/{wave_id}")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def peer_request(env, seller, supplier, item_data, wave_id):
+    """Another client's request quoting the same supplier, planned in the given wave."""
+    peer = request(env)
+    with env["sessions"].begin() as db:
+        db.get(Request, peer["id"]).seller_id = seller["id"]
+    quote = post(env, f"/requests/{peer['id']}/quote-sheets", {"supplier_id": supplier["id"], "items": [item_data]})
+    peer = env["client"].get(f"/api/v1/requests/{peer['id']}").json()
+    peer.update(cmd(env, f"/requests/{peer['id']}/wave", {"request_version": peer["version"], "wave_id": wave_id},
+                    method="put"))
+    return peer, quote["items"][0]
 
 
 def release(env, req, calculation, quantity):

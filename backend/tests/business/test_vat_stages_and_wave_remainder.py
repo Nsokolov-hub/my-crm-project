@@ -108,7 +108,7 @@ def test_another_proposal_does_not_regress_or_reopen_request(crm, stage):  # noq
 
 
 def test_wave_plan_ten_minus_three_and_quote_manufacturer(crm):  # noqa: F811
-    req, data, _, _ = structured(crm, mode="IMPORT")
+    req, data, _, _ = structured(crm, mode="IMPORT", wave_kind="plan")
     with crm["sessions"].begin() as db:
         quote = db.get(QuoteItem, data["selections"][0]["quote_item_id"])
         product = db.get(Nomenclature, quote.nomenclature_id)
@@ -136,7 +136,7 @@ def test_wave_plan_ten_minus_three_and_quote_manufacturer(crm):  # noqa: F811
 
 
 def test_wave_remainder_does_not_disclose_inaccessible_request_quantities(crm):  # noqa: F811
-    req, data, _, _ = structured(crm, mode="IMPORT")
+    req, data, _, _ = structured(crm, mode="IMPORT", wave_kind="plan")
     with crm["sessions"]() as db:
         quote = db.get(QuoteItem, data["selections"][0]["quote_item_id"])
         group_id = db.get(Nomenclature, quote.nomenclature_id).product_group_id

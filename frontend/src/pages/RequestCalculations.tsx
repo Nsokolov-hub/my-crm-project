@@ -6,10 +6,10 @@ import { Badge, Button, DataTable, DetailPairs, ErrorBox, Modal } from '../compo
 import { ApiError } from '../lib/api';
 import { displayCalculationMetrics } from '../lib/calculations';
 import { normalizeLogisticsExpense } from '../lib/logistics';
-import { date, decimal, label, metric } from '../lib/format';
+import { date, decimal, display, label, metric } from '../lib/format';
 import { useApi, useCommand, useDirtyProtection } from '../lib/hooks';
 import type { Entity, Page } from '../lib/types';
-import { waveWeekLabel } from '../lib/waves';
+import { waveKindLabel, waveWeekLabel } from '../lib/waves';
 import { CalculationBreakdown } from './calculations/CalculationBreakdown';
 import {
   airportPickup,
@@ -18,6 +18,7 @@ import {
   expenseFromReference,
   moscowDelivery,
   nameOf,
+  plainQuantity,
   standardExpenses,
   validMarkup,
   type Expense,
@@ -89,7 +90,7 @@ function CalculationEditor({
           id,
           {
             quote_item_id: id,
-            ...(old?.quantity ? { quantity: String(old.quantity) } : {}),
+            ...(old?.quantity ? { quantity: plainQuantity(old.quantity) } : {}),
             markup_coefficient: String(old?.markup_coefficient || '1.5'),
             ...(old || line ? { bonus_coefficient: bonus } : {}),
           },
@@ -159,7 +160,7 @@ function CalculationEditor({
         if (next[row.id] && next[row.id].quantity === undefined) {
           next[row.id] = {
             ...next[row.id],
-            quantity: String(row.request_quantity || row.quantity || '1'),
+            quantity: plainQuantity(row.request_quantity || row.quantity || '1'),
           };
           changed = true;
         }
@@ -281,7 +282,7 @@ function CalculationEditor({
       if (checked)
         next[row.id] = {
           quote_item_id: row.id,
-          quantity: String(row.request_quantity || row.quantity || '1'),
+          quantity: plainQuantity(row.request_quantity || row.quantity || '1'),
           markup_coefficient: current[row.id]?.markup_coefficient || '1.5',
         };
       else delete next[row.id];
@@ -572,6 +573,11 @@ function CalculationEditor({
                   </strong>
                 </span>
               )}
+              {auth.can('finance.reward.read') && Number(totals?.internal_bonus) > 0 && (
+                <span>
+                  Бонус: <strong>{metric(totals?.internal_bonus)} ₽</strong>
+                </span>
+              )}
             </div>
             <DataTable<Entity>
               className="calculation-positions"
@@ -600,7 +606,7 @@ function CalculationEditor({
                                   quote_item_id: row.id,
                                   quantity:
                                     current[row.id]?.quantity ??
-                                    String(row.request_quantity || row.quantity || '1'),
+                                    plainQuantity(row.request_quantity || row.quantity || '1'),
                                   markup_coefficient: current[row.id]?.markup_coefficient || '1.5',
                                 };
                               else delete next[row.id];
@@ -751,33 +757,46 @@ function CalculationEditor({
                         key: 'bonus',
                         label: 'Бонус',
                         sortable: false,
-                        render: (row: Entity) =>
-                          selections[row.id] ? (
-                            <input
-                              className="calculation-markup"
-                              inputMode="decimal"
-                              aria-label={'Бонус ' + nameOf(row)}
-                              value={
-                                selections[row.id].bonus_coefficient ||
-                                String(
-                                  (selectedProfile?.definition as Entity | undefined)
-                                    ?.default_bonus_coefficient || '1',
-                                )
-                              }
-                              onChange={(event) => {
-                                setSelections((current) => ({
-                                  ...current,
-                                  [row.id]: {
-                                    ...current[row.id],
-                                    bonus_coefficient: event.target.value.replace(',', '.'),
-                                  },
-                                }));
-                                invalidate();
-                              }}
-                            />
-                          ) : (
-                            '—'
-                          ),
+                        render: (row: Entity) => {
+                          if (!selections[row.id]) return '—';
+                          const coefficient =
+                            selections[row.id].bonus_coefficient ||
+                            String(
+                              (selectedProfile?.definition as Entity | undefined)
+                                ?.default_bonus_coefficient || '1',
+                            );
+                          const line = outputLines.find((entry) => entry.quote_item_id === row.id);
+                          const bonus = ((line?.detail || {}) as Entity).internal_bonus;
+                          return (
+                            <span className="calculation-bonus">
+                              <input
+                                className="calculation-markup"
+                                inputMode="decimal"
+                                aria-label={'Бонус ' + nameOf(row)}
+                                value={coefficient}
+                                onChange={(event) => {
+                                  setSelections((current) => ({
+                                    ...current,
+                                    [row.id]: {
+                                      ...current[row.id],
+                                      bonus_coefficient: event.target.value.replace(',', '.'),
+                                    },
+                                  }));
+                                  invalidate();
+                                }}
+                              />
+                              {Number(coefficient) > 1 && bonus != null && line && (
+                                <small
+                                  title={`Бонус за ${decimal(line.quantity)} шт.: ${metric(
+                                    Number(bonus) / Number(line.quantity),
+                                  )} ₽ за штуку`}
+                                >
+                                  {metric(bonus)} ₽
+                                </small>
+                              )}
+                            </span>
+                          );
+                        },
                       },
                     ]
                   : []),
@@ -1481,14 +1500,22 @@ export function RequestCalculations({
   onLaunchConsumed?: () => void;
 }) {
   const auth = useAuth();
-  const waves = useApi<Page>('/waves');
+  const waves = useApi<Page>('/waves?open=true');
   const waveCommand = useCommand();
   const [waveId, setWaveId] = useState(String(request.wave_id || ''));
   const [assignedWaveId, setAssignedWaveId] = useState(String(request.wave_id || ''));
   const [requestVersion, setRequestVersion] = useState(Number(request.version));
-  const openWaves = (waves.data?.items || []).filter(
-    (wave) => ['planned', 'assembling'].includes(String(wave.status)) || wave.id === assignedWaveId,
+  const openWaves = waves.data?.items || [];
+  // A closed or archived wave is no longer offered, but the request may still name it.
+  const missingWave = useApi<Entity>(
+    waves.data && assignedWaveId && !openWaves.some((wave) => wave.id === assignedWaveId)
+      ? `/waves/${assignedWaveId}`
+      : null,
   );
+  const assignedWave =
+    openWaves.find((wave) => wave.id === assignedWaveId) ||
+    (missingWave.data?.id === assignedWaveId ? missingWave.data : undefined);
+  const workingWaves = (assignedWave?.working_waves || []) as Entity[];
   const [editing, setEditing] = useState(launchQuoteItemIds.length > 0);
   const [initialIds, setInitialIds] = useState(launchQuoteItemIds);
   const [selected, setSelected] = useState<Entity>();
@@ -1506,8 +1533,9 @@ export function RequestCalculations({
           <div>
             <h3>Волна поставки</h3>
             <p>
-              Руководитель назначает волну поставщика до расчёта. Подтверждённые количества в ней
-              учитываются автоматически.
+              Руководитель назначает волну поставщика до расчёта. По плановой волне общие расходы
+              делятся на плановый объём, а подтверждённый заказ попадает в её рабочую волну — она
+              создаётся автоматически. По рабочей волне расчёт идёт только по реальным заказам.
             </p>
           </div>
         </div>
@@ -1520,12 +1548,25 @@ export function RequestCalculations({
             onChange={(event) => setWaveId(event.target.value)}
           >
             <option value="">Выберите волну</option>
-            {openWaves.map((wave) => (
-              <option key={wave.id} value={wave.id}>
-                {String(wave.number)} · {String(wave.supplier_name || 'Поставщик не указан')} ·{' '}
-                {waveWeekLabel(wave, 'departure')}
+            {assignedWave && !openWaves.includes(assignedWave) && (
+              <option value={assignedWave.id}>
+                {waveKindLabel(assignedWave)} · {String(assignedWave.number)} ·{' '}
+                {assignedWave.archived ? 'в архиве' : display(assignedWave.status)}
               </option>
-            ))}
+            )}
+            {(['plan', 'work'] as const).map((kind) => {
+              const rows = openWaves.filter((wave) => (wave.kind || 'work') === kind);
+              return rows.length > 0 ? (
+                <optgroup key={kind} label={kind === 'plan' ? 'Плановые' : 'Рабочие'}>
+                  {rows.map((wave) => (
+                    <option key={wave.id} value={wave.id}>
+                      {String(wave.number)} · {String(wave.supplier_name || 'Поставщик не указан')}{' '}
+                      · {waveWeekLabel(wave, 'departure')}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null;
+            })}
           </select>
           {auth.can('waves.write') && (
             <Button
@@ -1553,6 +1594,19 @@ export function RequestCalculations({
             </Button>
           )}
         </div>
+        {Boolean(assignedWave?.archived) && (
+          <p className="field-error">
+            Назначенная волна в архиве. Выберите действующую волну перед расчётом.
+          </p>
+        )}
+        {workingWaves.length > 0 && (
+          <p className="muted">
+            Рабочие волны этой плановой:{' '}
+            {workingWaves
+              .map((wave) => `${String(wave.number)} (${display(wave.status)})`)
+              .join(', ')}
+          </p>
+        )}
       </section>
       <div className="tab-actions">
         <Button

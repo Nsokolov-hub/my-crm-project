@@ -20,7 +20,7 @@ import { FilesPanel } from './Communication';
 import type { Entity, Field, Page } from '../lib/types';
 
 export { PaymentCalendar } from './PaymentCalendar';
-import { paymentConfirmationFields } from './PaymentCalendar';
+import { paymentDecisionFields } from './PaymentCalendar';
 
 export function SupplierOrders() {
   const [tab, setTab] = useState('positions');
@@ -424,12 +424,12 @@ export function WorkflowApprovals() {
               options: [
                 {
                   value: 'approved',
-                  label: selected.kind === 'calendar' ? 'Подтвердить оплату' : 'Согласовать',
+                  label: selected.kind === 'calendar' ? 'Согласовать оплату' : 'Согласовать',
                 },
                 { value: 'rejected', label: 'Отказать' },
               ],
             },
-            ...(selected.kind === 'calendar' ? paymentConfirmationFields : []),
+            ...(selected.kind === 'calendar' ? paymentDecisionFields : []),
             { name: 'reason', label: 'Комментарий', type: 'textarea', required: true },
           ]}
           onClose={() => setDeciding(false)}

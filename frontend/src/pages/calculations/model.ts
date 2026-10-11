@@ -34,6 +34,11 @@ export type Expense = {
 export const nameOf = (row: Entity) => String(row.nomenclature_name || row.description || 'Товар');
 export const currencyOf = (row: Entity) => String(row.currency_code || row.currency || '');
 export const positive = (value: string) => Number.isFinite(Number(value)) && Number(value) > 0;
+// Quantities arrive as stored decimals ("4.000000"); the editor shows them as people type them.
+export const plainQuantity = (value: unknown) => {
+  const raw = String(value ?? '');
+  return raw.includes('.') ? raw.replace(/\.?0+$/, '') : raw;
+};
 export const validMarkup = (value: string) => Number.isFinite(Number(value)) && Number(value) >= 1;
 export const detailLabels: Record<string, string> = {
   purchase_foreign: 'Закупка в валюте',
