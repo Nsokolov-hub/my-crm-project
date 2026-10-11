@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, TypeVar
 
-from sqlalchemy import func, inspect, select, text
+from sqlalchemy import func, inspect, select, text, tuple_
 from sqlalchemy.orm import Session
 
 from app.core.db import Entity
@@ -114,6 +114,18 @@ def notify(db: Session, user_id: str, event_key: str, title: str, entity_type: s
     if not db.scalar(select(Notification.id).where(Notification.user_id == user_id, Notification.event_key == event_key)):
         db.add(Notification(user_id=user_id, event_key=event_key, title=title, entity_type=entity_type, entity_id=entity_id))
         db.flush()
+
+
+def notify_many(db: Session, notices: Iterable[tuple[str, str, str, str, str]]) -> None:
+    """notify() for (user_id, event_key, title, entity_type, entity_id) rows; one query finds delivered ones."""
+    notices = list(notices)
+    for start in range(0, len(notices), PREFETCH_CHUNK):
+        chunk = notices[start:start + PREFETCH_CHUNK]
+        delivered = set(db.execute(select(Notification.user_id, Notification.event_key).where(
+            tuple_(Notification.user_id, Notification.event_key).in_({(row[0], row[1]) for row in chunk}))).tuples())
+        for user_id, event_key, title, entity_type, entity_id in chunk:
+            if (user_id, event_key) not in delivered:
+                notify(db, user_id, event_key, title, entity_type, entity_id)
 
 
 def page(db: Session, statement: Any, page: int = 1, page_size: int = 25) -> dict[str, Any]:

@@ -35,6 +35,8 @@ RETRY_MAX_DELAY = timedelta(hours=1)
 # Deterministic business rejections do not change on retry; they fail at once for quick feedback.
 # A version conflict (409) may resolve itself and is retried like a transient failure.
 PERMANENT_STATUSES = frozenset({400, 401, 403, 404, 410, 422})
+# Tasks are checked for reminders in batches of this size, with one query for the existing ones.
+REMINDER_BATCH = 250
 
 
 def safe_job_error(value: str | None) -> str:
@@ -91,6 +93,22 @@ def reminder_at(due_at: datetime, policy: ReminderPolicy) -> datetime:
     return local.astimezone(timezone.utc)
 
 
+def reminder_horizon(now: datetime, policy: ReminderPolicy) -> datetime:
+    """Latest due time whose reminder may have come by `now`; the scan skips later tasks in SQL."""
+    if policy.lead_minutes is not None:
+        return (now + timedelta(minutes=policy.lead_minutes)).astimezone(timezone.utc)
+    zone = ZoneInfo(policy.timezone)
+    day = now.astimezone(zone).date()
+    remaining = policy.lead_working_days
+    while remaining:
+        day += timedelta(days=1)
+        if day.weekday() in policy.working_days and day not in policy.holidays:
+            remaining -= 1
+    # reminder_at() keeps the time of day and steps back whole days, so the reminder of a task
+    # due after this day falls on tomorrow at the earliest.
+    return datetime.combine(day + timedelta(days=1), datetime.min.time(), zone).astimezone(timezone.utc)
+
+
 def schedule_reminders(db: Session, now: datetime | None = None) -> int:
     now = aware(now or utcnow())
     setting = db.scalar(select(AppSetting).where(AppSetting.key == 'task_reminders', AppSetting.status == 'published'))
@@ -101,26 +119,36 @@ def schedule_reminders(db: Session, now: datetime | None = None) -> int:
     if not policy.enabled:
         return 0
     created = 0
-    # Streaming avoids loading the task register into memory, including overdue tasks.
-    tasks = db.scalars(select(Task).where(Task.status.in_(['assigned', 'in_progress']))
-                       .order_by(Task.due_at, Task.id).execution_options(yield_per=250))
-    for task in tasks:
-        due_at = aware(task.due_at)
-        if due_at <= now:
-            stage = 'overdue'
-        elif reminder_at(due_at, policy) <= now:
-            stage = 'approaching'
-        else:
-            continue
-        stamp = due_at.astimezone(timezone.utc).isoformat()
-        key = f'task-reminder:{task.id}:{task.assignee_id}:{stamp}:{stage}'
-        advisory(db, key)
-        if db.scalar(select(OutboxEvent.id).where(OutboxEvent.event_key == key)):
-            continue
-        db.add(OutboxEvent(event_key=key, kind='task.reminder', payload={
-            'task_id': task.id, 'user_id': task.assignee_id, 'due_at': stamp, 'stage': stage}))
-        db.flush()
-        created += 1
+    # Only tasks that may need a reminder are read, in batches; each batch looks up its existing
+    # reminders with one query, so overdue tasks do not cost two queries a minute each.
+    tasks = db.scalars(select(Task).where(Task.status.in_(['assigned', 'in_progress']),
+                                          Task.due_at <= reminder_horizon(now, policy))
+                       .order_by(Task.due_at, Task.id).execution_options(yield_per=REMINDER_BATCH))
+    for batch in tasks.partitions():
+        due = []
+        for task in batch:
+            due_at = aware(task.due_at)
+            if due_at <= now:
+                stage = 'overdue'
+            elif reminder_at(due_at, policy) <= now:
+                stage = 'approaching'
+            else:
+                continue
+            stamp = due_at.astimezone(timezone.utc).isoformat()
+            due.append((f'task-reminder:{task.id}:{task.assignee_id}:{stamp}:{stage}', task, stamp, stage))
+        queued = set(db.scalars(select(OutboxEvent.event_key)
+                                .where(OutboxEvent.event_key.in_([key for key, *_ in due])))) if due else set()
+        for key, task, stamp, stage in due:
+            if key in queued:
+                continue
+            advisory(db, key)
+            # Another worker may have queued it after the batch lookup.
+            if db.scalar(select(OutboxEvent.id).where(OutboxEvent.event_key == key)):
+                continue
+            db.add(OutboxEvent(event_key=key, kind='task.reminder', payload={
+                'task_id': task.id, 'user_id': task.assignee_id, 'due_at': stamp, 'stage': stage}))
+            db.flush()
+            created += 1
     return created
 
 
@@ -260,7 +288,7 @@ def run_once(*, reminders: bool = True, limit: int = 25) -> dict[str, int]:
 
 def main() -> None:
     # Populate all referenced ORM tables before worker queries are compiled.
-    import app.commerce.models  # noqa: F401
+    import app.models  # noqa: F401
     parser = argparse.ArgumentParser(description='Обработка очереди CRM и напоминаний')
     parser.add_argument('--once', action='store_true')
     parser.add_argument('--interval', type=float, default=2.0)
