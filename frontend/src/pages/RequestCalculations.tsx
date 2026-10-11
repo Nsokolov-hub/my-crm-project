@@ -18,6 +18,7 @@ import {
   expenseFromReference,
   moscowDelivery,
   nameOf,
+  plainQuantity,
   standardExpenses,
   validMarkup,
   type Expense,
@@ -89,7 +90,7 @@ function CalculationEditor({
           id,
           {
             quote_item_id: id,
-            ...(old?.quantity ? { quantity: String(old.quantity) } : {}),
+            ...(old?.quantity ? { quantity: plainQuantity(old.quantity) } : {}),
             markup_coefficient: String(old?.markup_coefficient || '1.5'),
             ...(old || line ? { bonus_coefficient: bonus } : {}),
           },
@@ -159,7 +160,7 @@ function CalculationEditor({
         if (next[row.id] && next[row.id].quantity === undefined) {
           next[row.id] = {
             ...next[row.id],
-            quantity: String(row.request_quantity || row.quantity || '1'),
+            quantity: plainQuantity(row.request_quantity || row.quantity || '1'),
           };
           changed = true;
         }
@@ -281,7 +282,7 @@ function CalculationEditor({
       if (checked)
         next[row.id] = {
           quote_item_id: row.id,
-          quantity: String(row.request_quantity || row.quantity || '1'),
+          quantity: plainQuantity(row.request_quantity || row.quantity || '1'),
           markup_coefficient: current[row.id]?.markup_coefficient || '1.5',
         };
       else delete next[row.id];
@@ -572,6 +573,11 @@ function CalculationEditor({
                   </strong>
                 </span>
               )}
+              {auth.can('finance.reward.read') && Number(totals?.internal_bonus) > 0 && (
+                <span>
+                  Бонус: <strong>{metric(totals?.internal_bonus)} ₽</strong>
+                </span>
+              )}
             </div>
             <DataTable<Entity>
               className="calculation-positions"
@@ -600,7 +606,7 @@ function CalculationEditor({
                                   quote_item_id: row.id,
                                   quantity:
                                     current[row.id]?.quantity ??
-                                    String(row.request_quantity || row.quantity || '1'),
+                                    plainQuantity(row.request_quantity || row.quantity || '1'),
                                   markup_coefficient: current[row.id]?.markup_coefficient || '1.5',
                                 };
                               else delete next[row.id];
@@ -751,33 +757,46 @@ function CalculationEditor({
                         key: 'bonus',
                         label: 'Бонус',
                         sortable: false,
-                        render: (row: Entity) =>
-                          selections[row.id] ? (
-                            <input
-                              className="calculation-markup"
-                              inputMode="decimal"
-                              aria-label={'Бонус ' + nameOf(row)}
-                              value={
-                                selections[row.id].bonus_coefficient ||
-                                String(
-                                  (selectedProfile?.definition as Entity | undefined)
-                                    ?.default_bonus_coefficient || '1',
-                                )
-                              }
-                              onChange={(event) => {
-                                setSelections((current) => ({
-                                  ...current,
-                                  [row.id]: {
-                                    ...current[row.id],
-                                    bonus_coefficient: event.target.value.replace(',', '.'),
-                                  },
-                                }));
-                                invalidate();
-                              }}
-                            />
-                          ) : (
-                            '—'
-                          ),
+                        render: (row: Entity) => {
+                          if (!selections[row.id]) return '—';
+                          const coefficient =
+                            selections[row.id].bonus_coefficient ||
+                            String(
+                              (selectedProfile?.definition as Entity | undefined)
+                                ?.default_bonus_coefficient || '1',
+                            );
+                          const line = outputLines.find((entry) => entry.quote_item_id === row.id);
+                          const bonus = ((line?.detail || {}) as Entity).internal_bonus;
+                          return (
+                            <span className="calculation-bonus">
+                              <input
+                                className="calculation-markup"
+                                inputMode="decimal"
+                                aria-label={'Бонус ' + nameOf(row)}
+                                value={coefficient}
+                                onChange={(event) => {
+                                  setSelections((current) => ({
+                                    ...current,
+                                    [row.id]: {
+                                      ...current[row.id],
+                                      bonus_coefficient: event.target.value.replace(',', '.'),
+                                    },
+                                  }));
+                                  invalidate();
+                                }}
+                              />
+                              {Number(coefficient) > 1 && bonus != null && line && (
+                                <small
+                                  title={`Бонус за ${decimal(line.quantity)} шт.: ${metric(
+                                    Number(bonus) / Number(line.quantity),
+                                  )} ₽ за штуку`}
+                                >
+                                  {metric(bonus)} ₽
+                                </small>
+                              )}
+                            </span>
+                          );
+                        },
                       },
                     ]
                   : []),
