@@ -1,25 +1,11 @@
 """Permission scopes are read once per request and stay correct when grants change mid-request."""
 
-from sqlalchemy import delete, event, update
+from sqlalchemy import delete, update
 
 from app.core.models import PermissionGrant, Role, User, UserRole
 from app.core.security import can, scope_for, users_with_permission
 from tests.support.crm import login
-
-
-def statements_while(env, action):
-    engine = env["sessions"].kw["bind"]
-    seen = []
-
-    def record(conn, cursor, statement, parameters, context, executemany):
-        seen.append(statement)
-
-    event.listen(engine, "before_cursor_execute", record)
-    try:
-        action()
-    finally:
-        event.remove(engine, "before_cursor_execute", record)
-    return seen
+from tests.support.queries import statements_while
 
 
 def test_all_scopes_of_a_user_are_loaded_with_one_query(crm):

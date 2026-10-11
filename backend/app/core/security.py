@@ -61,14 +61,38 @@ def effective_scopes(db: Session, user_id: str) -> dict[str, str]:
         rows = db.execute(select(PermissionGrant.code, PermissionGrant.scope, PermissionGrant.allow,
                                  PermissionGrant.user_id)
                           .where(or_(PermissionGrant.user_id == user_id, PermissionGrant.role_id.in_(role_ids)))).all()
-        denied = {code for code, _, allow, owner in rows if owner == user_id and not allow}
-        granted: dict[str, set[str]] = {}
-        for code, scope, allow, _ in rows:
-            if allow and code not in denied:
-                granted.setdefault(code, set()).add(scope)
-        cache[user_id] = {code: best for code, scopes in granted.items()
-                          if (best := next((s for s in SCOPE_ORDER if s in scopes), None))}
+        cache[user_id] = _resolve_scopes(rows, user_id)
     return cache[user_id]
+
+
+def preload_permissions(db: Session, user_ids: list[str]) -> None:
+    """Fill the scope cache for several users with two queries (used by list views)."""
+    cache = db.info.setdefault(_SCOPES_CACHE, {})
+    missing = [user_id for user_id in dict.fromkeys(user_ids) if user_id not in cache]
+    if not missing:
+        return
+    roles_of: dict[str, set[str]] = {user_id: set() for user_id in missing}
+    for user_id, role_id in db.execute(select(UserRole.user_id, UserRole.role_id).where(UserRole.user_id.in_(missing))):
+        roles_of[user_id].add(role_id)
+    role_ids = set().union(*roles_of.values())
+    rows = db.execute(select(PermissionGrant.code, PermissionGrant.scope, PermissionGrant.allow,
+                             PermissionGrant.user_id, PermissionGrant.role_id)
+                      .where(or_(PermissionGrant.user_id.in_(missing), PermissionGrant.role_id.in_(role_ids)))).all()
+    for user_id in missing:
+        own = [(code, scope, allow, owner) for code, scope, allow, owner, role_id in rows
+               if owner == user_id or role_id in roles_of[user_id]]
+        cache[user_id] = _resolve_scopes(own, user_id)
+
+
+def _resolve_scopes(rows: Any, user_id: str) -> dict[str, str]:
+    """rows: (code, scope, allow, user_id) of the user's own and role grants."""
+    denied = {code for code, _, allow, owner in rows if owner == user_id and not allow}
+    granted: dict[str, set[str]] = {}
+    for code, scope, allow, _ in rows:
+        if allow and code not in denied:
+            granted.setdefault(code, set()).add(scope)
+    return {code: best for code, scopes in granted.items()
+            if (best := next((s for s in SCOPE_ORDER if s in scopes), None))}
 
 
 def invalidate_permissions(db: Session) -> None:

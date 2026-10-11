@@ -1,5 +1,6 @@
 import secrets
 import time
+from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any, Literal
 
@@ -28,6 +29,7 @@ from app.core.security import (
     current_user,
     digest,
     password_hasher,
+    preload_permissions,
     require_permission,
     scope_for,
 )
@@ -57,27 +59,36 @@ class PasswordInput(Input):
     new_password: str = Field(min_length=12, max_length=200)
 
 
+def user_views(db: Session, users: list[User]) -> list[dict[str, Any]]:
+    """Views for several users with a fixed number of queries (roles, personal grants, scopes)."""
+    ids = [user.id for user in users]
+    roles: dict[str, list[Role]] = defaultdict(list)
+    for user_id, role in db.execute(select(UserRole.user_id, Role).join(Role, Role.id == UserRole.role_id)
+                                    .where(UserRole.user_id.in_(ids))):
+        roles[user_id].append(role)
+    grants: dict[str, list[PermissionGrant]] = defaultdict(list)
+    for grant in db.scalars(select(PermissionGrant).where(PermissionGrant.user_id.in_(ids))):
+        grants[grant.user_id].append(grant)
+    preload_permissions(db, ids)
+    return [
+        {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "active": user.active,
+            "own_requests_only": user.own_requests_only,
+            "version": user.version,
+            "mfa_enabled": user.mfa_enabled,
+            "roles": [{"id": r.id, "name": r.name} for r in roles[user.id]],
+            "grants": [{"code": g.code, "scope": g.scope, "allow": g.allow} for g in grants[user.id]],
+            "permissions": {code: scope for code in PERMISSIONS if (scope := scope_for(db, user, code))},
+        }
+        for user in users
+    ]
+
+
 def user_view(db: Session, user: User) -> dict[str, Any]:
-    roles = db.scalars(
-        select(Role).join(UserRole, UserRole.role_id == Role.id).where(UserRole.user_id == user.id)
-    ).all()
-    return {
-        "id": user.id,
-        "email": user.email,
-        "name": user.name,
-        "active": user.active,
-        "own_requests_only": user.own_requests_only,
-        "version": user.version,
-        "mfa_enabled": user.mfa_enabled,
-        "roles": [{"id": r.id, "name": r.name} for r in roles],
-        "grants": [
-            {"code": grant.code, "scope": grant.scope, "allow": grant.allow}
-            for grant in db.scalars(
-                select(PermissionGrant).where(PermissionGrant.user_id == user.id)
-            )
-        ],
-        "permissions": {code: scope for code in PERMISSIONS if (scope := scope_for(db, user, code))},
-    }
+    return user_views(db, [user])[0]
 
 
 @router.post("/auth/login")
@@ -276,7 +287,7 @@ def users(
     require_permission(db, user, "admin.users")
     stmt = select(User).where(or_(User.name.ilike(f"%{q}%"), User.email.ilike(f"%{q}%")))
     result = paginate(db, stmt.order_by(User.name), page, page_size)
-    result["items"] = [user_view(db, db.get(User, row["id"])) for row in result["items"]]
+    result["items"] = user_views(db, [db.get(User, row["id"]) for row in result["items"]])
     return result
 
 
@@ -390,17 +401,11 @@ def edit_user(
 def roles(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     rows = db.scalars(select(Role).order_by(Role.name)).all()
+    grants: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for g in db.scalars(select(PermissionGrant).where(PermissionGrant.role_id.in_([r.id for r in rows]))):
+        grants[g.role_id].append({"code": g.code, "scope": g.scope, "allow": g.allow})
     return {
-        "items": [
-            {
-                **serialize(r),
-                "grants": [
-                    {"code": g.code, "scope": g.scope, "allow": g.allow}
-                    for g in db.scalars(select(PermissionGrant).where(PermissionGrant.role_id == r.id))
-                ],
-            }
-            for r in rows
-        ],
+        "items": [{**serialize(r), "grants": grants[r.id]} for r in rows],
         "total": len(rows),
         "page": 1,
         "page_size": len(rows),

@@ -1,6 +1,6 @@
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextvars import ContextVar
 from datetime import date, datetime
 from decimal import Decimal
@@ -15,6 +15,9 @@ from app.core.models import AuditEvent, IdempotencyRecord, Notification, User
 
 correlation_id: ContextVar[str] = ContextVar('correlation_id', default='background')
 T = TypeVar('T', bound=Entity)
+# Stays well below the bind parameter limits of SQLite and PostgreSQL.
+PREFETCH_CHUNK = 5000
+_RETAINED = 'crm.retained_rows'
 
 
 def plain(value: Any) -> Any:
@@ -44,6 +47,30 @@ def lock(db: Session, model: type[T], entity_id: str) -> T:
     if row is None:
         raise DomainError('NOT_FOUND', 'Объект не найден или недоступен', 404)
     return row
+
+
+def retain(db: Session, rows: Iterable[Any]) -> None:
+    """Keep loaded rows alive until the session ends.
+
+    The identity map references objects weakly: an object nobody holds is dropped at once and the next
+    ``db.get`` queries again. Holding them for the session (one request) makes batch loading effective.
+    """
+    db.info.setdefault(_RETAINED, []).extend(rows)
+
+
+def prefetch(db: Session, model: type[T], ids: Iterable[str | None]) -> dict[str, T]:
+    """Load rows by id with as few queries as possible.
+
+    The rows stay in the session identity map, so later ``db.get(model, id)`` calls in per-row view
+    functions are answered without SQL. This is how list endpoints avoid one query per row.
+    """
+    wanted = sorted({value for value in ids if value})
+    found: dict[str, T] = {}
+    for start in range(0, len(wanted), PREFETCH_CHUNK):
+        chunk = wanted[start:start + PREFETCH_CHUNK]
+        found.update((row.id, row) for row in db.scalars(select(model).where(model.id.in_(chunk))))
+    retain(db, found.values())
+    return found
 
 
 def check_version(obj: Entity, version: int) -> None:
@@ -94,4 +121,5 @@ def page(db: Session, statement: Any, page: int = 1, page_size: int = 25) -> dic
         raise DomainError('PAGINATION_INVALID', 'Размер страницы от 1 до 100; номер от 1', 422)
     total = db.scalar(select(func.count()).select_from(statement.order_by(None).subquery())) or 0
     items = db.scalars(statement.limit(page_size).offset((page - 1) * page_size)).all()
+    retain(db, items)
     return {'items': [serialize(i) for i in items], 'total': total, 'page': page, 'page_size': page_size}

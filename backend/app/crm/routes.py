@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -25,7 +26,7 @@ from app.core.security import (
     task_predicate,
     users_with_permission,
 )
-from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
+from app.core.service import advisory, audit, check_version, idem, lock, notify, prefetch, serialize
 from app.core.service import page as paginate
 from app.crm.codes import next_request_number
 from app.crm.models import (
@@ -212,22 +213,44 @@ def nomenclature_creator(db: Session, entity_id: str) -> str | None:
     ).order_by(AuditEvent.created_at, AuditEvent.id).limit(1))
 
 
+def nomenclature_views(db: Session, rows: list[Nomenclature]) -> list[dict[str, Any]]:
+    """Views for a page of nomenclatures with a fixed number of queries."""
+    ids = [row.id for row in rows]
+    creators: dict[str, str | None] = {}
+    for entity_id, actor_id in db.execute(select(AuditEvent.entity_id, AuditEvent.actor_id).where(
+        AuditEvent.entity_type == 'nomenclature', AuditEvent.action == 'created', AuditEvent.entity_id.in_(ids),
+    ).order_by(AuditEvent.created_at, AuditEvent.id)):
+        creators.setdefault(entity_id, actor_id)
+    groups = prefetch(db, ProductGroup, (row.product_group_id for row in rows))
+    packings: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for packing in db.scalars(select(Packing).where(Packing.nomenclature_id.in_(ids), Packing.active.is_(True))
+                              .order_by(Packing.value, Packing.unit)):
+        packings[packing.nomenclature_id].append(serialize(packing))
+    views = []
+    for row in rows:
+        value = serialize(row)
+        value['created_by_id'] = creators.get(row.id)
+        group = groups.get(row.product_group_id) if row.product_group_id else None
+        value['product_group_name'] = group.name if group else None
+        value['product_group_slug'] = group.slug if group else None
+        value['packings'] = packings[row.id]
+        views.append(value)
+    return views
+
+
 def nomenclature_view(db: Session, row: Nomenclature) -> dict[str, Any]:
-    value = serialize(row)
-    value['created_by_id'] = nomenclature_creator(db, row.id)
-    group = db.get(ProductGroup, row.product_group_id) if row.product_group_id else None
-    value['product_group_name'] = group.name if group else None
-    value['product_group_slug'] = group.slug if group else None
-    value['packings'] = [
-        serialize(packing) for packing in db.scalars(
-            select(Packing).where(Packing.nomenclature_id == row.id, Packing.active.is_(True))
-            .order_by(Packing.value, Packing.unit)
-        )
-    ]
-    return value
+    return nomenclature_views(db, [row])[0]
 
 
-def request_item_view(db: Session, user: User, row: RequestItem) -> dict[str, Any]:
+def prefetch_item_relations(db: Session, rows: list[RequestItem]) -> None:
+    prefetch(db, Nomenclature, (row.nomenclature_id for row in rows))
+    prefetch(db, Packing, (row.packing_id for row in rows))
+    prefetch(db, ProductGroup, (row.product_group_id for row in rows))
+    prefetch(db, Counterparty, (row.supplier_id for row in rows))
+    prefetch(db, Currency, (row.purchase_currency_id for row in rows))
+
+
+def request_item_view(db: Session, user: User, row: RequestItem, show_purchase: bool | None = None) -> dict[str, Any]:
     value = serialize(row)
     nomenclature = db.get(Nomenclature, row.nomenclature_id) if row.nomenclature_id else None
     packing = db.get(Packing, row.packing_id) if row.packing_id else None
@@ -242,7 +265,9 @@ def request_item_view(db: Session, user: User, row: RequestItem) -> dict[str, An
         'supplier_name': supplier.name if supplier else None,
         'purchase_currency_code': currency.code if currency else None,
     })
-    if not has_request_permission(db, user, row.request_id, 'finance.purchase.read'):
+    if show_purchase is None:
+        show_purchase = has_request_permission(db, user, row.request_id, 'finance.purchase.read')
+    if not show_purchase:
         value.pop('purchase_price', None)
     return value
 
@@ -387,7 +412,7 @@ def nomenclatures(
         if value:
             stmt = stmt.where(column.ilike(f'%{value}%'))
     result = paginate(db, stmt.order_by(Nomenclature.name, Nomenclature.id), page, page_size)
-    result['items'] = [nomenclature_view(db, db.get(Nomenclature, item['id'])) for item in result['items']]
+    result['items'] = nomenclature_views(db, [db.get(Nomenclature, item['id']) for item in result['items']])
     return result
 
 
@@ -963,9 +988,11 @@ def requests(q: str = '', stage: str | None = None, client_id: str | None = None
         stmt = stmt.where(Request.owner_id == owner_id)
     col = {'created_at': Request.created_at, 'title': Request.title, 'number': Request.number, 'due_at': Request.due_at}.get(sort, Request.created_at)
     result = paginate(db, stmt.order_by(col.desc() if direction == 'desc' else col, Request.id), page, page_size)
+    clients = prefetch(db, Counterparty, (item['client_id'] for item in result['items']))
+    owners = prefetch(db, User, (item['owner_id'] for item in result['items']))
     for item in result['items']:
-        item['client_name'] = db.get(Counterparty, item['client_id']).name
-        item['owner_name'] = db.get(User, item['owner_id']).name
+        item['client_name'] = clients[item['client_id']].name
+        item['owner_name'] = owners[item['owner_id']].name
     return result
 
 
@@ -1095,7 +1122,10 @@ def items(entity_id: str, q: str = '', page: int = 1, page_size: int = 100, user
         ))
         stmt = stmt.where(or_(RequestItem.description.ilike(f'%{q}%'), RequestItem.nomenclature_id.in_(names)))
     result = paginate(db, stmt.order_by(RequestItem.created_at, RequestItem.id), page, page_size)
-    result['items'] = [request_item_view(db, user, db.get(RequestItem, item['id'])) for item in result['items']]
+    rows = [db.get(RequestItem, item['id']) for item in result['items']]
+    prefetch_item_relations(db, rows)
+    show_purchase = has_request_permission(db, user, entity_id, 'finance.purchase.read')
+    result['items'] = [request_item_view(db, user, row, show_purchase) for row in rows]
     numbers = {item_id: index for index, item_id in enumerate(db.scalars(select(RequestItem.id).where(RequestItem.request_id == entity_id, RequestItem.archived.is_(False)).order_by(RequestItem.created_at, RequestItem.id)), 1)}
     for item in result['items']:
         item['position_number'] = numbers.get(item['id'])
@@ -1233,21 +1263,46 @@ def quote_item_view(db: Session, row: QuoteItem, show_purchase: bool = True) -> 
     return value
 
 
+def prefetch_quote_relations(db: Session, rows: list[QuoteItem]) -> None:
+    sheets = prefetch(db, QuoteSheet, (row.quote_id for row in rows))
+    prefetch(db, Request, (sheet.request_id for sheet in sheets.values()))
+    nomenclatures = prefetch(db, Nomenclature, (row.nomenclature_id for row in rows))
+    prefetch(db, ProductGroup, (nomenclature.product_group_id for nomenclature in nomenclatures.values()))
+    prefetch(db, Packing, (row.packing_id for row in rows))
+    prefetch(db, Currency, (row.currency_id for row in rows))
+    prefetch(db, Counterparty, (row.supplier_id for row in rows))
+    prefetch(db, RequestItem, (row.source_request_item_id for row in rows))
+
+
+def quote_item_views(db: Session, rows: list[QuoteItem], show_purchase: bool = True) -> list[dict[str, Any]]:
+    prefetch_quote_relations(db, rows)
+    return [quote_item_view(db, row, show_purchase) for row in rows]
+
+
+def quote_sheet_views(db: Session, rows: list[QuoteSheet], show_purchase: bool = True) -> list[dict[str, Any]]:
+    """Sheets with their current items: one query for all items instead of one per sheet."""
+    items: dict[str, list[QuoteItem]] = defaultdict(list)
+    for item in db.scalars(select(QuoteItem).where(QuoteItem.quote_id.in_([row.id for row in rows]),
+                                                   QuoteItem.archived.is_(False))
+                           .order_by(QuoteItem.created_at, QuoteItem.id)):
+        items[item.quote_id].append(item)
+    prefetch_quote_relations(db, [item for group in items.values() for item in group])
+    prefetch(db, Request, (row.request_id for row in rows))
+    prefetch(db, Counterparty, (row.supplier_id for row in rows))
+    views = []
+    for row in rows:
+        value = serialize(row)
+        value.update({
+            'request_number': db.get(Request, row.request_id).number,
+            'supplier_name': db.get(Counterparty, row.supplier_id).name,
+            'items': [quote_item_view(db, item, show_purchase) for item in items[row.id]],
+        })
+        views.append(value)
+    return views
+
+
 def quote_sheet_view(db: Session, row: QuoteSheet, show_purchase: bool = True) -> dict[str, Any]:
-    value = serialize(row)
-    request = db.get(Request, row.request_id)
-    supplier = db.get(Counterparty, row.supplier_id)
-    value.update({
-        'request_number': request.number,
-        'supplier_name': supplier.name,
-        'items': [
-            quote_item_view(db, item, show_purchase) for item in db.scalars(
-                select(QuoteItem).where(QuoteItem.quote_id == row.id, QuoteItem.archived.is_(False))
-                .order_by(QuoteItem.created_at, QuoteItem.id)
-            )
-        ],
-    })
-    return value
+    return quote_sheet_views(db, [row], show_purchase)[0]
 
 
 def latest_price(
@@ -1308,7 +1363,7 @@ def quote_item_history(
         if value:
             stmt = stmt.where(getattr(QuoteItem, field) == value)
     result = paginate(db, stmt.order_by(QuoteItem.quoted_at.desc(), QuoteItem.id.desc()), page, page_size)
-    result['items'] = [quote_item_view(db, db.get(QuoteItem, item['id'])) for item in result['items']]
+    result['items'] = quote_item_views(db, [db.get(QuoteItem, item['id']) for item in result['items']])
     return result
 
 
@@ -1326,12 +1381,13 @@ def request_quote_items(
             raise DomainError('QUOTE_SELECTION_LIMIT', 'Выберите не более 10 000 позиций квоты', 422, 'ids')
         stmt = stmt.where(QuoteItem.id.in_(selected_ids))
     if ids or load_all:
-        selected_rows = db.scalars(stmt.order_by(QuoteItem.created_at.desc(), QuoteItem.id.desc()).limit(10000)).all()
-        result = {"items": [serialize(row) for row in selected_rows], "total": len(selected_rows), "page": 1, "page_size": len(selected_rows)}
+        rows = list(db.scalars(stmt.order_by(QuoteItem.created_at.desc(), QuoteItem.id.desc()).limit(10000)))
+        result = {"total": len(rows), "page": 1, "page_size": len(rows)}
     else:
         result = paginate(db, stmt.order_by(QuoteItem.created_at.desc(), QuoteItem.id.desc()), page, page_size)
+        rows = [db.get(QuoteItem, item['id']) for item in result['items']]
     show_purchase = has_request_permission(db, user, entity_id, 'finance.purchase.read')
-    result['items'] = [quote_item_view(db, db.get(QuoteItem, item['id']), show_purchase) for item in result['items']]
+    result['items'] = quote_item_views(db, rows, show_purchase)
     return result
 
 
@@ -1343,7 +1399,7 @@ def request_quote_sheets(
     check_request(db, user, entity_id)
     result = paginate(db, select(QuoteSheet).where(QuoteSheet.request_id == entity_id, QuoteSheet.archived.is_(False)).order_by(QuoteSheet.created_at.desc()), page, page_size)
     show_purchase = has_request_permission(db, user, entity_id, 'finance.purchase.read')
-    result['items'] = [quote_sheet_view(db, db.get(QuoteSheet, item['id']), show_purchase) for item in result['items']]
+    result['items'] = quote_sheet_views(db, [db.get(QuoteSheet, item['id']) for item in result['items']], show_purchase)
     return result
 
 
