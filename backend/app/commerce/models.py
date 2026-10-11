@@ -8,10 +8,13 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    false,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -228,9 +231,22 @@ class Approval(Entity, Base):
     reason: Mapped[str] = mapped_column(Text, default="")
 
 
+# A planned wave holds a supplier's planned volume for calculations; real orders go to working waves,
+# copies of the plan made when an order is confirmed. Only one plan per supplier is in use at a time.
+ACTIVE_PLAN = text("kind = 'plan' AND NOT archived")
+
+
 class Wave(Entity, Base):
     __tablename__ = "waves"
+    __table_args__ = (
+        CheckConstraint("kind IN ('plan', 'work')", name="ck_waves_kind"),
+        Index("uq_waves_active_plan", "supplier_id", unique=True,
+              postgresql_where=ACTIVE_PLAN, sqlite_where=ACTIVE_PLAN),
+    )
     number: Mapped[str] = mapped_column(String(80), unique=True)
+    kind: Mapped[str] = mapped_column(String(10), default="work", server_default="work")
+    plan_id: Mapped[str | None] = mapped_column(ForeignKey("waves.id"), index=True)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     supplier_id: Mapped[str | None] = mapped_column(ForeignKey("counterparties.id"), index=True)
     route: Mapped[str] = mapped_column(String(300))
     origin_country: Mapped[str] = mapped_column(String(100))

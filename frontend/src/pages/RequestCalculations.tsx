@@ -6,10 +6,10 @@ import { Badge, Button, DataTable, DetailPairs, ErrorBox, Modal } from '../compo
 import { ApiError } from '../lib/api';
 import { displayCalculationMetrics } from '../lib/calculations';
 import { normalizeLogisticsExpense } from '../lib/logistics';
-import { date, decimal, label, metric } from '../lib/format';
+import { date, decimal, display, label, metric } from '../lib/format';
 import { useApi, useCommand, useDirtyProtection } from '../lib/hooks';
 import type { Entity, Page } from '../lib/types';
-import { waveWeekLabel } from '../lib/waves';
+import { waveKindLabel, waveWeekLabel } from '../lib/waves';
 import { CalculationBreakdown } from './calculations/CalculationBreakdown';
 import {
   airportPickup,
@@ -1500,14 +1500,22 @@ export function RequestCalculations({
   onLaunchConsumed?: () => void;
 }) {
   const auth = useAuth();
-  const waves = useApi<Page>('/waves');
+  const waves = useApi<Page>('/waves?open=true');
   const waveCommand = useCommand();
   const [waveId, setWaveId] = useState(String(request.wave_id || ''));
   const [assignedWaveId, setAssignedWaveId] = useState(String(request.wave_id || ''));
   const [requestVersion, setRequestVersion] = useState(Number(request.version));
-  const openWaves = (waves.data?.items || []).filter(
-    (wave) => ['planned', 'assembling'].includes(String(wave.status)) || wave.id === assignedWaveId,
+  const openWaves = waves.data?.items || [];
+  // A closed or archived wave is no longer offered, but the request may still name it.
+  const missingWave = useApi<Entity>(
+    waves.data && assignedWaveId && !openWaves.some((wave) => wave.id === assignedWaveId)
+      ? `/waves/${assignedWaveId}`
+      : null,
   );
+  const assignedWave =
+    openWaves.find((wave) => wave.id === assignedWaveId) ||
+    (missingWave.data?.id === assignedWaveId ? missingWave.data : undefined);
+  const workingWaves = (assignedWave?.working_waves || []) as Entity[];
   const [editing, setEditing] = useState(launchQuoteItemIds.length > 0);
   const [initialIds, setInitialIds] = useState(launchQuoteItemIds);
   const [selected, setSelected] = useState<Entity>();
@@ -1525,8 +1533,9 @@ export function RequestCalculations({
           <div>
             <h3>Волна поставки</h3>
             <p>
-              Руководитель назначает волну поставщика до расчёта. Подтверждённые количества в ней
-              учитываются автоматически.
+              Руководитель назначает волну поставщика до расчёта. По плановой волне общие расходы
+              делятся на плановый объём, а подтверждённый заказ попадает в её рабочую волну — она
+              создаётся автоматически. По рабочей волне расчёт идёт только по реальным заказам.
             </p>
           </div>
         </div>
@@ -1539,12 +1548,25 @@ export function RequestCalculations({
             onChange={(event) => setWaveId(event.target.value)}
           >
             <option value="">Выберите волну</option>
-            {openWaves.map((wave) => (
-              <option key={wave.id} value={wave.id}>
-                {String(wave.number)} · {String(wave.supplier_name || 'Поставщик не указан')} ·{' '}
-                {waveWeekLabel(wave, 'departure')}
+            {assignedWave && !openWaves.includes(assignedWave) && (
+              <option value={assignedWave.id}>
+                {waveKindLabel(assignedWave)} · {String(assignedWave.number)} ·{' '}
+                {assignedWave.archived ? 'в архиве' : display(assignedWave.status)}
               </option>
-            ))}
+            )}
+            {(['plan', 'work'] as const).map((kind) => {
+              const rows = openWaves.filter((wave) => (wave.kind || 'work') === kind);
+              return rows.length > 0 ? (
+                <optgroup key={kind} label={kind === 'plan' ? 'Плановые' : 'Рабочие'}>
+                  {rows.map((wave) => (
+                    <option key={wave.id} value={wave.id}>
+                      {String(wave.number)} · {String(wave.supplier_name || 'Поставщик не указан')}{' '}
+                      · {waveWeekLabel(wave, 'departure')}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null;
+            })}
           </select>
           {auth.can('waves.write') && (
             <Button
@@ -1572,6 +1594,19 @@ export function RequestCalculations({
             </Button>
           )}
         </div>
+        {Boolean(assignedWave?.archived) && (
+          <p className="field-error">
+            Назначенная волна в архиве. Выберите действующую волну перед расчётом.
+          </p>
+        )}
+        {workingWaves.length > 0 && (
+          <p className="muted">
+            Рабочие волны этой плановой:{' '}
+            {workingWaves
+              .map((wave) => `${String(wave.number)} (${display(wave.status)})`)
+              .join(', ')}
+          </p>
+        )}
       </section>
       <div className="tab-actions">
         <Button

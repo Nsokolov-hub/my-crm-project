@@ -146,7 +146,7 @@ export function display(value: unknown): string {
 }
 export function label(row: Entity): string {
   if (row.departure_week && row.departure_year && row.number)
-    return `${row.number} · ${row.supplier_name || ''} · Неделя ${row.departure_week}, ${row.departure_year}`;
+    return `${row.kind === 'plan' ? 'Плановая' : 'Рабочая'} · ${row.number} · ${row.supplier_name || ''} · Неделя ${row.departure_week}, ${row.departure_year}`;
   if (row.internal_code && row.name) return `${row.internal_code} · ${row.name}`;
   return String(
     row.name || row.title || row.number || row.description || row.email || row.id.slice(0, 8),

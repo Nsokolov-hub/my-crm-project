@@ -1,8 +1,9 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Literal
 
-from fastapi import APIRouter
-from sqlalchemy import select
+from fastapi import APIRouter, Query
+from sqlalchemy import or_, select
 
 from app.commerce.recalculate import recalculate_fulfillment
 from app.core.db import DB, utcnow
@@ -44,14 +45,15 @@ from .schemas import (
     ExecutionReviseIn,
     FulfillmentIn,
     TransferIn,
+    WaveArchiveIn,
     WaveBudgetIn,
     WaveForecastIn,
     WaveIn,
     WaveUpdate,
 )
+from .waves import OPEN_WAVES, active_plan, usable, working_wave
 
 router = APIRouter(tags=["Согласования и поставки"])
-OPEN_WAVES = {"planned", "assembling"}
 WAVE_TRANSITIONS = {
     "planned": {"assembling", "closed", "cancelled"},
     "assembling": {"closed", "cancelled"},
@@ -549,9 +551,10 @@ def decide_approval(approval_id: str, data: DecisionIn, db: DB, user: Actor):
                 execution.version += 1
             if req.wave_id:
                 advisory(db, f"wave:{req.wave_id}")
-                wave = lock(db, Wave, req.wave_id)
+                wave = usable(lock(db, Wave, req.wave_id))
                 if wave.status not in OPEN_WAVES:
                     error("WAVE_CLOSED", "Для передачи в закупки выберите открытую волну")
+                wave = working_wave(db, user, wave, f"Подтверждён заказ по заявке №{req.number}")
                 for execution in executions:
                     quote = check_execution_quote(db, execution)
                     if wave.supplier_id != quote.supplier_id:
@@ -651,8 +654,11 @@ def wave_view(db, user, wave: Wave) -> dict:
     forecasts = db.scalars(select(WaveForecast).where(WaveForecast.wave_id == wave.id).order_by(WaveForecast.created_at)).all()
     quantities = {}
     full_composition_visible = True
+    # A plan's remainder counts the orders of its working waves that are still being assembled.
+    sources = (select(Wave.id).where(Wave.plan_id == wave.id, Wave.archived.is_(False), Wave.status.in_(OPEN_WAVES))
+               if wave.kind == "plan" else [wave.id])
     real_allocations = db.scalars(select(WaveAllocation).where(
-        WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True))).all()
+        WaveAllocation.wave_id.in_(sources), WaveAllocation.active.is_(True))).all()
     for allocation in real_allocations:
         execution = db.get(Execution, allocation.execution_id)
         if not execution or execution.quantity <= execution.cancelled_quantity:
@@ -701,19 +707,41 @@ def wave_view(db, user, wave: Wave) -> dict:
     else:
         for row in value["forecasts"]:
             row.pop("unit_price_rub", None)
+    if wave.kind == "plan":
+        value["working_waves"] = [
+            {"id": row.id, "number": row.number, "status": row.status, "archived": row.archived}
+            for row in db.scalars(select(Wave).where(Wave.plan_id == wave.id).order_by(Wave.created_at, Wave.id))
+        ]
+    plan = db.get(Wave, wave.plan_id) if wave.plan_id else None
     return {**value, "supplier_name": supplier.name if supplier else None,
+            "plan_number": plan.number if plan else None,
             "allocations": [allocation_view(db, row) for row in allocations]}
 
 
 @router.get("/waves")
-def list_waves(db: DB, user: Actor):
+def list_waves(db: DB, user: Actor, archived: bool = False, kind: Literal["plan", "work"] | None = None,
+               open_only: bool = Query(False, alias="open"), q: str = ""):
+    """Waves in use by default; the archive is a separate list and never offered for new work."""
     require_permission(db, user, "requests.read")
-    return {
-        "items": [
-            wave_view(db, user, row)
-            for row in db.scalars(select(Wave).order_by(Wave.departure_date.desc())).all()
-        ]
-    }
+    query = select(Wave).where(Wave.archived.is_(archived))
+    if kind:
+        query = query.where(Wave.kind == kind)
+    if open_only:
+        query = query.where(Wave.status.in_(OPEN_WAVES))
+    if text := q.strip():
+        pattern = f"%{text}%"
+        suppliers = select(Counterparty.id).where(Counterparty.name.ilike(pattern))
+        query = query.where(or_(Wave.number.ilike(pattern), Wave.route.ilike(pattern), Wave.supplier_id.in_(suppliers)))
+    return {"items": [wave_view(db, user, row) for row in db.scalars(query.order_by(Wave.departure_date.desc())).all()]}
+
+
+@router.get("/waves/{wave_id}")
+def get_wave(wave_id: str, db: DB, user: Actor):
+    require_permission(db, user, "requests.read")
+    wave = db.get(Wave, wave_id)
+    if not wave:
+        error("NOT_FOUND", "Волна не найдена", 404)
+    return wave_view(db, user, wave)
 
 
 @router.post("/waves")
@@ -729,6 +757,9 @@ def create_wave(data: WaveIn, db: DB, user: Actor):
         if not owner or not owner.active:
             error("OWNER_REQUIRED", "Выберите действующего ответственного")
         advisory(db, f"wave-supplier:{supplier.id}")
+        if data.kind == "plan" and (current := active_plan(db, supplier.id)):
+            error("WAVE_PLAN_EXISTS", f"У поставщика уже есть плановая волна «{current.number}». "
+                  "Уберите её в архив, чтобы завести новую", 409, field="supplier_id")
         number = data.number.strip()
         if not number:
             prefix = supplier.name[:65].strip()
@@ -754,7 +785,7 @@ def update_wave(wave_id: str, data: WaveUpdate, db: DB, user: Actor):
 
     def operation():
         advisory(db, f"wave:{wave_id}")
-        wave = lock(db, Wave, wave_id)
+        wave = usable(lock(db, Wave, wave_id))
         check_version(wave, data.version)
         allocations = db.scalars(
             select(WaveAllocation).where(WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True))
@@ -763,6 +794,9 @@ def update_wave(wave_id: str, data: WaveUpdate, db: DB, user: Actor):
             check_request(db, user, db.get(Execution, allocation.execution_id).request_id, "waves.write")
         before = serialize(wave)
         if data.status and data.status != wave.status:
+            if wave.kind == "plan":
+                error("WAVE_PLAN_STATUS", "Плановая волна не отправляется: этапы поставки ведутся в рабочих волнах. "
+                      "Ненужную плановую волну уберите в архив", field="status")
             if data.status not in WAVE_TRANSITIONS[wave.status]:
                 error("WAVE_TRANSITION", "Этот переход состояния волны недопустим")
             if data.status in ("closed", "shipped", "arrived", "completed") and db.scalar(
@@ -819,6 +853,43 @@ def update_wave(wave_id: str, data: WaveUpdate, db: DB, user: Actor):
     )
 
 
+@router.post("/waves/{wave_id}/archive")
+def archive_wave(wave_id: str, data: WaveArchiveIn, db: DB, user: Actor):
+    require_permission(db, user, "waves.write")
+
+    def operation():
+        initial = db.get(Wave, wave_id)
+        if not initial:
+            error("NOT_FOUND", "Волна не найдена", 404)
+        advisory(db, f"wave-supplier:{initial.supplier_id}")
+        advisory(db, f"wave:{wave_id}")
+        wave = lock(db, Wave, wave_id)
+        check_version(wave, data.version)
+        allocations = db.scalars(
+            select(WaveAllocation).where(WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True))
+        ).all()
+        for allocation in allocations:
+            check_request(db, user, db.get(Execution, allocation.execution_id).request_id, "waves.write")
+        if wave.archived == data.archived:
+            error("WAVE_ARCHIVE_STATE", "Волна уже в архиве" if wave.archived else "Волна не в архиве", 409)
+        if data.archived and allocations and wave.status != "completed":
+            error("WAVE_IN_PROGRESS", "В волне есть заказы в работе. Завершите или отмените волну, "
+                  "затем уберите её в архив")
+        if not data.archived and wave.kind == "plan" and (current := active_plan(db, wave.supplier_id)):
+            error("WAVE_PLAN_EXISTS", f"У поставщика уже есть плановая волна «{current.number}». "
+                  "Сначала уберите её в архив", 409)
+        before = serialize(wave)
+        wave.archived = data.archived
+        wave.version += 1
+        audit(db, user, "wave", wave.id, "archived" if data.archived else "restored",
+              before=before, after=serialize(wave), reason=data.reason)
+        return wave_view(db, user, wave)
+
+    return idem(
+        db, user, data.idempotency_key, f"archive-wave:{wave_id}", data.model_dump(mode="json"), operation
+    )
+
+
 @router.post("/waves/{wave_id}/allocations")
 def allocate_wave(wave_id: str, data: AllocateWaveIn, db: DB, user: Actor):
     initial = db.get(Execution, data.execution_id)
@@ -829,7 +900,7 @@ def allocate_wave(wave_id: str, data: AllocateWaveIn, db: DB, user: Actor):
     def operation():
         commerce_locks(db, [initial])
         advisory(db, f"wave:{wave_id}")
-        wave = lock(db, Wave, wave_id)
+        wave = usable(lock(db, Wave, wave_id))
         if wave.status not in OPEN_WAVES:
             error("WAVE_CLOSED", "Добавлять позиции можно только в открытую волну")
         execution = lock(db, Execution, initial.id)
@@ -851,6 +922,7 @@ def allocate_wave(wave_id: str, data: AllocateWaveIn, db: DB, user: Actor):
         allocated = sum((row.quantity for row in allocations), Decimal("0"))
         if allocated + data.quantity > execution.quantity - execution.cancelled_quantity:
             error("WAVE_OVERALLOCATED", "Количество превышает нераспределённый согласованный остаток")
+        wave = working_wave(db, user, wave, "Позиция добавлена в плановую волну")
         execution.procurement_at = execution.procurement_at or utcnow()
         obj = WaveAllocation(
             wave_id=wave.id, execution_id=execution.id, approval_id=approval.id, quantity=data.quantity
@@ -881,8 +953,8 @@ def transfer_allocation(allocation_id: str, data: TransferIn, db: DB, user: Acto
         current = lock(db, WaveAllocation, allocation_id)
         check_version(current, data.version)
         target = lock(db, Wave, data.target_wave_id)
-        if target.status not in OPEN_WAVES or target.id == current.wave_id:
-            error("TARGET_WAVE", "Выберите другую открытую волну")
+        if target.archived or target.kind != "work" or target.status not in OPEN_WAVES or target.id == current.wave_id:
+            error("TARGET_WAVE", "Выберите другую открытую рабочую волну")
         if not current.active or event_totals(db, current.id)["shipped"] > 0:
             error("TRANSFER_SHIPPED", "Перенос отправленного или неактивного распределения запрещён")
         if data.quantity > current.quantity:
@@ -1014,7 +1086,7 @@ def check_wave_finances(db, user, wave):
 def save_wave_forecast(wave_id: str, data: WaveForecastIn, db: DB, user: Actor):
     def operation():
         advisory(db, f"wave:{wave_id}")
-        wave = lock(db, Wave, wave_id)
+        wave = usable(lock(db, Wave, wave_id))
         check_wave_finances(db, user, wave)
         check_version(wave, data.version)
         if wave.status not in OPEN_WAVES:
@@ -1024,6 +1096,10 @@ def save_wave_forecast(wave_id: str, data: WaveForecastIn, db: DB, user: Actor):
             error("PRODUCT_GROUP_REQUIRED", "Выберите действующую товарную группу")
         row = db.scalar(select(WaveForecast).where(WaveForecast.wave_id == wave.id,
                                                    WaveForecast.product_group_id == group.id))
+        # A working wave holds real orders only; a forecast left from before can just be switched off.
+        if wave.kind == "work" and (data.active or not row):
+            error("WAVE_FORECAST_KIND", "Плановый объём задаётся в плановой волне поставщика. "
+                  "В рабочей волне только реальные заказы", field="product_group_id")
         before = serialize(row) if row else None
         values = data.model_dump(exclude={"idempotency_key", "version"})
         if row:
@@ -1048,7 +1124,7 @@ def save_wave_forecast(wave_id: str, data: WaveForecastIn, db: DB, user: Actor):
 def save_wave_budget(wave_id: str, data: WaveBudgetIn, db: DB, user: Actor):
     def operation():
         advisory(db, f"wave:{wave_id}")
-        wave = lock(db, Wave, wave_id)
+        wave = usable(lock(db, Wave, wave_id))
         check_wave_finances(db, user, wave)
         check_version(wave, data.version)
         if wave.status not in OPEN_WAVES:

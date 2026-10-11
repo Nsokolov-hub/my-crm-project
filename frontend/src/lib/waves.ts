@@ -35,3 +35,12 @@ export function waveWeekInitial(row: Entity): Record<string, number> {
     }),
   );
 }
+
+export const waveKindOptions = [
+  { value: 'plan', label: 'Плановая' },
+  { value: 'work', label: 'Рабочая' },
+];
+
+export function waveKindLabel(row: Entity): string {
+  return row.kind === 'plan' ? 'Плановая' : 'Рабочая';
+}

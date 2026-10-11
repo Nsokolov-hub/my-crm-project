@@ -44,6 +44,7 @@ from .models import (
 )
 from .procurement import check_quote, product_view, validate_quantity
 from .schemas import CalculationIn, Expense, ExpenseTypeIn, ExpenseTypePatch, ProfileIn, Rate, RequestWaveIn
+from .waves import OPEN_WAVES, usable
 
 router = APIRouter(tags=["Расчёты и настраиваемые профили"])
 
@@ -764,8 +765,8 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             if not wave or suppliers != {wave.supplier_id}:
                 error('WAVE_SUPPLIER', 'Волна должна относиться к поставщику всех выбранных позиций', field='wave_id')
             advisory(db, f'wave:{wave.id}')
-            wave = lock(db, Wave, wave.id)
-            if wave.status not in ('planned', 'assembling'):
+            wave = usable(lock(db, Wave, wave.id), field='wave_id')
+            if wave.status not in OPEN_WAVES:
                 error('WAVE_CLOSED', 'Для расчёта выберите открытую волну', field='wave_id')
             peer_selections, existing_quantity, existing_components = wave_selections(
                 db, wave.id, exclude_request_id=request_id,
@@ -920,8 +921,10 @@ def assign_request_wave(request_id: str, data: RequestWaveIn, db: DB, user: Acto
         for wave_id in sorted({value for value in (req.wave_id, data.wave_id) if value}):
             advisory(db, f"wave:{wave_id}")
         wave = lock(db, Wave, data.wave_id) if data.wave_id else None
-        if data.wave_id and (not wave or not wave.supplier_id or wave.status not in ("planned", "assembling")):
+        if data.wave_id and (not wave or not wave.supplier_id or wave.status not in OPEN_WAVES):
             error("WAVE_REQUIRED", "Выберите открытую волну с указанным поставщиком", field="wave_id")
+        if wave and wave.id != req.wave_id:
+            usable(wave, field="wave_id")
         before = {"wave_id": req.wave_id}
         req.wave_id = wave.id if wave else None
         req.version += 1

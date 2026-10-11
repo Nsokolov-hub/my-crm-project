@@ -1888,7 +1888,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Waves */
+        /**
+         * List Waves
+         * @description Waves in use by default; the archive is a separate list and never offered for new work.
+         */
         get: operations["list_waves_api_v1_waves_get"];
         put?: never;
         /** Create Wave */
@@ -1906,7 +1909,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Get Wave */
+        get: operations["get_wave_api_v1_waves__wave_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1914,6 +1918,23 @@ export interface paths {
         head?: never;
         /** Update Wave */
         patch: operations["update_wave_api_v1_waves__wave_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/waves/{wave_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Wave */
+        post: operations["archive_wave_api_v1_waves__wave_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/waves/{wave_id}/allocations": {
@@ -4565,6 +4586,17 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** WaveArchiveIn */
+        WaveArchiveIn: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Version */
+            version: number;
+            /** Archived */
+            archived: boolean;
+            /** Reason */
+            reason: string;
+        };
         /** WaveBudgetIn */
         WaveBudgetIn: {
             /** Idempotency Key */
@@ -4614,6 +4646,12 @@ export interface components {
              * @default
              */
             number: string;
+            /**
+             * Kind
+             * @default work
+             * @enum {string}
+             */
+            kind: "plan" | "work";
             /** Supplier Id */
             supplier_id: string;
             /** Route */
@@ -12184,7 +12222,12 @@ export interface operations {
     };
     list_waves_api_v1_waves_get: {
         parameters: {
-            query?: never;
+            query?: {
+                archived?: boolean;
+                kind?: ("plan" | "work") | null;
+                open?: boolean;
+                q?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -12282,6 +12325,56 @@ export interface operations {
             };
         };
     };
+    get_wave_api_v1_waves__wave_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wave_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     update_wave_api_v1_waves__wave_id__patch: {
         parameters: {
             query?: never;
@@ -12294,6 +12387,60 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["WaveUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    archive_wave_api_v1_waves__wave_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wave_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WaveArchiveIn"];
             };
         };
         responses: {

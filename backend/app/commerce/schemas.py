@@ -330,6 +330,7 @@ class DecisionIn(VersionCommand):
 
 class WaveIn(Command):
     number: str = Field(default="", max_length=80)
+    kind: Literal["plan", "work"] = "work"
     supplier_id: str
     route: str = Field(min_length=1, max_length=300)
     origin_country: str = Field(min_length=1, max_length=100)
@@ -359,6 +360,11 @@ class WaveUpdate(VersionCommand):
     departure_year: int | None = Field(default=None, ge=1900, le=9998)
     arrival_week: int | None = Field(default=None, ge=1, le=53)
     arrival_year: int | None = Field(default=None, ge=1900, le=9998)
+    reason: str = Field(min_length=3)
+
+
+class WaveArchiveIn(VersionCommand):
+    archived: bool
     reason: str = Field(min_length=3)
 
 

@@ -7794,7 +7794,60 @@
           "Согласования и поставки"
         ],
         "summary": "List Waves",
+        "description": "Waves in use by default; the archive is a separate list and never offered for new work.",
         "operationId": "list_waves_api_v1_waves_get",
+        "parameters": [
+          {
+            "name": "archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Archived"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "plan",
+                    "work"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "open",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Open"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Q"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -7825,14 +7878,14 @@
         "summary": "Create Wave",
         "operationId": "create_wave_api_v1_waves_post",
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/WaveIn"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -7859,6 +7912,46 @@
       }
     },
     "/api/v1/waves/{wave_id}": {
+      "get": {
+        "tags": [
+          "Согласования и поставки"
+        ],
+        "summary": "Get Wave",
+        "operationId": "get_wave_api_v1_waves__wave_id__get",
+        "parameters": [
+          {
+            "name": "wave_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Wave Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      },
       "patch": {
         "tags": [
           "Согласования и поставки"
@@ -7882,6 +7975,58 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/WaveUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/waves/{wave_id}/archive": {
+      "post": {
+        "tags": [
+          "Согласования и поставки"
+        ],
+        "summary": "Archive Wave",
+        "operationId": "archive_wave_api_v1_waves__wave_id__archive_post",
+        "parameters": [
+          {
+            "name": "wave_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Wave Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaveArchiveIn"
               }
             }
           }
@@ -16576,6 +16721,39 @@
         ],
         "title": "VersionCommand"
       },
+      "WaveArchiveIn": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "archived": {
+            "type": "boolean",
+            "title": "Archived"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "version",
+          "archived",
+          "reason"
+        ],
+        "title": "WaveArchiveIn"
+      },
       "WaveBudgetIn": {
         "properties": {
           "idempotency_key": {
@@ -16719,6 +16897,15 @@
             "maxLength": 80,
             "title": "Number",
             "default": ""
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "work"
+            ],
+            "title": "Kind",
+            "default": "work"
           },
           "supplier_id": {
             "type": "string",
