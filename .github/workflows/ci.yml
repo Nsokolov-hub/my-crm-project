@@ -23,6 +23,10 @@ jobs:
         run: pip-audit -r backend/requirements-dev.lock
       - name: Check code style
         run: ruff check backend
+      - name: Check types
+        # Modules listed in backend/pyproject.toml still have known errors; all others must pass.
+        working-directory: backend
+        run: mypy app
       - name: Check that docs/openapi.json matches the code
         run: python3 scripts/export_openapi.py --check
       - name: Run backend SQLite tests

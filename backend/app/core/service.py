@@ -42,7 +42,7 @@ def advisory(db: Session, key: str) -> None:
         db.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': number})
 
 
-def lock(db: Session, model: type[T], entity_id: str) -> T:
+def lock(db: Session, model: type[T], entity_id: str | None) -> T:
     row = db.scalar(select(model).where(model.id == entity_id).with_for_update().execution_options(populate_existing=True))
     if row is None:
         raise DomainError('NOT_FOUND', 'Объект не найден или недоступен', 404)

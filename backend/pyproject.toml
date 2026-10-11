@@ -57,3 +57,27 @@ python_version = "3.13"
 ignore_missing_imports = true
 check_untyped_defs = true
 plugins = ["pydantic.mypy"]
+
+# Modules that still had type errors when CI started checking types (375 in total). Every other
+# module must pass; take a module off the list once it does, and do not add new ones.
+[[tool.mypy.overrides]]
+module = [
+    "app.analytics.routes",
+    "app.business.cashflow",
+    "app.business.routes",
+    "app.commerce.calculator",
+    "app.commerce.documents",
+    "app.commerce.financial",
+    "app.commerce.fulfillment",
+    "app.commerce.itemized",
+    "app.commerce.payments",
+    "app.commerce.procurement",
+    "app.commerce.schemas",
+    "app.communication.access",
+    "app.communication.routes",
+    "app.crm.imports",
+    "app.crm.routes",
+    "app.crm.schemas",
+    "app.crm.table_imports",
+]
+ignore_errors = true

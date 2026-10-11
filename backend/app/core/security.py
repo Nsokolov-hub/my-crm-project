@@ -5,7 +5,7 @@ from typing import Any
 from argon2 import PasswordHasher
 from cryptography.fernet import Fernet
 from fastapi import Depends, Request
-from sqlalchemy import and_, event, or_, select
+from sqlalchemy import and_, event, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -205,7 +205,7 @@ def task_predicate(db: Session, user: User) -> Any:
     if not scope:
         return False
         
-    base = True if scope == 'all' else or_(Task.assignee_id == user.id, Task.author_id == user.id)
+    base = true() if scope == 'all' else or_(Task.assignee_id == user.id, Task.author_id == user.id)
     
     req_pred = request_predicate(db, user)
     cli_pred = client_predicate(db, user)

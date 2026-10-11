@@ -92,7 +92,8 @@ class RequestAccess:
         return self.answers[key]
 
 
-def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict, access: RequestAccess | None = None) -> dict:
+def filter_calculation_snapshot(db, user, request_id: str | None, snapshot: dict,
+                                access: RequestAccess | None = None) -> dict:
     if not snapshot:
         return snapshot
     snapshot = deepcopy(snapshot)

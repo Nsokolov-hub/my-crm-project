@@ -2,7 +2,9 @@
 
 import os
 from collections.abc import Mapping
+from typing import cast
 
+import psycopg
 from psycopg import sql
 from sqlalchemy import create_engine
 
@@ -50,16 +52,19 @@ def init_roles(database_url: str | None = None, names: Mapping[str, str] | None 
 
     engine = create_engine(url, isolation_level="AUTOCOMMIT")
     try:
-        with engine.connect() as connection, connection.connection.dbapi_connection.cursor() as cursor:
-            for role, (_, grants) in ROLES.items():
-                name = sql.Identifier(names[role])
-                cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (names[role],))
-                statement = ("ALTER ROLE {} WITH LOGIN PASSWORD {}" if cursor.fetchone()
-                             else "CREATE ROLE {} WITH LOGIN PASSWORD {}")
-                # DDL cannot take bind parameters; psycopg quotes the literal safely instead.
-                cursor.execute(sql.SQL(statement).format(name, sql.Literal(passwords[role])))
-                for grant in grants:
-                    cursor.execute(sql.SQL(grant).format(role=name))
+        with engine.connect() as connection:
+            # Statements composed with psycopg.sql run on the driver connection itself.
+            driver = cast(psycopg.Connection, connection.connection.dbapi_connection)
+            with driver.cursor() as cursor:
+                for role, (_, grants) in ROLES.items():
+                    name = sql.Identifier(names[role])
+                    cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (names[role],))
+                    statement = ("ALTER ROLE {} WITH LOGIN PASSWORD {}" if cursor.fetchone()
+                                 else "CREATE ROLE {} WITH LOGIN PASSWORD {}")
+                    # DDL cannot take bind parameters; psycopg quotes the literal safely instead.
+                    cursor.execute(sql.SQL(statement).format(name, sql.Literal(passwords[role])))
+                    for grant in grants:
+                        cursor.execute(sql.SQL(grant).format(role=name))
     finally:
         engine.dispose()
     print("Database roles crm_api and crm_backup verified and updated.")

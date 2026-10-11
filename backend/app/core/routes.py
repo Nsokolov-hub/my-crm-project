@@ -66,7 +66,7 @@ def user_views(db: Session, users: list[User]) -> list[dict[str, Any]]:
     for user_id, role in db.execute(select(UserRole.user_id, Role).join(Role, Role.id == UserRole.role_id)
                                     .where(UserRole.user_id.in_(ids))):
         roles[user_id].append(role)
-    grants: dict[str, list[PermissionGrant]] = defaultdict(list)
+    grants: dict[str | None, list[PermissionGrant]] = defaultdict(list)
     for grant in db.scalars(select(PermissionGrant).where(PermissionGrant.user_id.in_(ids))):
         grants[grant.user_id].append(grant)
     preload_permissions(db, ids)
@@ -287,7 +287,7 @@ def users(
     require_permission(db, user, "admin.users")
     stmt = select(User).where(or_(User.name.ilike(f"%{q}%"), User.email.ilike(f"%{q}%")))
     result = paginate(db, stmt.order_by(User.name), page, page_size)
-    result["items"] = user_views(db, [db.get(User, row["id"]) for row in result["items"]])
+    result["items"] = user_views(db, [found for row in result["items"] if (found := db.get(User, row["id"]))])
     return result
 
 
@@ -401,7 +401,7 @@ def edit_user(
 def roles(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     rows = db.scalars(select(Role).order_by(Role.name)).all()
-    grants: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    grants: dict[str | None, list[dict[str, Any]]] = defaultdict(list)
     for g in db.scalars(select(PermissionGrant).where(PermissionGrant.role_id.in_([r.id for r in rows]))):
         grants[g.role_id].append({"code": g.code, "scope": g.scope, "allow": g.allow})
     return {
