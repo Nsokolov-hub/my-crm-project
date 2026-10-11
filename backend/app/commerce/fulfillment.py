@@ -5,10 +5,11 @@ from fastapi import APIRouter
 from sqlalchemy import select
 
 from app.commerce.recalculate import recalculate_fulfillment
-from app.core.db import utcnow
+from app.core.db import DB, utcnow
 from app.core.errors import DomainError, error
 from app.core.models import User
 from app.core.security import (
+    Actor,
     can,
     check_request,
     has_request_permission,
@@ -33,7 +34,7 @@ from .models import (
     WaveForecast,
 )
 from .payments import funding_for_execution
-from .procurement import DB, Actor, check_quote
+from .procurement import check_quote
 from .recalculate import recalculate_funding
 from .schemas import (
     AllocateWaveIn,

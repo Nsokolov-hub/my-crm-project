@@ -14,11 +14,11 @@ from app.business.common import calendar_visible
 from app.business.reviews import submit_review
 from app.commerce.files import workbook
 from app.commerce.models import CommercialDocument
-from app.commerce.procurement import DB, Actor
 from app.commerce.schemas import Command, Currency, Positive, VersionCommand
+from app.core.db import DB
 from app.core.errors import error
 from app.core.models import AppSetting
-from app.core.security import check_client, check_request, require_permission
+from app.core.security import Actor, check_client, check_request, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, plain, prefetch, serialize
 from app.crm.models import Counterparty
 

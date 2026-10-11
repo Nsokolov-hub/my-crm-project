@@ -2,7 +2,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,7 @@ from app.communication.models import Chat, ChatMember, FileRecord, Message, Mess
 from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
 from app.core.models import Notification, OutboxEvent, User
+from app.core.schemas import Input
 from app.core.security import (
     can,
     client_predicate,
@@ -33,10 +34,6 @@ from app.core.service import advisory, audit, check_version, idem, serialize
 from app.core.service import page as paginate
 
 router = APIRouter(tags=['Общение и файлы'])
-
-
-class Input(BaseModel):
-    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
 
 
 class ChatInput(Input):

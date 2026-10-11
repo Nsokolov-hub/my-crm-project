@@ -1,6 +1,6 @@
 import hashlib
 import secrets
-from typing import Any
+from typing import Annotated, Any
 
 from argon2 import PasswordHasher
 from cryptography.fernet import Fernet
@@ -245,3 +245,7 @@ def current_user(request: Request, db: Session = Depends(get_db, scope="function
             and any(can(db, user, p) for p in MFA_PRIVILEGED_PERMISSIONS)):
         raise DomainError('MFA_REQUIRED', 'Настройте двухфакторную защиту в профиле', 403)
     return user
+
+
+# Endpoint parameter for the signed-in user.
+Actor = Annotated[User, Depends(current_user)]

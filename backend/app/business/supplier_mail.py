@@ -6,12 +6,13 @@ from fastapi import APIRouter
 from pydantic import EmailStr, Field, TypeAdapter, ValidationError
 from sqlalchemy import select
 
-from app.commerce.procurement import DB, Actor, rfq_table, supplier
+from app.commerce.procurement import rfq_table, supplier
 from app.commerce.schemas import Command
 from app.core.config import settings
+from app.core.db import DB
 from app.core.errors import error
 from app.core.models import OutboxEvent
-from app.core.security import check_request, require_permission
+from app.core.security import Actor, check_request, require_permission
 from app.core.service import audit, idem, page, serialize
 from app.crm.models import RequestItem
 

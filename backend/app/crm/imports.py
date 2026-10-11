@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import DomainError
 from app.core.models import OutboxEvent, User
-from app.core.routes import Input
+from app.core.schemas import Input
 from app.core.security import can, check_client, client_predicate, current_user, require_permission
 from app.core.service import advisory, audit, idem, lock, serialize
 from app.core.service import page as paginate

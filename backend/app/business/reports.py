@@ -9,11 +9,11 @@ from sqlalchemy import select
 
 from app.commerce.calculator import dec, profitability_metrics
 from app.commerce.models import Calculation, CommercialDocument, Execution
-from app.commerce.procurement import DB, Actor
 from app.core.config import settings
+from app.core.db import DB
 from app.core.errors import error
 from app.core.models import User
-from app.core.security import request_predicate, require_permission
+from app.core.security import Actor, request_predicate, require_permission
 from app.core.service import plain
 from app.crm.models import Request as CRMRequest
 

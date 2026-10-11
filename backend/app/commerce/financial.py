@@ -8,8 +8,9 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app.core.config import settings
+from app.core.db import DB
 from app.core.errors import DomainError, error
-from app.core.security import can, check_request, has_request_permission, require_permission
+from app.core.security import Actor, can, check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.core.service import page as paginate
 from app.crm.models import (
@@ -41,7 +42,7 @@ from .models import (
     WaveAllocation,
     WaveForecast,
 )
-from .procurement import DB, Actor, check_quote, product_view, validate_quantity
+from .procurement import check_quote, product_view, validate_quantity
 from .schemas import CalculationIn, Expense, ExpenseTypeIn, ExpenseTypePatch, ProfileIn, Rate, RequestWaveIn
 
 router = APIRouter(tags=["Расчёты и настраиваемые профили"])

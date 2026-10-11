@@ -1,7 +1,9 @@
 from collections.abc import Generator
 from datetime import datetime, timezone
+from typing import Annotated
 from uuid import uuid4
 
+from fastapi import Depends
 from sqlalchemy import DateTime, Integer, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -49,3 +51,7 @@ def get_db() -> Generator[Session, None, None]:
         except Exception:
             session.rollback()
             raise
+
+
+# Endpoint parameter for the request's session; scope="function" commits before the response is sent.
+DB = Annotated[Session, Depends(get_db, scope="function")]

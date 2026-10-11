@@ -10,11 +10,11 @@ from sqlalchemy import or_, select
 from app.business.common import calendar_visible, managers
 from app.commerce.calculator import dec
 from app.commerce.models import Calculation, Execution
-from app.commerce.procurement import DB, Actor
 from app.commerce.schemas import VersionCommand
-from app.core.db import utcnow
+from app.core.db import DB, utcnow
 from app.core.errors import error
 from app.core.security import (
+    Actor,
     can,
     check_request,
     has_request_permission,

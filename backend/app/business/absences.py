@@ -6,12 +6,11 @@ from fastapi import APIRouter
 from pydantic import AwareDatetime, Field
 from sqlalchemy import select
 
-from app.commerce.procurement import DB, Actor
 from app.commerce.schemas import Command
-from app.core.db import utcnow
+from app.core.db import DB, utcnow
 from app.core.errors import error
 from app.core.models import User
-from app.core.security import require_permission
+from app.core.security import Actor, require_permission
 from app.core.service import advisory, audit, idem, notify, page, serialize
 
 from .models import EmployeeAbsence

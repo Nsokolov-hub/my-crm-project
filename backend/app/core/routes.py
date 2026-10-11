@@ -7,7 +7,7 @@ from typing import Any, Literal
 import pyotp
 from argon2.exceptions import VerificationError
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError
+from pydantic import EmailStr, Field, ValidationError
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,7 @@ from app.core.models import (
     User,
     UserRole,
 )
+from app.core.schemas import Input
 from app.core.security import (
     PERMISSIONS,
     cipher,
@@ -38,10 +39,6 @@ from app.core.service import page as paginate
 from app.core.settings_registry import SETTING_META
 
 router = APIRouter(tags=["Доступ и настройки"])
-
-
-class Input(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
 class LoginInput(Input):

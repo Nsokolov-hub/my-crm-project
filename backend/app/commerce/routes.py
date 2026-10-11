@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Query
 from sqlalchemy import select
 
-from app.core.security import request_predicate, require_permission
+from app.core.db import DB
+from app.core.security import Actor, request_predicate, require_permission
 from app.core.service import serialize
 from app.crm.models import Request as CRMRequest
 
 from . import documents, financial, fulfillment, payments, procurement
 from .models import Approval, CommercialDocument, Execution, Payment
-from .procurement import DB, Actor
 
 router = APIRouter()
 for domain in (procurement, financial, documents, payments, fulfillment):

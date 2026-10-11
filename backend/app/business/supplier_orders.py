@@ -15,10 +15,17 @@ from sqlalchemy import select
 from app.commerce.calculator import dec
 from app.commerce.files import workbook
 from app.commerce.models import Execution
-from app.commerce.procurement import DB, Actor, product_view, supplier
+from app.commerce.procurement import product_view, supplier
 from app.commerce.schemas import Command, VersionCommand
+from app.core.db import DB
 from app.core.errors import error
-from app.core.security import check_request, has_request_permission, request_predicate, require_permission
+from app.core.security import (
+    Actor,
+    check_request,
+    has_request_permission,
+    request_predicate,
+    require_permission,
+)
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.crm.models import Counterparty, Nomenclature, Packing, QuoteItem, Seller
 from app.crm.models import Request as CRMRequest
