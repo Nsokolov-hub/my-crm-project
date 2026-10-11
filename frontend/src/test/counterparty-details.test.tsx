@@ -100,7 +100,7 @@ describe('counterparty details', () => {
             details: {
               city: 'Казань',
               comment: 'Импортировано из XLSX',
-              'Банк': 'Тестовый банк',
+              Банк: 'Тестовый банк',
             },
           }),
         }),

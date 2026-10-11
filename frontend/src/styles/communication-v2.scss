@@ -164,7 +164,9 @@
   margin-top: 12px;
 }
 
-.message-compose-submit { margin-left: auto; }
+.message-compose-submit {
+  margin-left: auto;
+}
 
 .message-compose-hint {
   color: #808394;
@@ -172,10 +174,14 @@
   white-space: nowrap;
 }
 
-.message-compose-tools select { min-width: 150px; }
+.message-compose-tools select {
+  min-width: 150px;
+}
 
 @media (width <= 600px) {
-  .message-compose-actions { align-items: stretch; }
+  .message-compose-actions {
+    align-items: stretch;
+  }
 
   .message-compose-submit {
     width: 100%;
@@ -183,7 +189,9 @@
     margin-left: 0;
   }
 
-  .message-compose-hint { white-space: normal; }
+  .message-compose-hint {
+    white-space: normal;
+  }
 }
 
 .chat-placeholder {

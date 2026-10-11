@@ -169,12 +169,13 @@ export function ImportDialog({
       const clients: Record<string, Entity> = {};
       for (let offset = 0; offset < ids.length && !controller.signal.aborted; offset += 6) {
         const group = ids.slice(offset, offset + 6);
-        const results = await Promise.allSettled(group.map((id) =>
-          api<Entity>(`/counterparties/${id}`, { signal: controller.signal }),
-        ));
+        const results = await Promise.allSettled(
+          group.map((id) => api<Entity>(`/counterparties/${id}`, { signal: controller.signal })),
+        );
         results.forEach((result, index) => {
           const id = group[index];
-          clients[id] = result.status === 'fulfilled' ? result.value : { id, name: `Карточка ${id}` };
+          clients[id] =
+            result.status === 'fulfilled' ? result.value : { id, name: `Карточка ${id}` };
         });
       }
       if (!controller.signal.aborted) setCandidates((current) => ({ ...current, ...clients }));
@@ -186,11 +187,18 @@ export function ImportDialog({
   async function preview(e: React.FormEvent) {
     e.preventDefault();
     if (!file) return;
-    if (mode === 'calls' ? (!mapping.name?.trim() || !mapping.tax_id?.trim())
-      : (!mapping.name?.trim() && !mapping.contact?.trim())) {
-      setError(new Error(mode === 'calls'
-        ? 'Сопоставьте столбцы «Название» и «ИНН».'
-        : 'Сопоставьте колонку организации или контактного лица.'));
+    if (
+      mode === 'calls'
+        ? !mapping.name?.trim() || !mapping.tax_id?.trim()
+        : !mapping.name?.trim() && !mapping.contact?.trim()
+    ) {
+      setError(
+        new Error(
+          mode === 'calls'
+            ? 'Сопоставьте столбцы «Название» и «ИНН».'
+            : 'Сопоставьте колонку организации или контактного лица.',
+        ),
+      );
       return;
     }
     setBusy(true);
@@ -244,7 +252,7 @@ export function ImportDialog({
           row_id: row.id,
           action,
           match_id: action === 'update' ? value.slice('update:'.length) : null,
-        originalAction: row.action,
+          originalAction: row.action,
         };
       return { ...current, [batch.id]: choices };
     });
@@ -262,16 +270,21 @@ export function ImportDialog({
   if (!open) return null;
   const decisions = batch ? drafts[batch.id] || {} : {};
   const summary = { ...batch?.summary };
-  if (batch?.status === 'preview') Object.values(decisions).forEach((decision) => {
-    summary[decision.originalAction] = (summary[decision.originalAction] || 0) - 1;
-    summary[decision.action] = (summary[decision.action] || 0) + 1;
-  });
+  if (batch?.status === 'preview')
+    Object.values(decisions).forEach((decision) => {
+      summary[decision.originalAction] = (summary[decision.originalAction] || 0) - 1;
+      summary[decision.action] = (summary[decision.action] || 0) + 1;
+    });
   const unresolved = Math.max(0, summary.conflict || 0);
   const rows = batch?.rows || [];
   const total = batch?.summary.total || 0;
   const editable = batch?.status === 'preview' && !command.busy && !loading;
   return (
-    <Modal title={mode === 'calls' ? 'Импорт базы обзвона' : 'Импорт клиентской базы'} wide onClose={onClose}>
+    <Modal
+      title={mode === 'calls' ? 'Импорт базы обзвона' : 'Импорт клиентской базы'}
+      wide
+      onClose={onClose}
+    >
       <div className="form-body">
         <div className="tabs">
           <button
@@ -515,7 +528,14 @@ export function ImportDialog({
                 ]}
               />
             )}
-            <Pagination page={page} total={total} pageSize={pageSize} onChange={(next) => { if (!command.busy) setPage(next); }} />
+            <Pagination
+              page={page}
+              total={total}
+              pageSize={pageSize}
+              onChange={(next) => {
+                if (!command.busy) setPage(next);
+              }}
+            />
             <div className="inline-actions">
               <Button
                 variant="secondary"

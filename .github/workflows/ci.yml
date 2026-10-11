@@ -103,6 +103,8 @@ jobs:
         run: pnpm audit --prod
       - name: Audit development tooling (informational)
         run: pnpm audit || true
+      - name: Check formatting
+        run: pnpm run format:check
       - name: Check TypeScript
         run: pnpm run typecheck
       - name: Check ESLint
