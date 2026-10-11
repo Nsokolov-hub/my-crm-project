@@ -109,6 +109,8 @@ jobs:
         run: pnpm audit || true
       - name: Check formatting
         run: pnpm run format:check
+      - name: Check that the API types match docs/openapi.json
+        run: pnpm run api:types:check
       - name: Check TypeScript
         run: pnpm run typecheck
       - name: Check ESLint

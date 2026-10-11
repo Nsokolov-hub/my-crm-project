@@ -29,9 +29,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Login Api V1 Auth Login Post"
+                  "$ref": "#/components/schemas/SessionView"
                 }
               }
             }
@@ -64,9 +62,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Me Api V1 Auth Me Get"
+                  "$ref": "#/components/schemas/SessionView"
                 }
               }
             }
@@ -369,9 +365,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Users Api V1 Admin Users Get"
+                  "$ref": "#/components/schemas/UserPage"
                 }
               }
             }
@@ -412,9 +406,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Create User Api V1 Admin Users Post"
+                  "$ref": "#/components/schemas/UserView"
                 }
               }
             }
@@ -468,9 +460,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Edit User Api V1 Admin Users  Entity Id  Patch"
+                  "$ref": "#/components/schemas/UserView"
                 }
               }
             }
@@ -12977,6 +12967,29 @@
         ],
         "title": "GrantInput"
       },
+      "GrantView": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope"
+          },
+          "allow": {
+            "type": "boolean",
+            "title": "Allow"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "scope",
+          "allow"
+        ],
+        "title": "GrantView"
+      },
       "Input": {
         "properties": {},
         "additionalProperties": false,
@@ -15700,6 +15713,24 @@
         ],
         "title": "RoleInput"
       },
+      "RoleRef": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "RoleRef"
+      },
       "Selection": {
         "properties": {
           "quote_id": {
@@ -15959,6 +15990,32 @@
           "sent_at"
         ],
         "title": "SentIn"
+      },
+      "SessionView": {
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/UserView"
+          },
+          "csrf_token": {
+            "type": "string",
+            "title": "Csrf Token"
+          },
+          "permissions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Permissions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user",
+          "csrf_token",
+          "permissions"
+        ],
+        "title": "SessionView",
+        "description": "The signed-in user; the CSRF token goes into the X-CSRF-Token header of every command."
       },
       "SettingInput": {
         "properties": {
@@ -16275,6 +16332,37 @@
         ],
         "title": "UserInput"
       },
+      "UserPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UserView"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "page_size": {
+            "type": "integer",
+            "title": "Page Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "UserPage"
+      },
       "UserPatch": {
         "properties": {
           "version": {
@@ -16369,6 +16457,74 @@
           "reason"
         ],
         "title": "UserPatch"
+      },
+      "UserView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "own_requests_only": {
+            "type": "boolean",
+            "title": "Own Requests Only"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "mfa_enabled": {
+            "type": "boolean",
+            "title": "Mfa Enabled"
+          },
+          "roles": {
+            "items": {
+              "$ref": "#/components/schemas/RoleRef"
+            },
+            "type": "array",
+            "title": "Roles"
+          },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/GrantView"
+            },
+            "type": "array",
+            "title": "Grants"
+          },
+          "permissions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Permissions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "name",
+          "active",
+          "own_requests_only",
+          "version",
+          "mfa_enabled",
+          "roles",
+          "grants",
+          "permissions"
+        ],
+        "title": "UserView",
+        "description": "An employee with roles, personal grants and the effective scope of each permission."
       },
       "VerifyIn": {
         "properties": {

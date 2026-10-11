@@ -1,3 +1,4 @@
+import type { components } from './api-schema';
 export type Entity = { id: string; version?: number; created_at?: string; [key: string]: unknown };
 export type Page<T = Entity> = {
   items: T[];
@@ -8,7 +9,8 @@ export type Page<T = Entity> = {
 };
 export type User = Entity & { name: string; email: string; permissions?: Record<string, string> };
 export type Grant = { code: string; scope: string; allow: boolean };
-export type Session = { user: User; csrf_token: string; permissions?: Record<string, string> };
+/** The signed-in user, as typed by the API contract (docs/openapi.json → api-schema.d.ts). */
+export type Session = components['schemas']['SessionView'];
 export type RequestEntity = Entity & {
   title: string;
   number?: string;

@@ -56,6 +56,8 @@ pnpm --dir frontend test
 pnpm --dir frontend build
 ```
 
+Контракт API описан в `docs/openapi.json`, его пересобирает `python3 scripts/export_openapi.py`. Типы TypeScript для фронтенда генерируются из него командой `pnpm --dir frontend run api:types` в `frontend/src/lib/api-schema.d.ts`. CI проверяет, что код, документ и типы совпадают. Модели ответов (`response_model`) пока описаны для сессии и пользователей; остальные эндпоинты типизируются по мере перевода на них.
+
 Зависимости backend перечислены в `backend/pyproject.toml`: рабочие — в `[project].dependencies`, инструменты тестов и проверок — в группе `dev`. Точные версии закреплены в `backend/requirements.lock` (его ставит Docker-образ) и `backend/requirements-dev.lock` (те же версии плюс инструменты). После изменения `pyproject.toml` выполните `python3 scripts/lock_backend.py` в окружении разработки; CI проверяет актуальность файлов флагом `--check`.
 
 Тесты с маркером `postgres` требуют отдельной тестовой PostgreSQL-базы. Весь обычный набор тоже можно прогнать на PostgreSQL: задайте `TEST_DATABASE_URL=postgresql+psycopg://…` — каждый тест получит собственную схему, как в CI. Тесты с маркером `integration` требуют выделенной среды для проверки восстановления, переноса истории или worker; они не входят в короткий цикл проверки повседневной CRM.

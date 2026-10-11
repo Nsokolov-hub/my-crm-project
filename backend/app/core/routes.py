@@ -23,7 +23,7 @@ from app.core.models import (
     User,
     UserRole,
 )
-from app.core.schemas import Input
+from app.core.schemas import Input, SessionView, UserPage, UserView
 from app.core.security import (
     PERMISSIONS,
     cipher,
@@ -88,7 +88,7 @@ def user_view(db: Session, user: User) -> dict[str, Any]:
     return user_views(db, [user])[0]
 
 
-@router.post("/auth/login")
+@router.post("/auth/login", response_model=SessionView)
 def login(
     body: LoginInput, request: Request, response: Response, db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
@@ -157,7 +157,7 @@ def login(
     return {"user": view, "csrf_token": csrf, "permissions": view["permissions"]}
 
 
-@router.get("/auth/me")
+@router.get("/auth/me", response_model=SessionView)
 def me(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     data = user_view(db, user)
     return {
@@ -273,7 +273,7 @@ def permissions(user: User = Depends(current_user), db: Session = Depends(get_db
     return {"items": [{"code": k, "name": v} for k, v in PERMISSIONS.items()]}
 
 
-@router.get("/admin/users")
+@router.get("/admin/users", response_model=UserPage)
 def users(
     page: int = 1,
     page_size: int = 25,
@@ -312,7 +312,7 @@ def assign_grants(
     db.flush()
 
 
-@router.post("/admin/users", status_code=201)
+@router.post("/admin/users", status_code=201, response_model=UserView)
 def create_user(
     body: UserInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
@@ -328,7 +328,7 @@ def create_user(
     return user_view(db, row)
 
 
-@router.patch("/admin/users/{entity_id}")
+@router.patch("/admin/users/{entity_id}", response_model=UserView)
 def edit_user(
     entity_id: str, body: UserPatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
