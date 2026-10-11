@@ -4,6 +4,7 @@ All monetary inputs and outputs are Decimal strings. A saved result contains
 the complete inputs and intermediate amounts needed to reproduce its result.
 """
 
+from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_CEILING, Decimal, localcontext
 
@@ -17,7 +18,8 @@ def _money(value: Decimal, rounding: str) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUNDING[rounding])
 
 
-def _string(value: Decimal) -> str:
+# An empty sum stays the integer 0, which saved results render as "0.000000".
+def _string(value: Decimal | int) -> str:
     return format(value, "f")
 
 
@@ -106,7 +108,7 @@ def validate_itemized_profile(profile: dict) -> None:
     brackets = profile.get("customs_fee_brackets") or []
     if not brackets:
         error("CUSTOMS_FEE_BRACKET_REQUIRED", "Настройте диапазоны таможенного сбора", field="customs_fee_brackets")
-    normalized = []
+    normalized: list[tuple[Decimal, Decimal | None, date | None, date | None]] = []
     for bracket in brackets:
         if not isinstance(bracket, dict) or not {"from_amount", "to_amount", "fee"} <= bracket.keys():
             error("INVALID_BRACKET", "Для диапазона укажите начало, конец и сбор", field="customs_fee_brackets")
@@ -205,68 +207,118 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     if len(all_ids) != len(set(all_ids)):
         error("DUPLICATE_SELECTION", "Позиция квоты выбрана повторно", field="selections")
     fx = _rate_map(rates, selections)
-    selected_ids = set(ids)
-    rows = []
-    for index, selection in enumerate([*selections, *wave_existing_selections]):
-        quote = selection["quote_item"]
-        name = selection["nomenclature"]["name"]
-        packing = selection["packing"]["display_name"]
-        currency = selection["currency_code"]
-        group = selection["product_group"]["slug"]
-        mode = selection.get('calculation_type', 'IMPORT')
-        if mode not in ('IMPORT', 'DAP', 'RUSSIA'):
-            error('SUPPLIER_CALCULATION_TYPE', 'В карточке поставщика указан неизвестный тип расчёта')
-        if mode == 'RUSSIA' and currency != 'RUB':
-            error('RUSSIA_CURRENCY', 'Для перепродажи внутри РФ закупка должна быть в RUB')
-        quantity = dec(quote["quantity"])
-        price = dec(quote["unit_price"])
-        if quantity <= 0 or price < 0:
-            error("QUOTE_PRICE", f"Проверьте цену и количество позиции {name} {packing}", field=f"selections.{index}")
-        coefficient = dec(selection.get("markup_coefficient") or profile.get("default_markup_coefficient", "1.5"))
-        bonus_coefficient = dec(selection.get("bonus_coefficient") or profile.get("default_bonus_coefficient", "1"))
-        if coefficient < 1:
-            error("MARKUP", f"Наценка позиции {name} {packing} должна быть не меньше 1", field=f"selections.{index}.markup_coefficient")
-        if bonus_coefficient < 1:
-            error("BONUS", f"Бонус позиции {name} {packing} должен быть не меньше 1", field=f"selections.{index}.bonus_coefficient")
-        foreign = price * quantity
-        exchange_rate = dec(selection.get("_exchange_rate", fx.get(currency, "1")))
-        purchase_rub = dec(selection["_purchase_rub"]) if "_purchase_rub" in selection else _money(foreign * exchange_rate, rounding)
-        rows.append({
-            "id": quote["id"], "source": selection, "quantity": quantity, "weight": dec(selection.get("weight") or "0"),
-            "currency": currency, "group": group, "markup_coefficient": coefficient,
-            'calculation_type': mode,
-            "bonus_coefficient": bonus_coefficient,
-            "purchase_foreign": foreign, "exchange_rate": exchange_rate,
-            "purchase_rub": purchase_rub,
-            "international_logistics": Decimal("0"), "general_expenses": Decimal("0"),
-            "domestic_logistics": Decimal("0"), "client_delivery": Decimal("0"),
-            "cash_expenses": Decimal("0"),
-            "duty": Decimal("0"), "customs_fee": Decimal("0"),
-            "expense_details": {},
-        })
+    rows = [_position(profile, selection, index, fx, rounding)
+            for index, selection in enumerate([*selections, *wave_existing_selections])]
+    wave = _Wave(rows, set(ids), wave_existing_quantity, wave_existing_components)
+    ledger = _ExpenseLedger(wave, fx, rounding)
 
-    allocations = []
-    selected_rows = [row for row in rows if row["id"] in selected_ids]
-    selected_quantity = sum(row["quantity"] for row in selected_rows)
-    forecast_quantity = sum(row["quantity"] for row in rows if row["source"].get("_forecast"))
-    peer_quantity = sum(row["quantity"] for row in rows if row["id"] not in selected_ids)
-    wave_total_quantity = selected_quantity + peer_quantity + wave_existing_quantity
-    existing = {key: dec(wave_existing_components.get(key, "0")) for key in (
-        "purchase_rub", "international_logistics", "duty", "customs_fee", "general_expenses"
-    )}
-    if any(value < 0 for value in existing.values()):
-        error("WAVE_BASIS", "Основание расходов ранее принятых позиций не может быть отрицательным")
+    names = [expense["name"].strip() for expense in expenses]
+    if any(not name for name in names) or len(names) != len(set(names)):
+        error("EXPENSE_NAME", "Названия расходов должны быть непустыми и уникальными", field="expenses")
+    # International logistics enters the customs value, so it is spread before duty and the fee.
+    for expense in expenses:
+        if expense.get("stage", "GENERAL") == "INTERNATIONAL_LOGISTICS":
+            ledger.apply(expense)
+    rules = _apply_customs_duty(profile, rows, rounding)
+    fee = _apply_customs_fee(profile, wave, rounding)
+    for expense in expenses:
+        if expense.get("stage", "GENERAL") != "INTERNATIONAL_LOGISTICS":
+            ledger.apply(expense)
 
-    def shared_by_quantity(amount: Decimal) -> tuple[dict[str, Decimal], Decimal]:
+    terms = _pricing_terms(profile, payment_terms, internal_adjustment, wave.selected_rows, rounding)
+    wave_lines = [_priced_line(row, profile, rules, terms, wave.selected_ids, rounding) for row in rows]
+    output = [line for line in wave_lines if line["line_id"] in wave.selected_ids]
+    return {
+        "lines": output, "totals": _totals(output), "currency": "RUB", "management_currency": "RUB",
+        "expense_allocations": ledger.allocations, "rates": rates, "profile": profile,
+        "wave_distribution": _wave_distribution(wave, wave_lines, fee),
+        "internal_adjustment": internal_adjustment,
+        "payment_terms": {**payment_terms, "deferred_start_event": terms.start_event},
+        "algorithm_version": "itemized-v2",
+    }
+
+
+def _position(profile, selection, index, fx, rounding) -> dict:
+    """A selected or earlier position of the wave with its purchase in RUB and empty cost buckets."""
+    quote = selection["quote_item"]
+    name = selection["nomenclature"]["name"]
+    packing = selection["packing"]["display_name"]
+    currency = selection["currency_code"]
+    group = selection["product_group"]["slug"]
+    mode = selection.get('calculation_type', 'IMPORT')
+    if mode not in ('IMPORT', 'DAP', 'RUSSIA'):
+        error('SUPPLIER_CALCULATION_TYPE', 'В карточке поставщика указан неизвестный тип расчёта')
+    if mode == 'RUSSIA' and currency != 'RUB':
+        error('RUSSIA_CURRENCY', 'Для перепродажи внутри РФ закупка должна быть в RUB')
+    quantity = dec(quote["quantity"])
+    price = dec(quote["unit_price"])
+    if quantity <= 0 or price < 0:
+        error("QUOTE_PRICE", f"Проверьте цену и количество позиции {name} {packing}", field=f"selections.{index}")
+    coefficient = dec(selection.get("markup_coefficient") or profile.get("default_markup_coefficient", "1.5"))
+    bonus_coefficient = dec(selection.get("bonus_coefficient") or profile.get("default_bonus_coefficient", "1"))
+    if coefficient < 1:
+        error("MARKUP", f"Наценка позиции {name} {packing} должна быть не меньше 1", field=f"selections.{index}.markup_coefficient")
+    if bonus_coefficient < 1:
+        error("BONUS", f"Бонус позиции {name} {packing} должен быть не меньше 1", field=f"selections.{index}.bonus_coefficient")
+    foreign = price * quantity
+    exchange_rate = dec(selection.get("_exchange_rate", fx.get(currency, "1")))
+    purchase_rub = dec(selection["_purchase_rub"]) if "_purchase_rub" in selection else _money(foreign * exchange_rate, rounding)
+    return {
+        "id": quote["id"], "source": selection, "quantity": quantity, "weight": dec(selection.get("weight") or "0"),
+        "currency": currency, "group": group, "markup_coefficient": coefficient,
+        'calculation_type': mode,
+        "bonus_coefficient": bonus_coefficient,
+        "purchase_foreign": foreign, "exchange_rate": exchange_rate,
+        "purchase_rub": purchase_rub,
+        "international_logistics": Decimal("0"), "general_expenses": Decimal("0"),
+        "domestic_logistics": Decimal("0"), "client_delivery": Decimal("0"),
+        "cash_expenses": Decimal("0"),
+        "duty": Decimal("0"), "customs_fee": Decimal("0"),
+        "expense_details": {},
+    }
+
+
+class _Wave:
+    """The positions of the calculation, the rest of the supply wave and what earlier ones already carry.
+
+    `existing` holds the cost basis of positions accepted earlier; it grows with their shares of the
+    expenses and of the customs fee as these are spread.
+    """
+
+    def __init__(self, rows, selected_ids, existing_quantity, existing_components):
+        self.rows, self.selected_ids, self.existing_quantity = rows, selected_ids, existing_quantity
+        self.selected_rows = [row for row in rows if row["id"] in selected_ids]
+        self.selected_quantity = sum(row["quantity"] for row in self.selected_rows)
+        self.forecast_quantity = sum(row["quantity"] for row in rows if row["source"].get("_forecast"))
+        peer_quantity = sum(row["quantity"] for row in rows if row["id"] not in selected_ids)
+        self.total_quantity = self.selected_quantity + peer_quantity + existing_quantity
+        self.existing = {key: dec(existing_components.get(key, "0")) for key in (
+            "purchase_rub", "international_logistics", "duty", "customs_fee", "general_expenses"
+        )}
+        if any(value < 0 for value in self.existing.values()):
+            error("WAVE_BASIS", "Основание расходов ранее принятых позиций не может быть отрицательным")
+
+
+class _ExpenseLedger:
+    """Spreads the deal expenses over the positions and keeps the record of every allocation."""
+
+    def __init__(self, wave: _Wave, fx: dict[str, Decimal], rounding: str):
+        self.wave, self.fx, self.rounding = wave, fx, rounding
+        self.allocations: list[dict] = []
+
+    def shared_by_quantity(self, amount: Decimal) -> tuple[dict[str, Decimal], Decimal]:
+        rows = self.wave.rows
         bases = {row["id"]: row["quantity"] for row in rows}
-        if wave_existing_quantity:
-            bases["__wave_existing__"] = wave_existing_quantity
-        parts = distribute(amount, bases, Decimal("0.01"), rounding)
+        if self.wave.existing_quantity:
+            bases["__wave_existing__"] = self.wave.existing_quantity
+        parts = distribute(amount, bases, Decimal("0.01"), self.rounding)
         return ({row["id"]: parts[row["id"]] for row in rows},
                 parts.get("__wave_existing__", Decimal("0")))
 
-    def expense_basis(kind, include_wave=False):
-        basis_rows = rows if include_wave else selected_rows
+    def basis(self, kind, include_wave=False):
+        """Base of a percentage expense, as accumulated so far."""
+        existing = self.wave.existing
+        basis_rows = self.wave.rows if include_wave else self.wave.selected_rows
         if kind == "PURCHASE":
             return sum(row["purchase_rub"] for row in basis_rows) + (existing["purchase_rub"] if include_wave else 0)
         if kind == "CUSTOMS_BASE":
@@ -281,7 +333,9 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             )
         error("PERCENT_BASE_REQUIRED", "Для процентного расхода выберите базу начисления", field="expenses")
 
-    def apply_expense(expense):
+    def apply(self, expense):
+        fx, rounding, wave = self.fx, self.rounding, self.wave
+        rows, selected_ids = wave.rows, wave.selected_ids
         name = expense["name"].strip()
         currency = expense.get("currency", "RUB")
         if currency not in fx:
@@ -294,7 +348,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         if kind in ("FIXED", "MANUAL"):
             amount = _money(dec(expense.get("amount", "0")) * fx[currency], rounding)
         elif kind == "PERCENTAGE":
-            basis = expense_basis(expense.get("percent_base"), include_wave=wave_scope)
+            basis = self.basis(expense.get("percent_base"), include_wave=wave_scope)
             calculation_basis = basis
             amount = _money(basis * dec(expense.get("amount", "0")) / 100, rounding)
             minimum = dec(expense.get("minimum_amount", "0"))
@@ -304,7 +358,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             if minimum:
                 amount = max(amount, _money(minimum * fx[minimum_currency], rounding))
         elif kind == "BRACKET":
-            basis = expense_basis(expense.get("percent_base"), include_wave=wave_scope)
+            basis = self.basis(expense.get("percent_base"), include_wave=wave_scope)
             calculation_basis = basis
             amount = _money(_bracket_amount(expense.get("brackets") or [], basis, field="expenses") * fx[currency], rounding)
         else:
@@ -312,9 +366,9 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         if amount < 0:
             error("EXPENSE_AMOUNT", f"Расход {name} не может быть отрицательным", field="expenses")
         if shared:
-            parts, existing_share = shared_by_quantity(amount)
+            parts, existing_share = self.shared_by_quantity(amount)
         else:
-            parts = _allocation(amount, rows if wave_scope else selected_rows, method, expense.get("manual") or {}, rounding)
+            parts = _allocation(amount, rows if wave_scope else wave.selected_rows, method, expense.get("manual") or {}, rounding)
             existing_share = Decimal("0")
         stage = expense.get("stage", "GENERAL")
         for row in rows:
@@ -331,26 +385,22 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
                     row["client_delivery"] += part
         if expense.get("include_in_cost", True):
             key = "international_logistics" if stage == "INTERNATIONAL_LOGISTICS" else "general_expenses"
-            existing[key] += existing_share
-        allocations.append({
+            wave.existing[key] += existing_share
+        self.allocations.append({
             "name": name, "calculation_type": kind, "method": method,
             "stage": stage, "scope": expense.get("scope", "WAVE"), "amount": _string(amount),
             "currency": currency, "parts": {key: _string(value) for key, value in parts.items() if key in selected_ids},
             "wave_parts": {key: _string(value) for key, value in parts.items()},
             "existing_wave_share": _string(existing_share + sum(value for key, value in parts.items() if key not in selected_ids)),
-            "wave_total_quantity": _string(wave_total_quantity),
-            "distribution_quantity": _string(wave_total_quantity if wave_scope else selected_quantity),
+            "wave_total_quantity": _string(wave.total_quantity),
+            "distribution_quantity": _string(wave.total_quantity if wave_scope else wave.selected_quantity),
             "basis": expense.get("basis", ""), "percent_base": expense.get("percent_base"),
             "calculation_basis": _string(calculation_basis) if calculation_basis is not None else None,
         })
 
-    names = [expense["name"].strip() for expense in expenses]
-    if any(not name for name in names) or len(names) != len(set(names)):
-        error("EXPENSE_NAME", "Названия расходов должны быть непустыми и уникальными", field="expenses")
-    for expense in expenses:
-        if expense.get("stage", "GENERAL") == "INTERNATIONAL_LOGISTICS":
-            apply_expense(expense)
 
+def _apply_customs_duty(profile, rows, rounding) -> dict:
+    """Customs value and duty of every position by its product group rule; returns the rules by group."""
     rules = {rule["product_group_slug"]: rule for rule in profile["customs_rules"]}
     groups = {row["group"] for row in rows if row["calculation_type"] == "IMPORT"}
     missing = groups - rules.keys()
@@ -383,18 +433,24 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
             row['duty'] = _money(row['purchase_rub'] * Decimal('0.05'), rounding)
         elif row['calculation_type'] == 'RUSSIA':
             row['duty'] = Decimal('0')
+    return rules
+
+
+def _apply_customs_fee(profile, wave: _Wave, rounding) -> dict:
+    """Customs fee: the scale on the customs value of the whole wave plus the fixed fees of special groups."""
+    rows, existing = wave.rows, wave.existing
     import_rows = [row for row in rows if row['calculation_type'] == 'IMPORT']
     customs_basis = sum((row['customs_base'] for row in import_rows), Decimal('0')) + existing['purchase_rub'] + existing['international_logistics']
     overrides = {rule['product_group_slug']: dec(rule['amount']) for rule in profile.get('customs_fee_overrides', [])}
-    if wave_existing_quantity and overrides:
+    if wave.existing_quantity and overrides:
         error('WAVE_BASIS_REQUIRED', 'Для двух видов сбора нужен состав всех позиций волны с товарными группами')
     ordinary_rows = [row for row in import_rows if row['group'] not in overrides]
     ordinary_basis = sum((row['customs_base'] for row in ordinary_rows), Decimal('0')) + existing['purchase_rub'] + existing['international_logistics']
     bracket_fee = (_money(_bracket_amount(profile['customs_fee_brackets'], _money(ordinary_basis, rounding), field='customs_fee_brackets'), rounding)
-                   if ordinary_rows or wave_existing_quantity else Decimal('0'))
+                   if ordinary_rows or wave.existing_quantity else Decimal('0'))
     fee_bases = {row['id']: row['quantity'] for row in ordinary_rows}
-    if wave_existing_quantity:
-        fee_bases['__wave_existing__'] = wave_existing_quantity
+    if wave.existing_quantity:
+        fee_bases['__wave_existing__'] = wave.existing_quantity
     parts = distribute(bracket_fee, fee_bases, Decimal('0.01'), rounding) if fee_bases else {}
     fixed_fee = Decimal('0')
     fixed_parts = {}
@@ -407,7 +463,6 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         group_parts = distribute(amount, {row['id']: row['quantity'] for row in group_rows}, Decimal('0.01'), rounding)
         parts.update(group_parts)
         fixed_parts.update(group_parts)
-    fee = bracket_fee + fixed_fee
     fee_parts = {row['id']: parts.get(row['id'], Decimal('0')) for row in rows}
     existing_fee_share = parts.get('__wave_existing__', Decimal('0'))
     existing["customs_fee"] += existing_fee_share
@@ -415,10 +470,29 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         row["customs_fee"] = fee_parts[row["id"]]
         row['customs_fee_1'] = Decimal('0') if row['id'] in fixed_parts else row['customs_fee']
         row['customs_fee_2'] = fixed_parts.get(row['id'], Decimal('0'))
-    for expense in expenses:
-        if expense.get("stage", "GENERAL") != "INTERNATIONAL_LOGISTICS":
-            apply_expense(expense)
+    return {"customs_basis": customs_basis, "ordinary_basis": ordinary_basis, "bracket_fee": bracket_fee,
+            "fixed_fee": fixed_fee, "fee": bracket_fee + fixed_fee, "existing_fee_share": existing_fee_share}
 
+
+@dataclass(frozen=True)
+class _Terms:
+    """Tax, client payment terms, financing and the internal commission of one calculation."""
+
+    vat_rate: Decimal
+    deduct_vat: bool
+    deferred: Decimal
+    days: int
+    start_event: str | None
+    annual_rate: Decimal
+    day_basis: Decimal
+    adjustment_enabled: bool
+    adjustment_type: str
+    adjustment_value: Decimal
+    service_percent: Decimal
+    fixed_adjustment: dict
+
+
+def _pricing_terms(profile, payment_terms, internal_adjustment, selected_rows, rounding) -> _Terms:
     vat_rate = dec(profile.get("vat_rate", "22")) / 100
     deduct_vat = bool(profile.get("vat_deduction_mode", True))
     prepayment = dec(payment_terms.get("prepayment_percent", "100"))
@@ -445,142 +519,149 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     fixed_adjustment = {}
     if adjustment_enabled and adjustment_type == "FIXED":
         fixed_adjustment = _allocation(_money(adjustment_value, rounding), selected_rows, "BY_QUANTITY", {}, rounding)
+    return _Terms(vat_rate, deduct_vat, deferred, days, start_event, annual_rate, day_basis, adjustment_enabled,
+                  adjustment_type, adjustment_value, service_percent, fixed_adjustment)
 
-    output = []
-    for row in rows:
-        source = row["source"]
-        quote = source["quote_item"]
-        qty = row["quantity"]
-        mode = row['calculation_type']
-        import_vat_base = row["customs_base"] + row["duty"] if mode == "IMPORT" else Decimal("0")
-        incoming_vat = _money(import_vat_base * vat_rate, rounding)
-        expenses_total = row["international_logistics"] + row["general_expenses"] + row["customs_fee"]
-        clean_cost = row["customs_base"] + row["duty"] + (Decimal("0") if deduct_vat else incoming_vat)
-        if mode == 'DAP':
-            clean_cost = _money((row['purchase_rub'] + row['duty']) * (Decimal('1') + vat_rate), rounding) + row['international_logistics']
-        elif mode == 'RUSSIA':
-            clean_cost = row['purchase_rub']
-        markup_base = (import_vat_base if mode == "IMPORT" else
-                       clean_cost + (row["general_expenses"] if mode == "DAP" else Decimal("0")))
-        cost_after_markup = markup_base * row["markup_coefficient"]
-        cost_before_financing = clean_cost + row["general_expenses"] + row["customs_fee"]
-        if mode == 'RUSSIA':
-            cost_before_financing += row['international_logistics']
-        financed_amount = _money(cost_before_financing * deferred / 100, rounding)
-        financing_cost = _money(financed_amount * annual_rate * Decimal(days) / day_basis, rounding)
-        cost_before_adjustment = cost_before_financing + financing_cost
-        # Import markup covers customs value and duty. Non-deductible VAT and
-        # delivery/shared expenses are recharged afterwards without markup.
-        pre_bonus_sale_net = (
-            cost_after_markup + (clean_cost - markup_base if mode == "IMPORT" else Decimal("0"))
-            + (row["general_expenses"] if mode != "DAP" else Decimal("0")) + row["customs_fee"] + financing_cost
-        )
-        if mode == 'RUSSIA':
-            pre_bonus_sale_net += row['international_logistics']
-        # A line bonus is authoritative. The old request-wide bonus remains a
-        # fallback for clients that have not migrated to the per-line editor.
-        internal_bonus = _money(pre_bonus_sale_net * (row["bonus_coefficient"] - 1), rounding)
-        if adjustment_enabled and row["id"] in selected_ids and row["bonus_coefficient"] == 1:
-            if adjustment_type == "PERCENTAGE":
-                internal_bonus += _money(pre_bonus_sale_net * adjustment_value / 100, rounding)
-            elif adjustment_type == "MULTIPLIER":
-                if adjustment_value < 1:
-                    error("INTERNAL_ADJUSTMENT", "Внутренний множитель должен быть не меньше 1", field="internal_adjustment")
-                internal_bonus += _money(pre_bonus_sale_net * (adjustment_value - 1), rounding)
-            else:
-                internal_bonus += fixed_adjustment[row["id"]]
-        withdrawal_percent = dec(profile.get("bonus_withdrawal_percent", "16"))
-        bonus_withdrawal_fee = _money(internal_bonus * withdrawal_percent / 100, rounding)
-        additional_service_fee = (
-            _money(cost_before_adjustment * service_percent / 100, rounding)
-            if adjustment_enabled and row["id"] in selected_ids else Decimal("0")
-        )
-        service_fee = bonus_withdrawal_fee + additional_service_fee
-        cost = cost_before_adjustment + internal_bonus + service_fee
-        sale_net = _money(pre_bonus_sale_net + internal_bonus + service_fee, rounding)
-        if profile.get("round_sale_up_to_ruble", True):
-            unit_gross = (sale_net / qty * (Decimal("1") + vat_rate)).to_integral_value(rounding=ROUND_CEILING)
-            sale_total = _money(unit_gross * qty, rounding)
-            # The rounded gross price remains taxable in full, including the
-            # rounding increment. Extract VAT instead of treating it as VAT.
-            sale_tax = _money(sale_total * vat_rate / (Decimal("1") + vat_rate), rounding)
-            sale_net = sale_total - sale_tax
-        else:
-            sale_tax = _money(sale_net * vat_rate, rounding)
-            sale_total = sale_net + sale_tax
-            unit_gross = sale_total / qty
-        profit = sale_net - cost
-        vat_payable = max(Decimal("0"), sale_tax - (incoming_vat if deduct_vat else Decimal("0")))
-        cash_need = row["purchase_rub"] + row["cash_expenses"] + row["customs_fee"] + row["duty"] + incoming_vat + financing_cost + internal_bonus + service_fee
-        if mode == 'DAP':
-            cash_need += _money((row['purchase_rub'] + row['duty']) * vat_rate, rounding)
-        detail = {
-            "purchase_foreign": row["purchase_foreign"], "exchange_rate": row["exchange_rate"],
-            "purchase_rub": row["purchase_rub"], "international_logistics": row["international_logistics"],
-            "domestic_logistics": row["domestic_logistics"], "client_delivery": row["client_delivery"],
-            "domestic_logistics_total": row["domestic_logistics"] + row["client_delivery"],
-            "customs_base": row["customs_base"], "duty": row["duty"], "customs_fee": row["customs_fee"],
-            "duty_per_unit": row["duty"] / qty,
-            "customs_fee_per_unit": row["customs_fee"] / qty,
-            'customs_fee_1': row['customs_fee_1'], 'customs_fee_2': row['customs_fee_2'],
-            "fixed_group_quantity": row.get("fixed_group_quantity", Decimal("0")),
-            "general_expenses": row["general_expenses"], "expenses_total": expenses_total,
-            "cash_expenses": row["cash_expenses"],
-            "import_vat_base": import_vat_base, "import_vat": incoming_vat,
-            "import_cost_with_vat": import_vat_base + incoming_vat,
-            "cost_before_financing": cost_before_financing,
-            "financed_amount": financed_amount, "financing_cost": financing_cost,
-            "clean_cost": clean_cost, "pre_bonus_sale_net": pre_bonus_sale_net,
-            "cost_before_adjustment": cost_before_adjustment, "internal_bonus": internal_bonus,
-            "bonus_coefficient": row["bonus_coefficient"],
-            "bonus_withdrawal_percent": withdrawal_percent,
-            "bonus_withdrawal_fee": bonus_withdrawal_fee,
-            "additional_service_fee": additional_service_fee,
-            "service_fee": service_fee, "cost": cost, "markup_coefficient": row["markup_coefficient"],
-            "markup_base": markup_base, "cost_after_markup": cost_after_markup,
-            "markup_amount": markup_base * (row["markup_coefficient"] - 1),
-            "sale_net": sale_net, "sale_tax": sale_tax,
-            "sale_total": sale_total, "profit": profit, "vat_payable": vat_payable,
-            "cash_need": cash_need, "sale_unit_gross": unit_gross,
-            **profitability_metrics(profit, sale_net, cost),
-            "expense_share_percent": expenses_total / cost * 100 if cost else Decimal("0"),
-            "investment_efficiency_percent": profit / cash_need * 100 if cash_need else Decimal("0"),
-        }
-        name = source["nomenclature"]["name"]
-        packing = source["packing"]["display_name"]
-        output.append({
-            "line_id": row["id"], "item_id": quote.get("source_request_item_id"),
-            "quote_item_id": row["id"], "quote_id": quote["quote_id"],
-            "product": {
-                "name": name, "article": source["nomenclature"].get("article"),
-                "manufacturer": source["nomenclature"].get("manufacturer"),
-                "cas": source["nomenclature"].get("cas"), "packaging": packing,
-            },
-            "description": f"{name} {packing}", "packing": packing,
-            "supplier_id": quote["supplier_id"], "product_group": source["product_group"],
-            "supplier_name": source.get("supplier_name"),
-            'calculation_type': mode,
-            "customs_rule": rules[row["group"]] if mode == "IMPORT" else {"type": "PERCENTAGE" if mode == "DAP" else "NONE", "value": "5" if mode == "DAP" else "0"},
-            "quantity": _string(qty), "unit": "pcs", "purchase_currency": row["currency"],
-            "delivery_days": quote.get("delivery_days"),
-            "net": _string(sale_net), "tax": _string(sale_tax), "total": _string(sale_total),
-            "unit_price": _string(unit_gross.quantize(Decimal("0.00000001"), rounding=ROUNDING[rounding])),
-            "tax_category": profile.get("tax_category") or "НДС",
-            "detail": {key: _string(value) for key, value in detail.items()},
-            "expense_details": {key: _string(value) for key, value in row["expense_details"].items()},
-            "quote_item": quote,
-        })
-    total_keys = (
-        "purchase_rub", "international_logistics", "customs_base", "duty", "clean_cost", "pre_bonus_sale_net",
-        "domestic_logistics", "client_delivery", "domestic_logistics_total",
-        "customs_fee", "customs_fee_1", "customs_fee_2", "general_expenses", "expenses_total", "cash_expenses", "import_vat_base", "import_vat", "import_cost_with_vat", "cost_before_financing",
-        "financed_amount", "financing_cost", "internal_bonus", "service_fee", "cost", "markup_amount",
-        "markup_base", "cost_after_markup",
-        "sale_net", "sale_tax", "sale_total", "profit", "vat_payable", "cash_need",
+
+def _priced_line(row, profile, rules, terms: _Terms, selected_ids, rounding) -> dict:
+    """Cost, price, tax and profitability of one position, as a saved calculation line."""
+    vat_rate, deduct_vat = terms.vat_rate, terms.deduct_vat
+    source = row["source"]
+    quote = source["quote_item"]
+    qty = row["quantity"]
+    mode = row['calculation_type']
+    import_vat_base = row["customs_base"] + row["duty"] if mode == "IMPORT" else Decimal("0")
+    incoming_vat = _money(import_vat_base * vat_rate, rounding)
+    expenses_total = row["international_logistics"] + row["general_expenses"] + row["customs_fee"]
+    clean_cost = row["customs_base"] + row["duty"] + (Decimal("0") if deduct_vat else incoming_vat)
+    if mode == 'DAP':
+        clean_cost = _money((row['purchase_rub'] + row['duty']) * (Decimal('1') + vat_rate), rounding) + row['international_logistics']
+    elif mode == 'RUSSIA':
+        clean_cost = row['purchase_rub']
+    markup_base = (import_vat_base if mode == "IMPORT" else
+                   clean_cost + (row["general_expenses"] if mode == "DAP" else Decimal("0")))
+    cost_after_markup = markup_base * row["markup_coefficient"]
+    cost_before_financing = clean_cost + row["general_expenses"] + row["customs_fee"]
+    if mode == 'RUSSIA':
+        cost_before_financing += row['international_logistics']
+    financed_amount = _money(cost_before_financing * terms.deferred / 100, rounding)
+    financing_cost = _money(financed_amount * terms.annual_rate * Decimal(terms.days) / terms.day_basis, rounding)
+    cost_before_adjustment = cost_before_financing + financing_cost
+    # Import markup covers customs value and duty. Non-deductible VAT and
+    # delivery/shared expenses are recharged afterwards without markup.
+    pre_bonus_sale_net = (
+        cost_after_markup + (clean_cost - markup_base if mode == "IMPORT" else Decimal("0"))
+        + (row["general_expenses"] if mode != "DAP" else Decimal("0")) + row["customs_fee"] + financing_cost
     )
-    wave_lines = output
-    output = [line for line in output if line["line_id"] in selected_ids]
-    totals = {key: _string(sum(dec(line["detail"][key]) for line in output)) for key in total_keys}
+    if mode == 'RUSSIA':
+        pre_bonus_sale_net += row['international_logistics']
+    # A line bonus is authoritative. The old request-wide bonus remains a
+    # fallback for clients that have not migrated to the per-line editor.
+    internal_bonus = _money(pre_bonus_sale_net * (row["bonus_coefficient"] - 1), rounding)
+    if terms.adjustment_enabled and row["id"] in selected_ids and row["bonus_coefficient"] == 1:
+        if terms.adjustment_type == "PERCENTAGE":
+            internal_bonus += _money(pre_bonus_sale_net * terms.adjustment_value / 100, rounding)
+        elif terms.adjustment_type == "MULTIPLIER":
+            if terms.adjustment_value < 1:
+                error("INTERNAL_ADJUSTMENT", "Внутренний множитель должен быть не меньше 1", field="internal_adjustment")
+            internal_bonus += _money(pre_bonus_sale_net * (terms.adjustment_value - 1), rounding)
+        else:
+            internal_bonus += terms.fixed_adjustment[row["id"]]
+    withdrawal_percent = dec(profile.get("bonus_withdrawal_percent", "16"))
+    bonus_withdrawal_fee = _money(internal_bonus * withdrawal_percent / 100, rounding)
+    additional_service_fee = (
+        _money(cost_before_adjustment * terms.service_percent / 100, rounding)
+        if terms.adjustment_enabled and row["id"] in selected_ids else Decimal("0")
+    )
+    service_fee = bonus_withdrawal_fee + additional_service_fee
+    cost = cost_before_adjustment + internal_bonus + service_fee
+    sale_net = _money(pre_bonus_sale_net + internal_bonus + service_fee, rounding)
+    if profile.get("round_sale_up_to_ruble", True):
+        unit_gross = (sale_net / qty * (Decimal("1") + vat_rate)).to_integral_value(rounding=ROUND_CEILING)
+        sale_total = _money(unit_gross * qty, rounding)
+        # The rounded gross price remains taxable in full, including the
+        # rounding increment. Extract VAT instead of treating it as VAT.
+        sale_tax = _money(sale_total * vat_rate / (Decimal("1") + vat_rate), rounding)
+        sale_net = sale_total - sale_tax
+    else:
+        sale_tax = _money(sale_net * vat_rate, rounding)
+        sale_total = sale_net + sale_tax
+        unit_gross = sale_total / qty
+    profit = sale_net - cost
+    vat_payable = max(Decimal("0"), sale_tax - (incoming_vat if deduct_vat else Decimal("0")))
+    cash_need = row["purchase_rub"] + row["cash_expenses"] + row["customs_fee"] + row["duty"] + incoming_vat + financing_cost + internal_bonus + service_fee
+    if mode == 'DAP':
+        cash_need += _money((row['purchase_rub'] + row['duty']) * vat_rate, rounding)
+    detail = {
+        "purchase_foreign": row["purchase_foreign"], "exchange_rate": row["exchange_rate"],
+        "purchase_rub": row["purchase_rub"], "international_logistics": row["international_logistics"],
+        "domestic_logistics": row["domestic_logistics"], "client_delivery": row["client_delivery"],
+        "domestic_logistics_total": row["domestic_logistics"] + row["client_delivery"],
+        "customs_base": row["customs_base"], "duty": row["duty"], "customs_fee": row["customs_fee"],
+        "duty_per_unit": row["duty"] / qty,
+        "customs_fee_per_unit": row["customs_fee"] / qty,
+        'customs_fee_1': row['customs_fee_1'], 'customs_fee_2': row['customs_fee_2'],
+        "fixed_group_quantity": row.get("fixed_group_quantity", Decimal("0")),
+        "general_expenses": row["general_expenses"], "expenses_total": expenses_total,
+        "cash_expenses": row["cash_expenses"],
+        "import_vat_base": import_vat_base, "import_vat": incoming_vat,
+        "import_cost_with_vat": import_vat_base + incoming_vat,
+        "cost_before_financing": cost_before_financing,
+        "financed_amount": financed_amount, "financing_cost": financing_cost,
+        "clean_cost": clean_cost, "pre_bonus_sale_net": pre_bonus_sale_net,
+        "cost_before_adjustment": cost_before_adjustment, "internal_bonus": internal_bonus,
+        "bonus_coefficient": row["bonus_coefficient"],
+        "bonus_withdrawal_percent": withdrawal_percent,
+        "bonus_withdrawal_fee": bonus_withdrawal_fee,
+        "additional_service_fee": additional_service_fee,
+        "service_fee": service_fee, "cost": cost, "markup_coefficient": row["markup_coefficient"],
+        "markup_base": markup_base, "cost_after_markup": cost_after_markup,
+        "markup_amount": markup_base * (row["markup_coefficient"] - 1),
+        "sale_net": sale_net, "sale_tax": sale_tax,
+        "sale_total": sale_total, "profit": profit, "vat_payable": vat_payable,
+        "cash_need": cash_need, "sale_unit_gross": unit_gross,
+        **profitability_metrics(profit, sale_net, cost),
+        "expense_share_percent": expenses_total / cost * 100 if cost else Decimal("0"),
+        "investment_efficiency_percent": profit / cash_need * 100 if cash_need else Decimal("0"),
+    }
+    name = source["nomenclature"]["name"]
+    packing = source["packing"]["display_name"]
+    return {
+        "line_id": row["id"], "item_id": quote.get("source_request_item_id"),
+        "quote_item_id": row["id"], "quote_id": quote["quote_id"],
+        "product": {
+            "name": name, "article": source["nomenclature"].get("article"),
+            "manufacturer": source["nomenclature"].get("manufacturer"),
+            "cas": source["nomenclature"].get("cas"), "packaging": packing,
+        },
+        "description": f"{name} {packing}", "packing": packing,
+        "supplier_id": quote["supplier_id"], "product_group": source["product_group"],
+        "supplier_name": source.get("supplier_name"),
+        'calculation_type': mode,
+        "customs_rule": rules[row["group"]] if mode == "IMPORT" else {"type": "PERCENTAGE" if mode == "DAP" else "NONE", "value": "5" if mode == "DAP" else "0"},
+        "quantity": _string(qty), "unit": "pcs", "purchase_currency": row["currency"],
+        "delivery_days": quote.get("delivery_days"),
+        "net": _string(sale_net), "tax": _string(sale_tax), "total": _string(sale_total),
+        "unit_price": _string(unit_gross.quantize(Decimal("0.00000001"), rounding=ROUNDING[rounding])),
+        "tax_category": profile.get("tax_category") or "НДС",
+        "detail": {key: _string(value) for key, value in detail.items()},
+        "expense_details": {key: _string(value) for key, value in row["expense_details"].items()},
+        "quote_item": quote,
+    }
+
+
+TOTAL_KEYS = (
+    "purchase_rub", "international_logistics", "customs_base", "duty", "clean_cost", "pre_bonus_sale_net",
+    "domestic_logistics", "client_delivery", "domestic_logistics_total",
+    "customs_fee", "customs_fee_1", "customs_fee_2", "general_expenses", "expenses_total", "cash_expenses", "import_vat_base", "import_vat", "import_cost_with_vat", "cost_before_financing",
+    "financed_amount", "financing_cost", "internal_bonus", "service_fee", "cost", "markup_amount",
+    "markup_base", "cost_after_markup",
+    "sale_net", "sale_tax", "sale_total", "profit", "vat_payable", "cash_need",
+)
+
+
+def _totals(lines: list[dict]) -> dict:
+    totals = {key: _string(sum(dec(line["detail"][key]) for line in lines)) for key in TOTAL_KEYS}
     totals.update(net=totals["sale_net"], tax=totals["sale_tax"], total=totals["sale_total"])
     if dec(totals["cost"]):
         totals["markup_coefficient"] = _string(dec(totals["sale_net"]) / dec(totals["cost"]))
@@ -594,34 +675,34 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
         totals["investment_efficiency_percent"] = _string(dec(totals["profit"]) / dec(totals["cash_need"]) * 100)
     else:
         totals["investment_efficiency_percent"] = "0"
-    return {
-        "lines": output, "totals": totals, "currency": "RUB", "management_currency": "RUB",
-        "expense_allocations": allocations, "rates": rates, "profile": profile,
-        "wave_distribution": {"existing_quantity": _string(wave_existing_quantity + sum(row["quantity"] for row in rows if row["id"] not in selected_ids and not row["source"].get("_forecast"))),
-                              "real_quantity": _string(wave_existing_quantity + sum(row["quantity"] for row in rows if row["id"] not in selected_ids and not row["source"].get("_forecast"))),
-                              "forecast_quantity": _string(forecast_quantity),
-                              "selected_quantity": _string(selected_quantity),
-                              "total_quantity": _string(wave_total_quantity),
-                              "existing_customs_fee_share": _string(existing_fee_share + sum(dec(line["detail"]["customs_fee"]) for line in wave_lines if line["line_id"] not in selected_ids)),
-                              "customs_fee": _string(fee),
-                              'customs_fee_1': _string(bracket_fee), 'customs_fee_2': _string(fixed_fee),
-                              'progressive_customs_value': _string(ordinary_basis),
-                              "customs_value": _string(customs_basis),
-                              "import_vat": _string(sum(dec(line["detail"]["import_vat"]) for line in wave_lines)),
-                              "expenses_total": _string(sum(dec(line["detail"]["expenses_total"]) for line in wave_lines) + existing_fee_share + existing["international_logistics"] + existing["general_expenses"]),
-                              "allocations": [{"quote_item_id": line["line_id"],
-                                               "request_id": row["source"].get("_request_id"),
-                                               "forecast": bool(row["source"].get("_forecast")),
-                                               "description": line["description"],
-                                               "customs_value": line["detail"]["customs_base"],
-                                               "quantity": line["quantity"],
-                                               **{key: line["detail"][key] for key in ("customs_base", "duty", "customs_fee", "customs_fee_1", "customs_fee_2", "customs_fee_per_unit", "international_logistics", "general_expenses", "expenses_total", "import_vat")},
-                                               "expense_details": line["expense_details"]}
-                                              for line, row in zip(wave_lines, rows)]},
-        "internal_adjustment": internal_adjustment,
-        "payment_terms": {**payment_terms, "deferred_start_event": start_event},
-        "algorithm_version": "itemized-v2",
-    }
+    return totals
+
+
+def _wave_distribution(wave: _Wave, wave_lines: list[dict], fee: dict) -> dict:
+    """How the wave's quantities, customs value, fee and expenses are shared, per position of the wave."""
+    rows, selected_ids, existing = wave.rows, wave.selected_ids, wave.existing
+    earlier_quantity = _string(wave.existing_quantity + sum(row["quantity"] for row in rows if row["id"] not in selected_ids and not row["source"].get("_forecast")))
+    return {"existing_quantity": earlier_quantity,
+            "real_quantity": earlier_quantity,
+            "forecast_quantity": _string(wave.forecast_quantity),
+            "selected_quantity": _string(wave.selected_quantity),
+            "total_quantity": _string(wave.total_quantity),
+            "existing_customs_fee_share": _string(fee["existing_fee_share"] + sum(dec(line["detail"]["customs_fee"]) for line in wave_lines if line["line_id"] not in selected_ids)),
+            "customs_fee": _string(fee["fee"]),
+            'customs_fee_1': _string(fee["bracket_fee"]), 'customs_fee_2': _string(fee["fixed_fee"]),
+            'progressive_customs_value': _string(fee["ordinary_basis"]),
+            "customs_value": _string(fee["customs_basis"]),
+            "import_vat": _string(sum(dec(line["detail"]["import_vat"]) for line in wave_lines)),
+            "expenses_total": _string(sum(dec(line["detail"]["expenses_total"]) for line in wave_lines) + fee["existing_fee_share"] + existing["international_logistics"] + existing["general_expenses"]),
+            "allocations": [{"quote_item_id": line["line_id"],
+                             "request_id": row["source"].get("_request_id"),
+                             "forecast": bool(row["source"].get("_forecast")),
+                             "description": line["description"],
+                             "customs_value": line["detail"]["customs_base"],
+                             "quantity": line["quantity"],
+                             **{key: line["detail"][key] for key in ("customs_base", "duty", "customs_fee", "customs_fee_1", "customs_fee_2", "customs_fee_per_unit", "international_logistics", "general_expenses", "expenses_total", "import_vat")},
+                             "expense_details": line["expense_details"]}
+                            for line, row in zip(wave_lines, rows)]}
 
 
 def itemized_profile() -> dict:

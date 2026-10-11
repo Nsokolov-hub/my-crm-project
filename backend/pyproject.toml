@@ -73,7 +73,6 @@ module = [
     "app.commerce.documents",
     "app.commerce.financial",
     "app.commerce.fulfillment",
-    "app.commerce.itemized",
     "app.commerce.payments",
     "app.commerce.procurement",
     "app.commerce.schemas",
