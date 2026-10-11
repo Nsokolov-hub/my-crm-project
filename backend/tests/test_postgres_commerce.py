@@ -8,7 +8,7 @@ For an offline unit-test run, exclude the postgres marker with ``-m 'not postgre
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from threading import Barrier, Lock
 from uuid import uuid4
@@ -43,6 +43,8 @@ from app.core.security import PERMISSIONS, current_user
 from app.crm.models import Counterparty, Request, RequestItem, Seller
 
 pytestmark = pytest.mark.postgres
+# Invoices must not be due in the past; a fixed calendar date expired on 2026-10-11.
+DUE_DATE = (date.today() + timedelta(days=10)).isoformat()
 
 
 @pytest.fixture
@@ -459,7 +461,7 @@ def test_r05_partial_amount_rounding_and_concurrent_issuance(postgres_commerce):
             {
                 "proposal_id": state["proposal"]["id"],
                 "lines": [{"execution_id": execution_id, "quantity": str(quantity)}],
-                "due_date": "2026-10-10",
+                "due_date": DUE_DATE,
                 "terms": "Partial",
                 "idempotency_key": key or str(uuid4()),
             },
@@ -478,14 +480,14 @@ def test_r05_partial_amount_rounding_and_concurrent_issuance(postgres_commerce):
     payload1 = {
         "proposal_id": state["proposal"]["id"],
         "lines": [{"execution_id": execution_id, "quantity": "2"}],
-        "due_date": "2026-10-10",
+        "due_date": DUE_DATE,
         "terms": "Final",
         "idempotency_key": last_key,
     }
     payload2 = {
         "proposal_id": state["proposal"]["id"],
         "lines": [{"execution_id": execution_id, "quantity": "2"}],
-        "due_date": "2026-10-10",
+        "due_date": DUE_DATE,
         "terms": "Final",
         "idempotency_key": str(uuid4()),  # Different key! Should fail!
     }
