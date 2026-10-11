@@ -4,16 +4,15 @@ from fastapi import APIRouter
 from sqlalchemy import select
 
 from app.commerce.recalculate import recalculate_funding
-from app.core.db import utcnow
+from app.core.db import DB, utcnow
 from app.core.errors import error
-from app.core.security import check_request, has_request_permission, require_permission
+from app.core.security import Actor, check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
 from app.crm.models import Currency
 from app.crm.models import Request as CRMRequest
 
 from .calculator import dec
 from .models import CommercialDocument, Execution, Payment, PaymentAllocation, PaymentReversal
-from .procurement import DB, Actor
 from .schemas import PaymentAllocateIn, PaymentIn, PaymentReverseIn, VersionCommand
 
 router = APIRouter(tags=["Оплаты и распределения"])

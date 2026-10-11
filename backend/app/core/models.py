@@ -77,7 +77,8 @@ class AuditEvent(Entity):
     before: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     after: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     reason: Mapped[str | None] = mapped_column(Text)
-    request_id: Mapped[str] = mapped_column(String(100), index=True)
+    # HTTP correlation code (X-Request-ID) of the operation, not a CRM request.
+    correlation_id: Mapped[str] = mapped_column(String(100), index=True)
 
 
 class IdempotencyRecord(Entity):
@@ -111,6 +112,8 @@ class OutboxEvent(Entity):
     progress: Mapped[int] = mapped_column(Integer, default=0)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # A pending event becomes eligible again at this moment after a transient failure.
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     error: Mapped[str | None] = mapped_column(Text)
 
 

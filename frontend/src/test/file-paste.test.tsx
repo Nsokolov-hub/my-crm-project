@@ -24,8 +24,12 @@ it('uploads a screenshot pasted into the request', async () => {
   });
   fireEvent(document, event);
 
-  await waitFor(() => expect(api).toHaveBeenCalledWith('/files', expect.objectContaining({ method: 'POST' })));
-  const upload = vi.mocked(api).mock.calls.find(([path, options]) => path === '/files' && options?.method === 'POST');
+  await waitFor(() =>
+    expect(api).toHaveBeenCalledWith('/files', expect.objectContaining({ method: 'POST' })),
+  );
+  const upload = vi
+    .mocked(api)
+    .mock.calls.find(([path, options]) => path === '/files' && options?.method === 'POST');
   const body = upload?.[1]?.body as FormData;
   expect(body.get('entity_type')).toBe('request');
   expect(body.get('entity_id')).toBe('request-1');
@@ -41,7 +45,11 @@ it('opens the file picker and uploads a selected PNG', async () => {
 
   const screenshot = new File(['png content'], 'screenshot.png', { type: 'image/png' });
   fireEvent.change(input, { target: { files: [screenshot] } });
-  await waitFor(() => expect(api).toHaveBeenCalledWith('/files', expect.objectContaining({ method: 'POST' })));
-  const upload = vi.mocked(api).mock.calls.find(([path, options]) => path === '/files' && options?.method === 'POST');
+  await waitFor(() =>
+    expect(api).toHaveBeenCalledWith('/files', expect.objectContaining({ method: 'POST' })),
+  );
+  const upload = vi
+    .mocked(api)
+    .mock.calls.find(([path, options]) => path === '/files' && options?.method === 'POST');
   expect(((upload?.[1]?.body as FormData).get('file') as File).name).toBe('screenshot.png');
 });

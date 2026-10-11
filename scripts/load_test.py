@@ -11,7 +11,8 @@ Realistic scenarios tested:
 Real authentication:
 - Authenticates via POST /api/v1/auth/login.
 - Captures session cookie (crm_session) and CSRF token.
-- Automatically provisions test account if missing.
+- Automatically provisions test account if missing; without --password it gets a random one.
+- Refuses ENVIRONMENT=production unless --allow-production is given.
 
 SLA enforcement:
 - Verifies p95 latency <= threshold (default 2.0s).
@@ -25,6 +26,7 @@ import asyncio
 import io
 import json
 import logging
+import secrets
 import statistics
 import sys
 import time
@@ -44,6 +46,7 @@ from app.bootstrap import provision
 from app.commerce.calculator import calculate, example_profile
 from app.commerce.files import document_files
 from app.communication.worker import run_once
+from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.models import OutboxEvent, User
 from app.core.security import password_hasher
@@ -179,11 +182,15 @@ async def authenticate(client: httpx.AsyncClient, base_url: str, email: str, pas
 async def run_search_scenario(client: httpx.AsyncClient, base_url: str, headers: dict, metrics: MetricsCollector):
     """Scenario 1: Catalog and request search & dashboard queries."""
     endpoints = [
-        ("search_requests_list", "/api/v1/requests?limit=20&skip=0"),
-        ("search_requests_stage", "/api/v1/requests?limit=20&commercial_stage=new"),
-        ("search_requests_query", "/api/v1/requests?limit=50&query=test"),
+        ("search_requests_list", "/api/v1/requests?page=1&page_size=20"),
+        ("search_requests_stage", "/api/v1/requests?page_size=20&stage=new"),
+        ("search_requests_query", "/api/v1/requests?page_size=50&q=test"),
         ("search_analytics", "/api/v1/analytics/dashboard?date_from=2025-01-01&date_to=2026-12-31"),
-        ("search_counterparties", "/api/v1/counterparties?limit=20"),
+        ("search_counterparties", "/api/v1/counterparties?page_size=20"),
+        ("search_counterparties_query", "/api/v1/counterparties?page_size=20&q=клиент 12"),
+        ("search_nomenclatures", "/api/v1/nomenclatures?page_size=100"),
+        ("search_tasks", "/api/v1/tasks?page_size=50"),
+        ("search_payment_calendar", "/api/v1/payment-calendar?page_size=100"),
     ]
 
     for name, path in endpoints:
@@ -515,7 +522,7 @@ def main():
     parser = argparse.ArgumentParser(description="Комплексное нагрузочное тестирование и сценарии деградации (R15)")
     parser.add_argument("--url", default="http://localhost:8000", help="Базовый URL приложения")
     parser.add_argument("--email", default="load_runner@example.com", help="Email тестового пользователя")
-    parser.add_argument("--password", default="LoadTestPass123!", help="Пароль тестового пользователя")
+    parser.add_argument("--password", help="Пароль тестового пользователя; по умолчанию случайный на каждый запуск")
     parser.add_argument("--concurrency", type=int, default=10, help="Количество параллельных пользователей")
     parser.add_argument("--requests", type=int, default=3, help="Количество итераций на пользователя")
     parser.add_argument("--max-p95", type=float, default=2.0, help="Максимально допустимый P95 latency (секунды)")
@@ -523,8 +530,15 @@ def main():
     parser.add_argument("--import-rows", type=int, default=10000, help="Количество строк в пакете импорта")
     parser.add_argument("--in-process", action="store_true", help="Принудительный запуск через ASGI в процессе")
     parser.add_argument("--report", help="Путь для сохранения отчета в формате JSON")
+    parser.add_argument("--allow-production", action="store_true",
+                        help="разрешить запуск при ENVIRONMENT=production (создаёт пользователя со всеми ролями)")
 
     args = parser.parse_args()
+    if settings.environment == "production" and not args.allow_production:
+        raise SystemExit("ENVIRONMENT=production: запускайте нагрузочный тест на отдельном стенде "
+                         "или подтвердите флагом --allow-production.")
+    # A fixed default password would leave a known credential for an account with every role.
+    args.password = args.password or secrets.token_urlsafe(24)
     exit_code = asyncio.run(async_main(args))
     sys.exit(exit_code)
 

@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import AwareDatetime, EmailStr, Field, field_validator, model_validator
 
-from app.core.routes import Input
+from app.core.schemas import Input
 
 
 class ClientInput(Input):

@@ -2,9 +2,8 @@ import io
 import re
 from copy import copy
 from datetime import date
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 from fastapi.responses import Response
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -12,10 +11,10 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.db import get_db
+from app.core.db import DB
 from app.core.errors import error
 from app.core.models import User
-from app.core.security import check_request, current_user, has_request_permission, require_permission
+from app.core.security import Actor, check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.crm.imports import xlsx as literal_workbook
 from app.crm.models import Counterparty, Nomenclature, Packing, RequestItem, TableImport
@@ -27,8 +26,6 @@ from .models import Manufacturer, Product, Quote, Substance, SupplierRequest
 from .schemas import ProductIn, QuoteIn, RfqIn, SentIn, VerifyIn
 
 router = APIRouter(tags=["Закупки и каталог"])
-DB = Annotated[Session, Depends(get_db)]
-Actor = Annotated[User, Depends(current_user)]
 
 
 def normalized(value: str) -> str:
@@ -278,7 +275,9 @@ def list_quotes(
     return {"items": [quote_view(db, user, quote) for quote in items], "page": page, "page_size": page_size}
 
 
-@router.post("/requests/{request_id}/quotes")
+# The interface records quotes as quote sheets (crm.quotes); these two commands of the earlier quote
+# model stay for existing data and integrations only.
+@router.post("/requests/{request_id}/quotes", deprecated=True)
 def add_quote(request_id: str, data: QuoteIn, db: DB, user: Actor):
     check_request(db, user, request_id, "quotes.write")
     
@@ -296,7 +295,7 @@ def add_quote(request_id: str, data: QuoteIn, db: DB, user: Actor):
     )
 
 
-@router.post("/quotes/{quote_id}/revise")
+@router.post("/quotes/{quote_id}/revise", deprecated=True)
 def revise_quote(quote_id: str, data: QuoteIn, db: DB, user: Actor):
     previous = db.get(Quote, quote_id)
     if not previous:

@@ -1,14 +1,16 @@
+from bisect import bisect_right
 from copy import deepcopy
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app.core.config import settings
+from app.core.db import DB
 from app.core.errors import DomainError, error
-from app.core.security import can, check_request, has_request_permission, require_permission
+from app.core.security import Actor, can, check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.core.service import page as paginate
 from app.crm.models import (
@@ -40,7 +42,7 @@ from .models import (
     WaveAllocation,
     WaveForecast,
 )
-from .procurement import DB, Actor, check_quote, product_view, validate_quantity
+from .procurement import check_quote, product_view, validate_quantity
 from .schemas import CalculationIn, Expense, ExpenseTypeIn, ExpenseTypePatch, ProfileIn, Rate, RequestWaveIn
 
 router = APIRouter(tags=["Расчёты и настраиваемые профили"])
@@ -78,45 +80,78 @@ def profile_view(db, user, profile: CalculationProfile) -> dict:
     return data
 
 
-def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> dict:
+class RequestAccess:
+    """Answers request-scoped permission questions once per response (many snapshots ask the same)."""
+
+    def __init__(self, db, user):
+        self.db, self.user, self.answers = db, user, {}
+
+    def allows(self, request_id, permission) -> bool:
+        key = (request_id, permission)
+        if key not in self.answers:
+            self.answers[key] = has_request_permission(self.db, self.user, request_id, permission)
+        return self.answers[key]
+
+
+# What people without every finance right may see of a saved calculation. Snapshots are filtered by
+# these allow-lists, so a field added to snapshots later stays hidden until it is listed here.
+SNAPSHOT_FIELDS = frozenset({
+    "algorithm_version", "base_version_id", "calculation_number", "currency", "delivery_days", "lines",
+    "management_currency", "origin_source_id", "origin_source_type", "profile_created_at", "profile_id",
+    "request_number", "request_version", "source_id", "source_label", "source_type", "totals", "vat_deductible",
+    "version_number", "wave",
+})
+LINE_FIELDS = frozenset({
+    "calculation_type", "delivery_days", "description", "item_id", "line_id", "net", "packing", "product",
+    "product_group", "quantity", "quote_id", "quote_item_id", "quote_revision", "tax", "tax_category", "total",
+    "unit", "unit_price",
+})
+PURCHASE_LINE_FIELDS = frozenset({"purchase_currency", "quote", "quote_item", "supplier_id", "supplier_name"})
+WAVE_FIELDS = frozenset({"existing_quantity", "financial_digest", "id", "number", "revision_digest"})
+
+
+def filter_calculation_snapshot(db, user, request_id: str | None, snapshot: dict,
+                                access: RequestAccess | None = None) -> dict:
     if not snapshot:
         return snapshot
     snapshot = deepcopy(snapshot)
+    access = access or RequestAccess(db, user)
 
-    can_purchase = has_request_permission(db, user, request_id, "finance.purchase.read")
-    can_calculations = has_request_permission(db, user, request_id, "finance.calculations.read")
-    can_reward = has_request_permission(db, user, request_id, "finance.reward.read")
-    can_profit = has_request_permission(db, user, request_id, "finance.profit.read")
+    can_purchase = access.allows(request_id, "finance.purchase.read")
+    can_calculations = access.allows(request_id, "finance.calculations.read")
+    can_reward = access.allows(request_id, "finance.reward.read")
+    can_profit = access.allows(request_id, "finance.profit.read")
     all_finances = can_purchase and can_reward and can_profit
 
-    lines = snapshot.get("lines", [])
-    for line in lines:
-        if not can_purchase:
-            line.pop("quote", None)
-            line.pop("quote_item", None)
-            line.pop("supplier_id", None)
-            line.pop("purchase_currency", None)
-        if not all_finances:
-            line.pop("expense_details", None)
-            line.pop("customs_rule", None)
+    if can_calculations and all_finances:
+        return visible_wave_parts(db, snapshot, access)
 
-        if "detail" in line:
-            if not can_calculations:
-                line.pop("detail", None)
-            elif not all_finances:
-                # Expose only known outputs; arbitrary constants/intermediate
-                # expressions may alias a denied price, reward or margin.
-                allowed = {"quantity", "sale_net", "sale_tax"}
-                if can_purchase:
-                    allowed.add("purchase")
-                    allowed.update(("purchase_foreign", "exchange_rate", "purchase_rub"))
-                if can_reward:
-                    allowed.update((
-                        "reward", "manager_bonus", "internal_bonus", "bonus_coefficient", "service_fee",
-                        "bonus_withdrawal_percent", "bonus_withdrawal_fee", "additional_service_fee",
-                    ))
-                if can_profit:
-                    allowed.update(("cost", "profit", "margin", "markup_amount", "profitability_percent", "margin_percent", "cost_profitability_percent"))
+    fields = SNAPSHOT_FIELDS | {"profile"} if can_calculations else SNAPSHOT_FIELDS
+    if can_reward:
+        fields |= {"internal_adjustment"}
+    snapshot = {key: value for key, value in snapshot.items() if key in fields}
+
+    line_fields = LINE_FIELDS | PURCHASE_LINE_FIELDS if can_purchase else LINE_FIELDS
+    if can_calculations:
+        line_fields |= {"detail"}
+    snapshot["lines"] = [{key: value for key, value in line.items() if key in line_fields}
+                         for line in snapshot.get("lines", [])]
+    if can_calculations and not all_finances:
+        # Expose only known outputs; arbitrary constants/intermediate
+        # expressions may alias a denied price, reward or margin.
+        allowed = {"quantity", "sale_net", "sale_tax"}
+        if can_purchase:
+            allowed.add("purchase")
+            allowed.update(("purchase_foreign", "exchange_rate", "purchase_rub"))
+        if can_reward:
+            allowed.update((
+                "reward", "manager_bonus", "internal_bonus", "bonus_coefficient", "service_fee",
+                "bonus_withdrawal_percent", "bonus_withdrawal_fee", "additional_service_fee",
+            ))
+        if can_profit:
+            allowed.update(("cost", "profit", "margin", "markup_amount", "profitability_percent", "margin_percent", "cost_profitability_percent"))
+        for line in snapshot["lines"]:
+            if "detail" in line:
                 line["detail"] = {key: value for key, value in line["detail"].items() if key in allowed}
 
     if "totals" in snapshot and not all_finances:
@@ -129,66 +164,100 @@ def filter_calculation_snapshot(db, user, request_id: str, snapshot: dict) -> di
             allowed.update(("cost", "profit", "markup_amount", "profitability_percent", "margin_percent", "cost_profitability_percent"))
         snapshot["totals"] = {key: value for key, value in snapshot["totals"].items() if key in allowed}
 
-    if not can_calculations:
-        snapshot.pop("profile", None)
-    elif "profile" in snapshot:
+    if "profile" in snapshot:
         snapshot["profile"] = filter_profile_definition(
             snapshot["profile"], purchase=can_purchase, reward=can_reward, profit=can_profit
         )
 
-    if can_calculations and all_finances and "wave_distribution" in snapshot:
-        distribution = snapshot["wave_distribution"]
-        visible_quote_ids = {line.get("quote_item_id") for line in lines}
-        visible_allocations = []
-        for allocation in distribution.get("allocations", []):
-            peer_id = allocation.get("request_id")
-            visible = allocation.get("forecast", False) or (peer_id and all(
-                has_request_permission(db, user, peer_id, permission)
-                for permission in ("requests.read", "finance.purchase.read", "finance.calculations.read")
-            ))
-            if visible:
-                visible_allocations.append(allocation)
-                visible_quote_ids.add(allocation.get("quote_item_id"))
-        distribution["allocations"] = visible_allocations
-        for allocation in snapshot.get("expense_allocations", []):
-            if "wave_parts" in allocation:
-                allocation["wave_parts"] = {key: value for key, value in allocation["wave_parts"].items()
-                                            if key in visible_quote_ids}
-        for expenses in (snapshot.get("resolved_expenses", []), (snapshot.get("input") or {}).get("expenses") or []):
-            for expense in expenses:
-                if expense.get("method") == "MANUAL":
-                    expense["manual"] = {key: value for key, value in (expense.get("manual") or {}).items()
-                                         if key in visible_quote_ids}
-        source_id = (snapshot.get("wave") or {}).get("expense_source_calculation_id")
-        source = db.get(Calculation, source_id) if source_id else None
-        if source and not has_request_permission(db, user, source.request_id, "finance.calculations.read"):
-            snapshot["wave"]["expense_source_calculation_id"] = None
-
-    if not can_calculations or not all_finances:
-        # Inputs include per-line coefficient overrides and expense allocations
-        # can disclose the purchase basis, even after detail has been filtered.
-        snapshot.pop("input", None)
-        snapshot.pop("expense_allocations", None)
-        snapshot.pop("rates", None)
-        snapshot.pop("payment_terms", None)
-        snapshot.pop("wave_distribution", None)
-        snapshot.pop("resolved_expenses", None)
-    if not can_reward:
-        snapshot.pop("internal_adjustment", None)
-
+    if isinstance(snapshot.get("wave"), dict):
+        wave_fields = WAVE_FIELDS | {"supplier_id"} if can_purchase else WAVE_FIELDS
+        wave = snapshot["wave"]
+        snapshot["wave"] = {key: value for key, value in wave.items() if key in wave_fields}
+        if can_calculations and "expense_source_calculation_id" in wave:
+            snapshot["wave"]["expense_source_calculation_id"] = visible_expense_source(
+                db, wave["expense_source_calculation_id"], access)
     return snapshot
 
 
-def calculation_view(db, user, calculation: Calculation) -> dict:
+def visible_expense_source(db, calculation_id: str | None, access: RequestAccess) -> str | None:
+    """The calculation whose wave expenses were reused, unless it belongs to a request the reader cannot see."""
+    source = db.get(Calculation, calculation_id) if calculation_id else None
+    if source and not access.allows(source.request_id, "finance.calculations.read"):
+        return None
+    return calculation_id
+
+
+def visible_wave_parts(db, snapshot: dict, access: RequestAccess) -> dict:
+    """A full-rights view still shows other requests of the wave only to those who may see them."""
+    if "wave_distribution" not in snapshot:
+        return snapshot
+    distribution = snapshot["wave_distribution"]
+    visible_quote_ids = {line.get("quote_item_id") for line in snapshot.get("lines", [])}
+    visible_allocations = []
+    for allocation in distribution.get("allocations", []):
+        peer_id = allocation.get("request_id")
+        visible = allocation.get("forecast", False) or (peer_id and all(
+            access.allows(peer_id, permission)
+            for permission in ("requests.read", "finance.purchase.read", "finance.calculations.read")
+        ))
+        if visible:
+            visible_allocations.append(allocation)
+            visible_quote_ids.add(allocation.get("quote_item_id"))
+    distribution["allocations"] = visible_allocations
+    for allocation in snapshot.get("expense_allocations", []):
+        if "wave_parts" in allocation:
+            allocation["wave_parts"] = {key: value for key, value in allocation["wave_parts"].items()
+                                        if key in visible_quote_ids}
+    for expenses in (snapshot.get("resolved_expenses", []), (snapshot.get("input") or {}).get("expenses") or []):
+        for expense in expenses:
+            if expense.get("method") == "MANUAL":
+                expense["manual"] = {key: value for key, value in (expense.get("manual") or {}).items()
+                                     if key in visible_quote_ids}
+    wave = snapshot.get("wave") or {}
+    if wave.get("expense_source_calculation_id"):
+        wave["expense_source_calculation_id"] = visible_expense_source(db, wave["expense_source_calculation_id"], access)
+    return snapshot
+
+
+class CalculationListContext:
+    """Work shared by the calculations of one response: rights, version numbers and wave state."""
+
+    def __init__(self, db, user, ordinals: dict[str, int] | None = None):
+        self.access = RequestAccess(db, user)
+        self.ordinals = ordinals or {}
+        self.waves: dict[str, tuple] = {}
+
+    @classmethod
+    def for_request(cls, db, user, request_id: str) -> "CalculationListContext":
+        # The version number of an older snapshot is its position among the request's calculations.
+        rows = db.execute(select(Calculation.id, Calculation.created_at)
+                          .where(Calculation.request_id == request_id)).all()
+        created = sorted(created_at for _, created_at in rows)
+        return cls(db, user, {row_id: bisect_right(created, created_at) for row_id, created_at in rows})
+
+    def wave_state(self, db, wave_id: str) -> tuple:
+        """(current digest, revision digest, error) of a wave, computed once per response."""
+        if wave_id not in self.waves:
+            try:
+                current = wave_financial_summary(db, wave_id)
+                self.waves[wave_id] = (current.get("digest"), wave_revision_digest(db, db.get(Wave, wave_id)), None)
+            except DomainError as exc:
+                self.waves[wave_id] = (None, None, exc.message)
+        return self.waves[wave_id]
+
+
+def calculation_view(db, user, calculation: Calculation, context: CalculationListContext | None = None) -> dict:
+    context = context or CalculationListContext(db, user)
     result = serialize(calculation)
 
     snapshot = result.get("snapshot", {})
     created = calculation.created_at
     if created.tzinfo is None:
         created = created.replace(tzinfo=timezone.utc)
-    version = snapshot.get("version_number") or db.scalar(select(func.count(Calculation.id)).where(
-        Calculation.request_id == calculation.request_id, Calculation.created_at <= calculation.created_at
-    )) or 1
+    version = snapshot.get("version_number") or context.ordinals.get(calculation.id) or db.scalar(
+        select(func.count(Calculation.id)).where(
+            Calculation.request_id == calculation.request_id, Calculation.created_at <= calculation.created_at
+        )) or 1
     result["selection_label"] = (
         f"№{version or '—'} · {created.astimezone(ZoneInfo(settings.company_timezone)):%d.%m.%Y %H:%M}"
     )
@@ -198,16 +267,16 @@ def calculation_view(db, user, calculation: Calculation) -> dict:
         result["version_number"] = version
         wave_id = (snapshot.get("wave") or {}).get("id")
         if wave_id and snapshot.get("algorithm_version") == "itemized-v2":
-            try:
-                current = wave_financial_summary(db, wave_id)
-                result["wave_current_digest"] = current.get("digest")
-                result["wave_stale"] = snapshot["wave"].get("revision_digest") != wave_revision_digest(db, db.get(Wave, wave_id))
-            except DomainError as exc:
+            current_digest, revision_digest, problem = context.wave_state(db, wave_id)
+            if problem is None:
+                result["wave_current_digest"] = current_digest
+                result["wave_stale"] = snapshot["wave"].get("revision_digest") != revision_digest
+            else:
                 result["wave_stale"] = True
-                result["wave_recalculation_error"] = exc.message
-        result["snapshot"] = filter_calculation_snapshot(db, user, calculation.request_id, snapshot)
+                result["wave_recalculation_error"] = problem
+        result["snapshot"] = filter_calculation_snapshot(db, user, calculation.request_id, snapshot, context.access)
 
-    if not has_request_permission(db, user, calculation.request_id, "finance.calculations.read"):
+    if not context.access.allows(calculation.request_id, "finance.calculations.read"):
         result.pop("reason", None)
 
     return result
@@ -720,7 +789,7 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             if default_logistics:
                 effective_expenses = [row for row in effective_expenses
                                       if row.get("stage") != "INTERNATIONAL_LOGISTICS"] + [default_logistics]
-        from app.business.routes import delivery_expense
+        from app.business.supplier_orders import delivery_expense
         delivery = delivery_expense(db, req, data.delivery_city, data.delivery_required)
         effective_expenses = [row for row in effective_expenses if not row.get('name', '').startswith('Доставка СДЭК до 15 кг:') and row.get('name') != 'НДС доставки СДЭК']
         if delivery:
@@ -1006,7 +1075,7 @@ def save_calculation(request_id: str, data: CalculationIn, db: DB, user: Actor):
         )
         db.add(obj)
         db.flush()
-        from app.business.routes import review_calculation
+        from app.business.reviews import review_calculation
         review_calculation(db, user, obj)
         audit(
             db,
@@ -1035,18 +1104,16 @@ def save_calculation(request_id: str, data: CalculationIn, db: DB, user: Actor):
 
 
 @router.get("/requests/{request_id}/calculations")
-def list_calculations(request_id: str, db: DB, user: Actor):
+def list_calculations(request_id: str, db: DB, user: Actor,
+                      page: int = Query(1, ge=1), page_size: int = Query(100, ge=1, le=100)):
     check_request(db, user, request_id)
-    return {
-        "items": [
-            calculation_view(db, user, item)
-            for item in db.scalars(
-                select(Calculation)
-                .where(Calculation.request_id == request_id)
-                .order_by(Calculation.created_at.desc())
-            ).all()
-        ]
-    }
+    total = db.scalar(select(func.count()).select_from(Calculation).where(Calculation.request_id == request_id)) or 0
+    rows = db.scalars(select(Calculation).where(Calculation.request_id == request_id)
+                      .order_by(Calculation.created_at.desc(), Calculation.id.desc())
+                      .offset((page - 1) * page_size).limit(page_size)).all()
+    context = CalculationListContext.for_request(db, user, request_id)
+    return {"items": [calculation_view(db, user, row, context) for row in rows],
+            "total": total, "page": page, "page_size": page_size}
 
 
 def wave_actual_summary(db, wave_id, profile, expenses, rates):

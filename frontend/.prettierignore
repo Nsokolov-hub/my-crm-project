@@ -1,3 +1,5 @@
 node_modules
 dist
 pnpm-lock.yaml
+# Generated from docs/openapi.json by `pnpm run api:types`.
+src/lib/api-schema.d.ts

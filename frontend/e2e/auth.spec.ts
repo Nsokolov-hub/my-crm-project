@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 /**
  * E2E tests for the key authentication and role-based access path.
  * These verify the critical user flow: login → dashboard → navigate.
- * 
+ *
  * NOTE: These tests require a running backend at the configured baseURL.
  * They are designed to run against the dev environment or a test docker-compose stack.
  */
@@ -49,16 +49,16 @@ test.describe('Authentication and Role-Based Access', () => {
 test.describe('Navigation Structure', () => {
   test('login page has required form elements', async ({ page }) => {
     await page.goto('/login');
-    
+
     // Check form structure
     const emailInput = page.getByLabel(/почта|email/i);
     const passwordInput = page.getByLabel(/пароль|password/i);
     const submitButton = page.getByRole('button', { name: /войти/i });
-    
+
     await expect(emailInput).toBeVisible();
     await expect(passwordInput).toBeVisible();
     await expect(submitButton).toBeVisible();
-    
+
     // Password field should be of type password
     await expect(passwordInput).toHaveAttribute('type', 'password');
   });
@@ -68,20 +68,18 @@ test.describe('Datetime Handling', () => {
   test('datetime-local fields display correctly on login page (smoke)', async ({ page }) => {
     // This is a smoke test to verify the app loads without JS errors
     await page.goto('/login');
-    
+
     // Listen for console errors
     const errors: string[] = [];
-    page.on('console', msg => {
+    page.on('console', (msg) => {
       if (msg.type() === 'error') errors.push(msg.text());
     });
-    
+
     // Wait for page to settle
     await page.waitForTimeout(1000);
-    
+
     // No critical JS errors should occur during page load
-    const criticalErrors = errors.filter(e => 
-      !e.includes('favicon') && !e.includes('net::ERR')
-    );
+    const criticalErrors = errors.filter((e) => !e.includes('favicon') && !e.includes('net::ERR'));
     expect(criticalErrors).toHaveLength(0);
   });
 });

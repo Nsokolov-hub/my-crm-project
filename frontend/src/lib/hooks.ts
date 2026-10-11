@@ -1,32 +1,29 @@
+import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import { queryClient } from './queryClient';
 import { createRequestKey } from './requestKey';
+/**
+ * Server data at `path` (null: nothing to load). The data stays on screen while `refresh` reloads it,
+ * and a page visited again shows the cached data at once while it is reloaded.
+ */
 export function useApi<T>(path: string | null) {
-  const [data, setData] = useState<T>();
-  const [error, setError] = useState<unknown>();
-  const [loading, setLoading] = useState(Boolean(path));
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    if (!path) {
-      setLoading(false);
-      return;
-    }
-    const controller = new AbortController();
-    setLoading(true);
-    setError(undefined);
-    setData(undefined);
-    api<T>(path, { signal: controller.signal })
-      .then(setData)
-      .catch((e) => {
-        if (!controller.signal.aborted) setError(e);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
-  }, [path, revision]);
-  const refresh = useCallback(() => setRevision((v) => v + 1), []);
-  return { data, error, loading, refresh };
+  const query = useQuery(
+    {
+      queryKey: ['api', path],
+      queryFn: ({ signal }) => api<T>(path as string, { signal }),
+      enabled: Boolean(path),
+    },
+    queryClient,
+  );
+  const { refetch } = query;
+  const refresh = useCallback(() => void refetch(), [refetch]);
+  return {
+    data: query.data,
+    error: (query.error ?? undefined) as unknown,
+    loading: Boolean(path) && query.isPending,
+    refresh,
+  };
 }
 export function useCommand() {
   const pending = useRef(false);

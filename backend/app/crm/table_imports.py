@@ -23,9 +23,10 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import DomainError
 from app.core.models import User
-from app.core.routes import Input
+from app.core.schemas import Input
 from app.core.security import check_request, current_user, require_permission
 from app.core.service import advisory, audit, idem, lock, serialize
+from app.crm.catalogue import packing_name
 from app.crm.imports import string_value, xlsx
 from app.crm.models import (
     Counterparty,
@@ -38,7 +39,8 @@ from app.crm.models import (
     RequestItemRevision,
     TableImport,
 )
-from app.crm.routes import create_quote_sheet, packing_name, structured_item_fields
+from app.crm.quotes import record_quote_sheet
+from app.crm.requests import structured_item_fields
 from app.crm.schemas import ItemInput, QuoteItemInput, QuoteSheetInput
 
 router = APIRouter(tags=["Импорт заявок и квот"])
@@ -465,7 +467,7 @@ def preview(
     file: UploadFile = File(),
     mapping: str = Form("{}"),
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ):
     if kind not in ("items", "quotes"):
         raise DomainError("IMPORT_KIND", "Неизвестный вид импорта", 422)
@@ -535,7 +537,7 @@ def owned_batch(db, user, request_id, batch_id):
 
 @router.get("/requests/{request_id}/table-imports/{batch_id}/errors.xlsx")
 def error_file(
-    request_id: str, batch_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)
+    request_id: str, batch_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ):
     batch = owned_batch(db, user, request_id, batch_id)
     require_permission(db, user, "exports.download", request_id)
@@ -551,7 +553,7 @@ def error_file(
 
 
 @router.get("/requests/{request_id}/quote-import/template.xlsx")
-def quote_template(request_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def quote_template(request_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
     check_request(db, user, request_id, "quotes.write")
     require_permission(db, user, "exports.download", request_id)
     rows = []
@@ -624,7 +626,7 @@ def confirm(
     body: Input,
     idempotency_key: str | None = Header(default=None),
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ):
     owned_batch(db, user, request_id, batch_id)
 
@@ -778,12 +780,9 @@ def confirm(
                 for supplier_id, entries in groups.items():
                     # Use the same invariants and audit trail as the regular quote editor.
                     for offset in range(0, len(entries), 100):
-                        result = create_quote_sheet(
-                            request_id,
+                        result = record_quote_sheet(
+                            db, user, request_id,
                             QuoteSheetInput(supplier_id=supplier_id, items=entries[offset : offset + 100]),
-                            None,
-                            user,
-                            db,
                         )
                         sheet_ids.append(result["id"])
             finally:

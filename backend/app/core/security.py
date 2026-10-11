@@ -1,20 +1,21 @@
 import hashlib
 import secrets
-from datetime import timezone
-from typing import Any
+from typing import Annotated, Any
 
 from argon2 import PasswordHasher
 from cryptography.fernet import Fernet
 from fastapi import Depends, Request
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, event, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.db import get_db, utcnow
+from app.core.db import as_utc, get_db, utcnow
 from app.core.errors import DomainError
 from app.core.models import AuthSession, PermissionGrant, User, UserRole
 
 password_hasher = PasswordHasher()
+# Holders of these rights must enroll a second factor when MFA is required (production).
+MFA_PRIVILEGED_PERMISSIONS = ('admin.users', 'profiles.write', 'payments.confirm')
 
 PERMISSIONS = {
     'procurement.write': 'Заказы поставщикам',
@@ -45,13 +46,90 @@ def cipher() -> Fernet:
     return Fernet(base64.urlsafe_b64encode(hashlib.sha256(settings.secret_key.encode()).digest()))
 
 
+SCOPE_ORDER = ('all', 'shared', 'own')
+_SCOPES_CACHE = 'crm.permission_scopes'
+
+
+def effective_scopes(db: Session, user_id: str) -> dict[str, str]:
+    """Best allowed scope per permission code: one query per user, cached for the session (request).
+
+    A user-level deny wins over every allow; role-level denies are not part of the model.
+    """
+    cache = db.info.setdefault(_SCOPES_CACHE, {})
+    if user_id not in cache:
+        role_ids = select(UserRole.role_id).where(UserRole.user_id == user_id)
+        rows = db.execute(select(PermissionGrant.code, PermissionGrant.scope, PermissionGrant.allow,
+                                 PermissionGrant.user_id)
+                          .where(or_(PermissionGrant.user_id == user_id, PermissionGrant.role_id.in_(role_ids)))).all()
+        cache[user_id] = _resolve_scopes(rows, user_id)
+    return cache[user_id]
+
+
+def preload_permissions(db: Session, user_ids: list[str]) -> None:
+    """Fill the scope cache for several users with two queries (used by list views)."""
+    cache = db.info.setdefault(_SCOPES_CACHE, {})
+    missing = [user_id for user_id in dict.fromkeys(user_ids) if user_id not in cache]
+    if not missing:
+        return
+    roles_of: dict[str, set[str]] = {user_id: set() for user_id in missing}
+    for user_id, role_id in db.execute(select(UserRole.user_id, UserRole.role_id).where(UserRole.user_id.in_(missing))):
+        roles_of[user_id].add(role_id)
+    role_ids = set().union(*roles_of.values())
+    rows = db.execute(select(PermissionGrant.code, PermissionGrant.scope, PermissionGrant.allow,
+                             PermissionGrant.user_id, PermissionGrant.role_id)
+                      .where(or_(PermissionGrant.user_id.in_(missing), PermissionGrant.role_id.in_(role_ids)))).all()
+    for user_id in missing:
+        own = [(code, scope, allow, owner) for code, scope, allow, owner, role_id in rows
+               if owner == user_id or role_id in roles_of[user_id]]
+        cache[user_id] = _resolve_scopes(own, user_id)
+
+
+def _resolve_scopes(rows: Any, user_id: str) -> dict[str, str]:
+    """rows: (code, scope, allow, user_id) of the user's own and role grants."""
+    denied = {code for code, _, allow, owner in rows if owner == user_id and not allow}
+    granted: dict[str, set[str]] = {}
+    for code, scope, allow, _ in rows:
+        if allow and code not in denied:
+            granted.setdefault(code, set()).add(scope)
+    return {code: best for code, scopes in granted.items()
+            if (best := next((s for s in SCOPE_ORDER if s in scopes), None))}
+
+
+def invalidate_permissions(db: Session) -> None:
+    db.info.pop(_SCOPES_CACHE, None)
+
+
+@event.listens_for(Session, 'after_flush')
+def _grants_flushed(session: Session, _context: Any) -> None:
+    if any(isinstance(row, (PermissionGrant, UserRole)) for row in (*session.new, *session.dirty, *session.deleted)):
+        invalidate_permissions(session)
+
+
+@event.listens_for(Session, 'do_orm_execute')
+def _grants_bulk_changed(state: Any) -> None:
+    # Bulk UPDATE/DELETE statements bypass the unit of work and therefore after_flush.
+    if (state.is_update or state.is_delete) and state.bind_mapper is not None \
+            and state.bind_mapper.class_ in (PermissionGrant, UserRole):
+        invalidate_permissions(state.session)
+
+
 def scope_for(db: Session, user: User, code: str) -> str | None:
-    role_ids = select(UserRole.role_id).where(UserRole.user_id == user.id)
-    grants = db.scalars(select(PermissionGrant).where(PermissionGrant.code == code, or_(PermissionGrant.user_id == user.id, PermissionGrant.role_id.in_(role_ids)))).all()
-    if any(g.user_id == user.id and not g.allow for g in grants):
-        return None
-    scopes = {g.scope for g in grants if g.allow}
-    return next((s for s in ('all', 'shared', 'own') if s in scopes), None)
+    return effective_scopes(db, user.id).get(code)
+
+
+def users_with_permission(db: Session, code: str) -> list[User]:
+    """Active users that hold `code` in any scope, in one query instead of a check per user."""
+    # Explicit correlation: a doubly nested subquery would otherwise add its own `users` FROM
+    # and match the roles of every employee.
+    member_roles = select(UserRole.role_id).where(UserRole.user_id == User.id).correlate(User)
+    allowed = select(PermissionGrant.id).where(
+        PermissionGrant.code == code, PermissionGrant.allow.is_(True), PermissionGrant.scope.in_(SCOPE_ORDER),
+        or_(PermissionGrant.user_id == User.id, PermissionGrant.role_id.in_(member_roles)),
+    )
+    denied = select(PermissionGrant.id).where(
+        PermissionGrant.code == code, PermissionGrant.user_id == User.id, PermissionGrant.allow.is_(False))
+    return list(db.scalars(select(User).where(User.active.is_(True), allowed.exists(), ~denied.exists())
+                           .order_by(User.name, User.id)))
 
 
 def can(db: Session, user: User, code: str) -> bool:
@@ -127,7 +205,7 @@ def task_predicate(db: Session, user: User) -> Any:
     if not scope:
         return False
         
-    base = True if scope == 'all' else or_(Task.assignee_id == user.id, Task.author_id == user.id)
+    base = true() if scope == 'all' else or_(Task.assignee_id == user.id, Task.author_id == user.id)
     
     req_pred = request_predicate(db, user)
     cli_pred = client_predicate(db, user)
@@ -144,12 +222,12 @@ def task_predicate(db: Session, user: User) -> Any:
         )
     )
 
-def current_user(request: Request, db: Session = Depends(get_db)) -> User:
+def current_user(request: Request, db: Session = Depends(get_db, scope="function")) -> User:
     token = request.cookies.get('crm_session')
     if not token:
         raise DomainError('UNAUTHENTICATED', 'Войдите в систему', 401)
     session = db.scalar(select(AuthSession).where(AuthSession.token_hash == digest(token), AuthSession.revoked.is_(False)))
-    if session is None or session.expires_at.replace(tzinfo=timezone.utc) <= utcnow():
+    if session is None or as_utc(session.expires_at) <= utcnow():
         raise DomainError('SESSION_EXPIRED', 'Сеанс завершён. Войдите снова.', 401)
     user = db.get(User, session.user_id)
     if user is None or not user.active:
@@ -162,7 +240,12 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
         if origin and origin not in settings.allowed_origins.split(','):
             raise DomainError('ORIGIN_FORBIDDEN', 'Источник запроса не разрешён', 403)
     request.state.auth_session = session
-    privileged = any(can(db, user, p) for p in ('admin.users', 'profiles.write', 'payments.confirm'))
-    if settings.require_mfa and privileged and not user.mfa_enabled and not request.url.path.startswith('/api/v1/auth/'):
+    # Permission lookups run only when MFA is actually enforced for this user and path.
+    if (settings.require_mfa and not user.mfa_enabled and not request.url.path.startswith('/api/v1/auth/')
+            and any(can(db, user, p) for p in MFA_PRIVILEGED_PERMISSIONS)):
         raise DomainError('MFA_REQUIRED', 'Настройте двухфакторную защиту в профиле', 403)
     return user
+
+
+# Endpoint parameter for the signed-in user.
+Actor = Annotated[User, Depends(current_user)]

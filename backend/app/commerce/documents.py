@@ -8,8 +8,9 @@ from fastapi.responses import Response
 from sqlalchemy import func, select
 
 from app.core.config import settings
+from app.core.db import DB
 from app.core.errors import DomainError, error
-from app.core.security import check_request, has_request_permission, require_permission
+from app.core.security import Actor, check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.crm.models import Counterparty, QuoteItem, QuoteSheet, RequestItem, Seller
 from app.crm.models import Request as CRMRequest
@@ -26,7 +27,7 @@ from .models import (
     Quote,
     WaveAllocation,
 )
-from .procurement import DB, Actor, check_quote, validate_quantity
+from .procurement import check_quote, validate_quantity
 from .schemas import AcceptanceIn, ExecutionCancelIn, InvoiceIn, ProposalIn, SentIn
 
 router = APIRouter(tags=["Коммерческие документы"])
@@ -210,7 +211,7 @@ def issue_proposal(request_id: str, data: ProposalIn, db: DB, user: Actor):
         calc = db.get(Calculation, data.calculation_id)
         if not calc or calc.request_id != request_id:
             error("CALCULATION_REQUIRED", "Для выпуска КП нужен сохранённый расчёт этой заявки")
-        from app.business.routes import require_calculation_approved
+        from app.business.reviews import require_calculation_approved
         require_calculation_approved(db, calc)
         valid_until = document_expiry(data.valid_until)
         if data.previous_id:

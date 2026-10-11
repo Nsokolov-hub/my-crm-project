@@ -1,7 +1,9 @@
 from collections.abc import Generator
 from datetime import datetime, timezone
+from typing import Annotated
 from uuid import uuid4
 
+from fastapi import Depends
 from sqlalchemy import DateTime, Integer, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -10,6 +12,11 @@ from app.core.config import settings
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def as_utc(value: datetime) -> datetime:
+    """Naive values are stored UTC (SQLite); aware ones are converted, never relabelled."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 class Base(DeclarativeBase):
@@ -23,11 +30,20 @@ class Entity(Base):
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
 
-engine = create_engine(settings.database_url, pool_pre_ping=True)
+# Sessions read timestamps in UTC whatever TimeZone the PostgreSQL server is configured with.
+engine = create_engine(settings.database_url, pool_pre_ping=True, connect_args=(
+    {"options": "-c timezone=UTC"} if settings.database_url.startswith("postgresql") else {}))
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
 
 def get_db() -> Generator[Session, None, None]:
+    """Unit of work for one HTTP request.
+
+    Always declare it as ``Depends(get_db, scope="function")``: with FastAPI's default request
+    scope the commit runs only after the response has been sent, so a failed commit would be
+    reported to the client as success. Every usage must share one scope, otherwise the request
+    gets two independent sessions.
+    """
     with SessionLocal() as session:
         try:
             yield session
@@ -35,3 +51,7 @@ def get_db() -> Generator[Session, None, None]:
         except Exception:
             session.rollback()
             raise
+
+
+# Endpoint parameter for the request's session; scope="function" commits before the response is sent.
+DB = Annotated[Session, Depends(get_db, scope="function")]

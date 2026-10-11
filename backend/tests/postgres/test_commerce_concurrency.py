@@ -1,0 +1,357 @@
+"""Commerce concurrency acceptance checks against real PostgreSQL.
+
+Run: PYTHONPATH=backend .venv/bin/pytest backend/tests/postgres/test_commerce_concurrency.py -q
+Uses POSTGRES_TEST_DATABASE_URL when set, otherwise the configured database URL.
+Every test creates and drops its own schema; public tables are never used.
+For an offline unit-test run, exclude the postgres marker with ``-m 'not postgres'``.
+"""
+
+from datetime import date, timedelta
+from decimal import Decimal
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import func, select
+
+from app.commerce.models import (
+    Manufacturer,
+    Payment,
+    PaymentAllocation,
+    Product,
+    Substance,
+    WaveAllocation,
+)
+from app.core.models import AuditEvent, IdempotencyRecord
+from tests.support.commerce import approve, command, fund, get, prepare, wave
+from tests.support.postgres import concurrent_posts
+
+pytestmark = pytest.mark.postgres
+# Invoices must not be due in the past; a fixed calendar date expired on 2026-10-11.
+DUE_DATE = (date.today() + timedelta(days=10)).isoformat()
+
+
+def payment_payload(invoice_id, amount="1000", number="PAY-PG-001"):
+    return {
+        "idempotency_key": str(uuid4()),
+        "invoice_id": invoice_id,
+        "amount": amount,
+        "currency": "RUB",
+        "payment_date": date.today().isoformat(),
+        "number": number,
+    }
+
+
+def confirmed_payment(env, state, amount="1000", number="PAY-PG-001"):
+    payment = command(
+        env,
+        f"/requests/{env['request_id']}/payments",
+        payment_payload(state["invoice"]["id"], amount, number),
+    )
+    return command(env, f"/payments/{payment['id']}/confirm", {"version": 1})
+
+
+def test_parallel_allocations_cannot_spend_the_same_payment_twice(postgres_commerce):
+    env = postgres_commerce
+    state = prepare(env, with_invoice=True)
+    payment = confirmed_payment(env, state)
+    path = f"/payments/{payment['id']}/allocate"
+    body = {
+        "version": payment["version"],
+        "allocations": [{"invoice_id": state["invoice"]["id"], "amount": "700"}],
+    }
+    responses = concurrent_posts(env, [(path, {**body, "idempotency_key": str(uuid4())}) for _ in range(2)])
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    rejected = next(response.json() for response in responses if response.status_code == 409)
+    assert rejected["code"] == "VERSION_CONFLICT"
+    saved = get(env, f"/requests/{env['request_id']}/payments")["items"][0]
+    assert Decimal(saved["allocated"]) == Decimal("700")
+    assert Decimal(saved["unallocated"]) == Decimal("300")
+    with env["sessions"]() as db:
+        allocated = db.scalar(
+            select(func.sum(PaymentAllocation.amount)).where(PaymentAllocation.payment_id == payment["id"])
+        )
+        assert allocated == Decimal("700") <= db.get(Payment, payment["id"]).amount
+    retry = command(env, path, {**body, "version": saved["version"]}, expected=422)
+    assert retry["code"] == "PAYMENT_OVERALLOCATED"
+
+
+def test_parallel_payments_cannot_overpay_one_invoice(postgres_commerce):
+    env = postgres_commerce
+    state = prepare(env, with_invoice=True)
+    payments = [confirmed_payment(env, state, "2000", f"PAY-PG-{index}") for index in range(2)]
+    responses = concurrent_posts(
+        env,
+        [
+            (
+                f"/payments/{payment['id']}/allocate",
+                {
+                    "idempotency_key": str(uuid4()),
+                    "version": payment["version"],
+                    "allocations": [{"invoice_id": state["invoice"]["id"], "amount": "2000"}],
+                },
+            )
+            for payment in payments
+        ],
+    )
+    assert sorted(response.status_code for response in responses) == [200, 422]
+    assert next(response.json() for response in responses if response.status_code == 422)["code"] == (
+        "INVOICE_OVERPAYMENT"
+    )
+    invoice = get(env, f"/requests/{env['request_id']}/invoices")["items"][0]
+    assert Decimal(invoice["paid"]) == Decimal("2000")
+    assert Decimal(invoice["remaining"]) == Decimal("1593.75")
+    with env["sessions"]() as db:
+        assert (
+            db.scalar(
+                select(func.sum(PaymentAllocation.amount)).where(
+                    PaymentAllocation.invoice_id == state["invoice"]["id"]
+                )
+            )
+            == Decimal("2000")
+            <= Decimal(invoice["total"])
+        )
+
+
+def test_parallel_waves_cannot_exceed_approved_quantity(postgres_commerce):
+    env = postgres_commerce
+    state = prepare(env, with_invoice=True)
+    fund(env, state)
+    approval = approve(env, state)
+    waves = [wave(env, f"PG-WAVE-{index}") for index in range(2)]
+    body = {
+        "execution_id": state["execution"]["id"],
+        "approval_id": approval["id"],
+        "quantity": "6",
+    }
+    responses = concurrent_posts(
+        env,
+        [(f"/waves/{item['id']}/allocations", {**body, "idempotency_key": str(uuid4())}) for item in waves],
+    )
+    assert sorted(response.status_code for response in responses) == [200, 422]
+    assert next(response.json() for response in responses if response.status_code == 422)["code"] == (
+        "WAVE_OVERALLOCATED"
+    )
+    with env["sessions"]() as db:
+        allocated = db.scalar(
+            select(func.sum(WaveAllocation.quantity)).where(
+                WaveAllocation.execution_id == state["execution"]["id"],
+                WaveAllocation.active.is_(True),
+            )
+        )
+        assert allocated == Decimal("6") <= Decimal(approval["snapshot"]["lines"][0]["quantity"])
+    command(env, f"/waves/{waves[0]['id']}/allocations", {**body, "quantity": "4"})
+    saved = get(env, f"/requests/{env['request_id']}/executions")["items"][0]
+    assert Decimal(saved["allocated"]) == Decimal("10")
+    assert Decimal(saved["unallocated"]) == 0
+    assert (
+        command(env, f"/waves/{waves[1]['id']}/allocations", {**body, "quantity": "1"}, expected=422)["code"]
+        == "WAVE_OVERALLOCATED"
+    )
+
+
+def test_parallel_product_imports_resolve_to_one_variant(postgres_commerce):
+    env = postgres_commerce
+    body = {
+        "name": "Этанол",
+        "cas": "64-17-5",
+        "manufacturer": "Фабрика",
+        "purity": "99%",
+        "packaging": "25 г",
+        "unit": "g",
+        "package_quantity": "25",
+    }
+    responses = concurrent_posts(
+        env,
+        [
+            ("/catalog/products", {**body, "manufacturer": maker})
+            for maker in ("Фабрика", " фабрика  ", "ФАБРИКА", "  Фабрика", "фабрика", "Фабрика ")
+        ],
+    )
+    assert [response.status_code for response in responses] == [200] * 6
+    assert len({response.json()["id"] for response in responses}) == 1
+    with env["sessions"]() as db:
+        for model in (Product, Substance, Manufacturer):
+            assert db.scalar(select(func.count()).select_from(model)) == 1
+    different_package = env["client"].post(
+        "/api/v1/catalog/products", json={**body, "packaging": "100 г", "package_quantity": "100"}
+    )
+    assert different_package.status_code == 200
+    assert different_package.json()["id"] != responses[0].json()["id"]
+
+
+def test_a04_parallel_quotes_resolve_to_one_product(postgres_commerce):
+    env = postgres_commerce
+    prepare(env)
+    body = {
+        "name": "Метанол",
+        "cas": "67-56-1",
+        "manufacturer": "Тестовый Завод",
+        "purity": "99.9%",
+        "packaging": "100 мл",
+        "unit": "ml",
+        "package_quantity": "100",
+    }
+    quote_payload = {
+        "item_id": env["item_id"],
+        "item_revision": 1,
+        "supplier_id": env["supplier_id"],
+        "price": "100",
+        "currency": "RUB",
+        "price_unit": "ml",
+        "available_quantity": "1000",
+        "requires_confirmation": True,
+        "product": body,
+    }
+
+    import uuid
+
+    responses = concurrent_posts(
+        env,
+        [
+            (
+                f"/requests/{env['request_id']}/quotes",
+                {
+                    **quote_payload,
+                    "idempotency_key": str(uuid.uuid4()),
+                    "product": {**body, "manufacturer": maker},
+                },
+            )
+            for maker in ("Тестовый Завод", " тестовый завод  ", "ТЕСТОВЫЙ ЗАВОД")
+        ],
+    )
+    assert [response.status_code for response in responses] == [200] * 3, [r.json() for r in responses]
+    assert len({response.json()["product"]["id"] for response in responses}) == 1
+    assert len({response.json()["id"] for response in responses}) == 3
+    with env["sessions"]() as db:
+        assert db.scalar(select(func.count()).select_from(Product)) == 2
+
+
+def test_parallel_retries_return_one_payment_and_one_business_event(postgres_commerce):
+    env = postgres_commerce
+    state = prepare(env, with_invoice=True)
+    path = f"/requests/{env['request_id']}/payments"
+    body = payment_payload(state["invoice"]["id"])
+    responses = concurrent_posts(env, [(path, body) for _ in range(6)])
+    assert [response.status_code for response in responses] == [200] * 6
+    assert all(response.json() == responses[0].json() for response in responses)
+    with env["sessions"]() as db:
+        assert db.scalar(select(func.count()).select_from(Payment)) == 1
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(IdempotencyRecord)
+                .where(IdempotencyRecord.key == body["idempotency_key"])
+            )
+            == 1
+        )
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(AuditEvent)
+                .where(AuditEvent.entity_type == "payment", AuditEvent.action == "declare")
+            )
+            == 1
+        )
+
+
+def test_parallel_reuse_of_key_with_different_amount_conflicts(postgres_commerce):
+    env = postgres_commerce
+    state = prepare(env, with_invoice=True)
+    path = f"/requests/{env['request_id']}/payments"
+    body = payment_payload(state["invoice"]["id"])
+    responses = concurrent_posts(env, [(path, body), (path, {**body, "amount": "2000"})])
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    assert next(response.json() for response in responses if response.status_code == 409)["code"] == (
+        "IDEMPOTENCY_CONFLICT"
+    )
+    winner = next(response.json() for response in responses if response.status_code == 200)
+    with env["sessions"]() as db:
+        assert db.scalar(select(func.count()).select_from(Payment)) == 1
+        assert db.get(Payment, winner["id"]).amount == Decimal(winner["amount"])
+
+
+def test_r05_partial_amount_rounding_and_concurrent_issuance(postgres_commerce):
+    env = postgres_commerce
+    state = prepare(env, with_invoice=False)
+
+    # Accept the proposal completely
+    accepted = command(
+        env,
+        f"/proposals/{state['proposal']['id']}/accept",
+        {
+            "version": 1,
+            "lines": [{"line_id": state["quote"]["id"], "quantity": "10"}],
+            "reason": "Клиент принимает часть",
+        },
+    )
+    execution_id = accepted["executions"][0]["id"]
+
+    from decimal import Decimal
+
+    # We will issue 3 parts: quantity=4, quantity=4, quantity=2
+    # The original quantity is 10.
+
+    def issue_part(quantity, key=None):
+        return command(
+            env,
+            f"/requests/{env['request_id']}/invoices",
+            {
+                "proposal_id": state["proposal"]["id"],
+                "lines": [{"execution_id": execution_id, "quantity": str(quantity)}],
+                "due_date": DUE_DATE,
+                "terms": "Partial",
+                "idempotency_key": key or str(uuid4()),
+            },
+        )
+
+    issue_part(4)
+    issue_part(4)
+
+    # Now the remaining quantity is 2.
+    # Concurrent issuance of the last part with DIFFERENT keys -> one succeeds, one fails
+    # Concurrent issuance with SAME key -> one succeeds, one returns idempotent
+
+    last_key = str(uuid4())
+
+    path = f"/requests/{env['request_id']}/invoices"
+    payload1 = {
+        "proposal_id": state["proposal"]["id"],
+        "lines": [{"execution_id": execution_id, "quantity": "2"}],
+        "due_date": DUE_DATE,
+        "terms": "Final",
+        "idempotency_key": last_key,
+    }
+    payload2 = {
+        "proposal_id": state["proposal"]["id"],
+        "lines": [{"execution_id": execution_id, "quantity": "2"}],
+        "due_date": DUE_DATE,
+        "terms": "Final",
+        "idempotency_key": str(uuid4()),  # Different key! Should fail!
+    }
+
+    # We will simulate 3 concurrent requests: 2 with the same key, 1 with a different key
+    responses = concurrent_posts(env, [(path, payload1), (path, payload1), (path, payload2)])
+
+    # Expect: 200, 200, 422
+    statuses = sorted([r.status_code for r in responses])
+    assert statuses in ([200, 200, 422], [200, 422, 422])
+
+    error_resp = next(r.json() for r in responses if r.status_code == 422)
+    assert error_resp["code"] == "QUANTITY_EXCEEDED"
+
+    # Verify the sum of the invoices equals the original execution snapshot
+    invoices = get(env, f"/requests/{env['request_id']}/invoices")["items"]
+    assert len(invoices) == 3
+
+    def get_lines(inv):
+        return inv.get("lines", inv.get("snapshot", {}).get("lines", []))
+
+    sum_net = sum(Decimal(get_lines(inv)[0]["net"]) for inv in invoices)
+    sum_tax = sum(Decimal(get_lines(inv)[0]["tax"]) for inv in invoices)
+
+    assert sum_net == Decimal(state["proposal"]["snapshot"]["lines"][0]["net"])
+    assert sum_tax == Decimal(state["proposal"]["snapshot"]["lines"][0]["tax"])
+
+    # Verify we can also issue 0.02 / 4 with negative cap
+    # The requirement: "Проверь 0,02/4, net и tax отдельно"
+    # To do this, we need a setup where original total net is 0.02 and quantity is 4.

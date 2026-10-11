@@ -15,11 +15,13 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base, Entity, utcnow
 from app.crm.codes import next_code
+from app.crm.text_search import search_values
 
 
 class Seller(Entity):
@@ -46,6 +48,22 @@ class Counterparty(Entity):
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     external_id: Mapped[str | None] = mapped_column(String(250), unique=True)
     source: Mapped[str | None] = mapped_column(String(250))
+    # Normalized copies for search (see app.crm.text_search); maintained on every insert and update,
+    # used only in SQL filters, so they are neither loaded with the row nor shown in views and history.
+    search_text: Mapped[str] = mapped_column(Text, default='', server_default='', deferred=True,
+                                             info={'internal': True})
+    search_fields: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, server_default='{}', deferred=True,
+                                                          info={'internal': True})
+
+
+@event.listens_for(Counterparty, 'before_insert')
+@event.listens_for(Counterparty, 'before_update')
+def _refresh_counterparty_search(_mapper: Any, _connection: Any, target: Counterparty) -> None:
+    # Mapper events run after the before_flush hook that assigns internal codes.
+    target.search_text, target.search_fields = search_values(
+        name=target.name, tax_id=target.tax_id, phone=target.phone, email=target.email,
+        internal_code=target.internal_code, details=target.details,
+    )
 
 
 class Contact(Entity):
@@ -155,7 +173,6 @@ class RequestItem(Entity):
     purity: Mapped[str | None] = mapped_column(String(200))
     packaging: Mapped[str | None] = mapped_column(String(200))
     allow_analogue: Mapped[bool] = mapped_column(Boolean, default=False)
-    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default='false')
     desired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     comment: Mapped[str | None] = mapped_column(Text)
     revision: Mapped[int] = mapped_column(default=1)

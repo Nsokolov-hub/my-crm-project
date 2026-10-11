@@ -1,12 +1,13 @@
 import secrets
 import time
+from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any, Literal
 
 import pyotp
 from argon2.exceptions import VerificationError
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError
+from pydantic import EmailStr, Field, ValidationError
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
@@ -15,7 +16,6 @@ from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
 from app.core.models import (
     AppSetting,
-    AuditEvent,
     AuthSession,
     LoginAttempt,
     PermissionGrant,
@@ -23,12 +23,14 @@ from app.core.models import (
     User,
     UserRole,
 )
+from app.core.schemas import Input, SessionView, UserPage, UserView
 from app.core.security import (
     PERMISSIONS,
     cipher,
     current_user,
     digest,
     password_hasher,
+    preload_permissions,
     require_permission,
     scope_for,
 )
@@ -37,10 +39,6 @@ from app.core.service import page as paginate
 from app.core.settings_registry import SETTING_META
 
 router = APIRouter(tags=["Доступ и настройки"])
-
-
-class Input(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
 class LoginInput(Input):
@@ -58,51 +56,62 @@ class PasswordInput(Input):
     new_password: str = Field(min_length=12, max_length=200)
 
 
+def user_views(db: Session, users: list[User]) -> list[dict[str, Any]]:
+    """Views for several users with a fixed number of queries (roles, personal grants, scopes)."""
+    ids = [user.id for user in users]
+    roles: dict[str, list[Role]] = defaultdict(list)
+    for user_id, role in db.execute(select(UserRole.user_id, Role).join(Role, Role.id == UserRole.role_id)
+                                    .where(UserRole.user_id.in_(ids))):
+        roles[user_id].append(role)
+    grants: dict[str | None, list[PermissionGrant]] = defaultdict(list)
+    for grant in db.scalars(select(PermissionGrant).where(PermissionGrant.user_id.in_(ids))):
+        grants[grant.user_id].append(grant)
+    preload_permissions(db, ids)
+    return [
+        {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "active": user.active,
+            "own_requests_only": user.own_requests_only,
+            "version": user.version,
+            "mfa_enabled": user.mfa_enabled,
+            "roles": [{"id": r.id, "name": r.name} for r in roles[user.id]],
+            "grants": [{"code": g.code, "scope": g.scope, "allow": g.allow} for g in grants[user.id]],
+            "permissions": {code: scope for code in PERMISSIONS if (scope := scope_for(db, user, code))},
+        }
+        for user in users
+    ]
+
+
 def user_view(db: Session, user: User) -> dict[str, Any]:
-    roles = db.scalars(
-        select(Role).join(UserRole, UserRole.role_id == Role.id).where(UserRole.user_id == user.id)
-    ).all()
-    return {
-        "id": user.id,
-        "email": user.email,
-        "name": user.name,
-        "active": user.active,
-        "own_requests_only": user.own_requests_only,
-        "version": user.version,
-        "mfa_enabled": user.mfa_enabled,
-        "roles": [{"id": r.id, "name": r.name} for r in roles],
-        "grants": [
-            {"code": grant.code, "scope": grant.scope, "allow": grant.allow}
-            for grant in db.scalars(
-                select(PermissionGrant).where(PermissionGrant.user_id == user.id)
-            )
-        ],
-        "permissions": {code: scope for code in PERMISSIONS if (scope := scope_for(db, user, code))},
-    }
+    return user_views(db, [user])[0]
 
 
-@router.post("/auth/login")
+@router.post("/auth/login", response_model=SessionView)
 def login(
-    body: LoginInput, request: Request, response: Response, db: Session = Depends(get_db)
+    body: LoginInput, request: Request, response: Response, db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     email = str(body.email).lower()
     ip = request.client.host if request.client else "unknown"
     advisory(db, f"login:{email}")
-    since = utcnow() - timedelta(minutes=15)
-    failures = (
-        db.scalar(
-            select(func.count())
-            .select_from(LoginAttempt)
-            .where(
-                LoginAttempt.created_at >= since,
-                LoginAttempt.successful.is_(False),
-                or_(LoginAttempt.identity == email, LoginAttempt.ip == ip),
-            )
+    since = utcnow() - timedelta(minutes=settings.login_window_minutes)
+    identity_failures, ip_failures = db.execute(
+        select(
+            func.count().filter(LoginAttempt.identity == email),
+            func.count().filter(LoginAttempt.ip == ip),
+        ).where(
+            LoginAttempt.created_at >= since,
+            LoginAttempt.successful.is_(False),
+            or_(LoginAttempt.identity == email, LoginAttempt.ip == ip),
         )
-        or 0
-    )
-    if failures >= 10:
-        raise DomainError("LOGIN_RATE_LIMIT", "Слишком много попыток входа. Повторите через 15 минут.", 429)
+    ).one()
+    if identity_failures >= settings.login_identity_attempts or ip_failures >= settings.login_ip_attempts:
+        raise DomainError(
+            "LOGIN_RATE_LIMIT",
+            f"Слишком много попыток входа. Повторите через {settings.login_window_minutes} минут.",
+            429,
+        )
     user = db.scalar(select(User).where(User.email == email).with_for_update())
     valid = False
     try:
@@ -144,15 +153,12 @@ def login(
         max_age=settings.session_hours * 3600,
         path="/",
     )
-    return {
-        "user": user_view(db, user),
-        "csrf_token": csrf,
-        "permissions": user_view(db, user)["permissions"],
-    }
+    view = user_view(db, user)
+    return {"user": view, "csrf_token": csrf, "permissions": view["permissions"]}
 
 
-@router.get("/auth/me")
-def me(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+@router.get("/auth/me", response_model=SessionView)
+def me(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     data = user_view(db, user)
     return {
         "user": data,
@@ -163,7 +169,7 @@ def me(request: Request, user: User = Depends(current_user), db: Session = Depen
 
 @router.post("/auth/logout")
 def logout(
-    request: Request, response: Response, user: User = Depends(current_user), db: Session = Depends(get_db)
+    request: Request, response: Response, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, bool]:
     request.state.auth_session.revoked = True
     response.delete_cookie("crm_session", path="/")
@@ -172,7 +178,7 @@ def logout(
 
 
 @router.post("/auth/mfa/setup")
-def mfa_setup(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, str]:
+def mfa_setup(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, str]:
     user = lock(db, User, user.id)
     if user.mfa_enabled:
         raise DomainError("MFA_ALREADY_ENABLED", "Второй фактор уже настроен", 409)
@@ -187,7 +193,7 @@ def mfa_setup(user: User = Depends(current_user), db: Session = Depends(get_db))
 
 @router.post("/auth/mfa/enable")
 def mfa_enable(
-    body: OTPInput, user: User = Depends(current_user), db: Session = Depends(get_db)
+    body: OTPInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, bool]:
     user = lock(db, User, user.id)
     if not user.mfa_secret or not pyotp.TOTP(cipher().decrypt(user.mfa_secret.encode()).decode()).verify(
@@ -203,7 +209,7 @@ def mfa_enable(
 
 @router.post("/auth/password")
 def change_password(
-    body: PasswordInput, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)
+    body: PasswordInput, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, bool]:
     try:
         password_hasher.verify(user.password_hash, body.current_password)
@@ -251,7 +257,7 @@ class UserPatch(Input):
 
 
 @router.get("/users")
-def directory(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def directory(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     rows = db.scalars(select(User).where(User.active.is_(True)).order_by(User.name)).all()
     return {
         "items": [{"id": r.id, "name": r.name} for r in rows],
@@ -262,23 +268,23 @@ def directory(user: User = Depends(current_user), db: Session = Depends(get_db))
 
 
 @router.get("/admin/permissions")
-def permissions(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def permissions(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     return {"items": [{"code": k, "name": v} for k, v in PERMISSIONS.items()]}
 
 
-@router.get("/admin/users")
+@router.get("/admin/users", response_model=UserPage)
 def users(
     page: int = 1,
     page_size: int = 25,
     q: str = "",
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     stmt = select(User).where(or_(User.name.ilike(f"%{q}%"), User.email.ilike(f"%{q}%")))
     result = paginate(db, stmt.order_by(User.name), page, page_size)
-    result["items"] = [user_view(db, db.get(User, row["id"])) for row in result["items"]]
+    result["items"] = user_views(db, [found for row in result["items"] if (found := db.get(User, row["id"]))])
     return result
 
 
@@ -306,9 +312,9 @@ def assign_grants(
     db.flush()
 
 
-@router.post("/admin/users", status_code=201)
+@router.post("/admin/users", status_code=201, response_model=UserView)
 def create_user(
-    body: UserInput, user: User = Depends(current_user), db: Session = Depends(get_db)
+    body: UserInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     row = User(
@@ -322,9 +328,9 @@ def create_user(
     return user_view(db, row)
 
 
-@router.patch("/admin/users/{entity_id}")
+@router.patch("/admin/users/{entity_id}", response_model=UserView)
 def edit_user(
-    entity_id: str, body: UserPatch, user: User = Depends(current_user), db: Session = Depends(get_db)
+    entity_id: str, body: UserPatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     from app.crm.models import Counterparty, Task
     from app.crm.models import Request as CRMRequest
@@ -389,20 +395,14 @@ def edit_user(
 
 
 @router.get("/admin/roles")
-def roles(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def roles(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     rows = db.scalars(select(Role).order_by(Role.name)).all()
+    grants: dict[str | None, list[dict[str, Any]]] = defaultdict(list)
+    for g in db.scalars(select(PermissionGrant).where(PermissionGrant.role_id.in_([r.id for r in rows]))):
+        grants[g.role_id].append({"code": g.code, "scope": g.scope, "allow": g.allow})
     return {
-        "items": [
-            {
-                **serialize(r),
-                "grants": [
-                    {"code": g.code, "scope": g.scope, "allow": g.allow}
-                    for g in db.scalars(select(PermissionGrant).where(PermissionGrant.role_id == r.id))
-                ],
-            }
-            for r in rows
-        ],
+        "items": [{**serialize(r), "grants": grants[r.id]} for r in rows],
         "total": len(rows),
         "page": 1,
         "page_size": len(rows),
@@ -411,7 +411,7 @@ def roles(user: User = Depends(current_user), db: Session = Depends(get_db)) -> 
 
 @router.post("/admin/roles")
 def create_role(
-    body: RoleInput, user: User = Depends(current_user), db: Session = Depends(get_db)
+    body: RoleInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     row = Role(name=body.name)
@@ -424,7 +424,7 @@ def create_role(
 
 @router.put("/admin/roles/{entity_id}")
 def edit_role(
-    entity_id: str, body: RoleInput, user: User = Depends(current_user), db: Session = Depends(get_db)
+    entity_id: str, body: RoleInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     require_permission(db, user, "admin.users")
     row = lock(db, Role, entity_id)
@@ -456,7 +456,7 @@ def get_settings_meta() -> dict[str, Any]:
 
 
 @router.get("/settings")
-def list_settings(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def list_settings(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, "admin.settings")
     # Возвращаем только актуальные настройки
     stmt = select(AppSetting).where(AppSetting.status == "published").order_by(AppSetting.key)
@@ -465,7 +465,7 @@ def list_settings(user: User = Depends(current_user), db: Session = Depends(get_
 
 @router.post("/settings")
 def set_setting(
-    body: SettingInput, user: User = Depends(current_user), db: Session = Depends(get_db)
+    body: SettingInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     # Валидация по схеме из реестра
     if body.key in SETTING_META:
@@ -525,89 +525,6 @@ def set_setting(
     return serialize(row)
 
 
-@router.get("/admin/audit")
-def list_audit(
-    entity_id: str | None = None,
-    page: int = 1,
-    page_size: int = 25,
-    user: User = Depends(current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    require_permission(db, user, "audit.read")
-    stmt = select(AuditEvent)
-    if entity_id:
-        stmt = stmt.where(AuditEvent.entity_id == entity_id)
-    result = paginate(db, stmt.order_by(AuditEvent.created_at.desc()), page, page_size)
-    from app.commerce.financial import filter_calculation_snapshot
-    from app.core.security import can, has_request_permission
-
-    for row in result["items"]:
-        req_id = row.get("request_id")
-
-        can_purchase = (
-            has_request_permission(db, user, req_id, "finance.purchase.read")
-            if req_id
-            else can(db, user, "finance.purchase.read")
-        )
-        can_calculations = (
-            has_request_permission(db, user, req_id, "finance.calculations.read")
-            if req_id
-            else can(db, user, "finance.calculations.read")
-        )
-        can_reward = (
-            has_request_permission(db, user, req_id, "finance.reward.read")
-            if req_id
-            else can(db, user, "finance.reward.read")
-        )
-        can_profit = (
-            has_request_permission(db, user, req_id, "finance.profit.read")
-            if req_id
-            else can(db, user, "finance.profit.read")
-        )
-
-        if row["entity_type"] == "calculation":
-            if row.get("before") and "snapshot" in row["before"]:
-                row["before"]["snapshot"] = filter_calculation_snapshot(
-                    db, user, req_id, row["before"]["snapshot"]
-                )
-            if row.get("after") and "snapshot" in row["after"]:
-                row["after"]["snapshot"] = filter_calculation_snapshot(
-                    db, user, req_id, row["after"]["snapshot"]
-                )
-        elif row["entity_type"] == "quote":
-            if not can_purchase:
-                if row.get("before"):
-                    for field in ("price", "sample", "revision_reason"):
-                        row["before"].pop(field, None)
-                if row.get("after"):
-                    for field in ("price", "sample", "revision_reason"):
-                        row["after"].pop(field, None)
-        elif row["entity_type"] == "calculation_profile":
-            if row.get("before") and "definition" in row["before"]:
-                definition = row["before"]["definition"]
-                if not can_reward:
-                    definition.pop("reward_enabled", None)
-                    definition.pop("reward_label", None)
-                    definition.pop("reward_basis", None)
-                if not can_profit:
-                    definition.pop("constants", None)
-                    definition.pop("formulas", None)
-            if row.get("after") and "definition" in row["after"]:
-                definition = row["after"]["definition"]
-                if not can_reward:
-                    definition.pop("reward_enabled", None)
-                    definition.pop("reward_label", None)
-                    definition.pop("reward_basis", None)
-                if not can_profit:
-                    definition.pop("constants", None)
-                    definition.pop("formulas", None)
-        else:
-            if not (can_purchase and can_calculations and can_reward and can_profit):
-                row.pop("before", None)
-                row.pop("after", None)
-    return result
-
-
 class WizardInput(Input):
     company_name: str = Field(min_length=2, max_length=100)
     timezone: str = Field(default="Europe/Moscow")
@@ -615,7 +532,7 @@ class WizardInput(Input):
 
 @router.post("/setup/wizard")
 def setup_wizard(
-    body: WizardInput, user: User = Depends(current_user), db: Session = Depends(get_db)
+    body: WizardInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
 ) -> dict[str, Any]:
     require_permission(db, user, "admin.settings")
 

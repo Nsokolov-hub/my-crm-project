@@ -1,11 +1,8 @@
-import hashlib
-import io
 from typing import Annotated, Any, Literal
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -18,12 +15,12 @@ from app.communication.access import (
     check_file,
     file_view,
 )
-from app.communication.files import store_quarantine, validate_upload, verified_content
+from app.communication.attachments import attach_file, file_download
 from app.communication.models import Chat, ChatMember, FileRecord, Message, MessageFile
-from app.core.config import settings
 from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
-from app.core.models import AppSetting, Notification, OutboxEvent, User
+from app.core.models import Notification, OutboxEvent, User
+from app.core.schemas import Input
 from app.core.security import (
     can,
     client_predicate,
@@ -37,10 +34,6 @@ from app.core.service import advisory, audit, check_version, idem, serialize
 from app.core.service import page as paginate
 
 router = APIRouter(tags=['Общение и файлы'])
-
-
-class Input(BaseModel):
-    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
 
 
 class ChatInput(Input):
@@ -120,7 +113,7 @@ def validate_member(db: Session, user_id: str, chat: Chat) -> User:
 
 
 @router.post('/chats', status_code=201)
-def create_chat(body: ChatInput, user: User = Depends(current_user), db: Session = Depends(get_db),
+def create_chat(body: ChatInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
                 idempotency_key: Annotated[str | None, Header()] = None) -> dict:
     require_permission(db, user, 'chats.use')
     if body.entity_id:
@@ -156,7 +149,7 @@ def create_chat(body: ChatInput, user: User = Depends(current_user), db: Session
 
 @router.get('/chats')
 def chats(page: int = 1, page_size: int = 25, q: str = '', entity_id: str | None = None,
-          user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+          user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     from app.commerce.models import Wave
     from app.crm.models import Request as CRMRequest
     require_permission(db, user, 'chats.use')
@@ -176,7 +169,7 @@ def chats(page: int = 1, page_size: int = 25, q: str = '', entity_id: str | None
 
 
 @router.get('/chats/unread-count')
-def unread_chat_count(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict[str, int]:
+def unread_chat_count(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, int]:
     from app.commerce.models import Wave
     from app.crm.models import Request as CRMRequest
 
@@ -205,12 +198,12 @@ def unread_chat_count(user: User = Depends(current_user), db: Session = Depends(
 
 
 @router.get('/chats/{entity_id}')
-def get_chat(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+def get_chat(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     return chat_view(db, *check_chat(db, user, entity_id))
 
 
 @router.patch('/chats/{entity_id}')
-def edit_chat(entity_id: str, body: ChatPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+def edit_chat(entity_id: str, body: ChatPatch, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     row, member = check_chat(db, user, entity_id, for_update=True)
     if row.owner_id != user.id:
         raise DomainError('CHAT_OWNER_REQUIRED', 'Изменить чат может его создатель', 403)
@@ -223,7 +216,7 @@ def edit_chat(entity_id: str, body: ChatPatch, user: User = Depends(current_user
 
 
 @router.post('/chats/{entity_id}/members')
-def add_member(entity_id: str, body: MemberInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+def add_member(entity_id: str, body: MemberInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     row, member = check_chat(db, user, entity_id, for_update=True)
     if row.owner_id != user.id or row.kind == 'direct':
         raise DomainError('CHAT_MEMBERS_FORBIDDEN', 'Состав группы изменяет её создатель; состав личного чата неизменяем', 403)
@@ -248,7 +241,7 @@ def add_member(entity_id: str, body: MemberInput, user: User = Depends(current_u
 
 @router.delete('/chats/{entity_id}/members/{member_id}')
 def remove_member(entity_id: str, member_id: str, version: int = Query(ge=1),
-                  user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+                  user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     row, member = check_chat(db, user, entity_id, for_update=True)
     if row.kind == 'direct' or row.owner_id != user.id:
         raise DomainError('CHAT_MEMBERS_FORBIDDEN', 'Состав группы изменяет её создатель', 403)
@@ -289,7 +282,7 @@ def message_view(db: Session, user: User, row: Message) -> dict:
 
 
 @router.post('/chats/{entity_id}/messages', status_code=201)
-def send_message(entity_id: str, body: MessageInput, user: User = Depends(current_user), db: Session = Depends(get_db),
+def send_message(entity_id: str, body: MessageInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
                  idempotency_key: Annotated[str | None, Header()] = None) -> dict:
     check_chat(db, user, entity_id)
 
@@ -333,7 +326,7 @@ def send_message(entity_id: str, body: MessageInput, user: User = Depends(curren
 
 @router.get('/chats/{entity_id}/messages')
 def messages(entity_id: str, after: str | None = None, limit: int = Query(default=50, ge=1, le=100),
-             user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+             user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     chat, member = check_chat(db, user, entity_id)
     cursor = 0
     if after:
@@ -355,7 +348,7 @@ def messages(entity_id: str, after: str | None = None, limit: int = Query(defaul
 
 
 @router.post('/chats/{entity_id}/read')
-def read_chat(entity_id: str, body: ReadInput, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+def read_chat(entity_id: str, body: ReadInput, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     chat, member = check_chat(db, user, entity_id, for_update=True)
     through = chat.last_sequence if body.through is None else body.through
     if through > chat.last_sequence:
@@ -389,7 +382,7 @@ def notification_scope(db, user):
 
 @router.get('/notifications')
 def notifications(read: bool | None = None, page: int = 1, page_size: int = 25,
-                  user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+                  user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     guards = notification_scope(db, user)
     statement = select(Notification).where(Notification.user_id == user.id, *guards)
     if read is not None:
@@ -401,7 +394,7 @@ def notifications(read: bool | None = None, page: int = 1, page_size: int = 25,
 
 
 @router.post('/notifications/{entity_id}/read')
-def read_notification(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+def read_notification(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     row = db.scalar(select(Notification).where(Notification.id == entity_id, Notification.user_id == user.id, *notification_scope(db, user)).with_for_update())
     if row is None:
         raise DomainError('NOT_FOUND', 'Уведомление не найдено', 404)
@@ -412,57 +405,15 @@ def read_notification(entity_id: str, user: User = Depends(current_user), db: Se
 @router.post('/files', status_code=201)
 def upload_file(file: Annotated[UploadFile, File()], entity_type: Annotated[str, Form()],
                 entity_id: Annotated[str, Form()], classification: Annotated[str, Form()] = 'general',
-                user: User = Depends(current_user), db: Session = Depends(get_db),
+                user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
                 idempotency_key: Annotated[str | None, Header()] = None) -> dict:
-    require_permission(db, user, 'files.upload')
-    source = check_entity(db, user, entity_type, entity_id)
-    if classification not in ('general', *FILE_PERMISSIONS):
-        raise DomainError('FILE_CLASSIFICATION_INVALID', 'Выберите допустимую категорию доступа', 422, 'classification')
-    mandatory = {'quote': 'purchase', 'calculation': 'calculation'}.get(entity_type)
-    if mandatory and classification != mandatory:
-        raise DomainError('FILE_CLASSIFICATION_REQUIRED', 'Файл наследует финансовую категорию исходного объекта', 422, 'classification')
-    if permission := FILE_PERMISSIONS.get(classification):
-        source_request_id = entity_id if entity_type == 'request' else getattr(source, 'request_id', None)
-        require_permission(db, user, permission, source_request_id)
-    policy = db.scalar(select(AppSetting).where(AppSetting.key == 'file_policy', AppSetting.status == 'published'))
-    maximum = settings.max_file_size
-    if policy and isinstance(policy.value.get('max_file_size'), int):
-        maximum = max(1024, min(100 * 1024 * 1024, policy.value['max_file_size']))
-    content = file.file.read(maximum + 1)
-    if not content:
-        raise DomainError('FILE_EMPTY', 'Файл пуст', 422, 'file')
-    if len(content) > maximum:
-        raise DomainError('FILE_TOO_LARGE', f'Максимальный размер файла — {maximum // (1024 * 1024)} МБ', 413, 'file')
-    filename, media_type = validate_upload(file.filename or '', file.content_type, content)
-    checksum = hashlib.sha256(content).hexdigest()
+    return attach_file(db, user, file, entity_type, entity_id, classification, idempotency_key)
 
-    def operation():
-        advisory(db, f'file-hash:{checksum}')
-        # Copies keep all original access boundaries. Known uploads are referenced in place, never reclassified.
-        originals = db.scalars(select(FileRecord).where(FileRecord.sha256 == checksum)).all()
-        for original in originals:
-            if original.classification != 'general' and original.classification != classification:
-                raise DomainError('FILE_CLASSIFICATION_DOWNGRADE', 'Используйте ссылку на исходный финансовый файл', 422, 'classification')
-            if (original.classification != 'general' or original.chat_id) and (
-                    original.classification != classification or getattr(original, ENTITY_COLUMNS[entity_type]) != entity_id):
-                raise DomainError('FILE_SOURCE_PROTECTED', 'Копия защищённого файла сохраняет исходные права. Прикрепите ссылку.', 422, 'file')
-        key, digest = store_quarantine(content)
-        row = FileRecord(name=filename, media_type=media_type, size=len(content), sha256=digest,
-                         storage_key=key, author_id=user.id, classification=classification,
-                         **{ENTITY_COLUMNS[entity_type]: entity_id})
-        db.add(row)
-        db.flush()
-        db.add(OutboxEvent(event_key=f'file-scan:{row.id}', kind='file.scan', payload={'file_id': row.id}))
-        audit(db, user, 'file', row.id, 'uploaded', after={'classification': classification, 'sha256': digest, 'size': row.size})
-        return file_view(row)
-    saved = idem(db, user, idempotency_key, 'file:upload', {'entity_type': entity_type, 'entity_id': entity_id,
-                 'classification': classification, 'name': filename, 'sha256': checksum}, operation)
-    return file_view(check_file(db, user, saved['id']))
 
 
 @router.get('/files')
 def files(entity_type: str, entity_id: str, page: int = 1, page_size: int = 25,
-          user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+          user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     source = check_entity(db, user, entity_type, entity_id)
     request_id = entity_id if entity_type == 'request' else getattr(source, 'request_id', None)
     allowed = ['general']
@@ -480,26 +431,10 @@ def files(entity_type: str, entity_id: str, page: int = 1, page_size: int = 25,
 
 
 @router.get('/files/{entity_id}')
-def get_file(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+def get_file(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
     return file_view(check_file(db, user, entity_id))
 
 
 @router.get('/files/{entity_id}/download')
-def download_file(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> StreamingResponse:
-    row = check_file(db, user, entity_id)
-    request_id = row.request_id
-    if not request_id:
-        entity_type, source_id = next(
-            (kind, getattr(row, column)) for kind, column in ENTITY_COLUMNS.items() if getattr(row, column)
-        )
-        source = check_entity(db, user, entity_type, source_id)
-        request_id = getattr(source, 'request_id', None)
-    require_permission(db, user, 'exports.download', request_id)
-    if row.status != 'clean':
-        raise DomainError('FILE_NOT_READY', 'Скачивание доступно только после успешной проверки файла', 409)
-    content = verified_content(row.storage_key, row.sha256, row.size)
-    audit(db, user, 'file', row.id, 'downloaded', after={'sha256': row.sha256})
-    return StreamingResponse(io.BytesIO(content), media_type='application/octet-stream', headers={
-        'Content-Disposition': f"attachment; filename*=UTF-8''{quote(row.name, safe='')}",
-        'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'",
-        'Cache-Control': 'private, no-store', 'Content-Length': str(len(content))})
+def download_file(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> StreamingResponse:
+    return file_download(db, user, entity_id)

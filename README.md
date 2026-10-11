@@ -6,6 +6,8 @@ CRM для небольшой компании, продающей и закуп
 
 Начните с [руководства пользователя](docs/user-handbook.md): оно объясняет продукт, рабочий процесс и проверку каждой из семи ролей.
 
+Что учесть при обновлении установленной системы, описано в [журнале изменений](CHANGELOG.md).
+
 [Изменения от 1 октября 2026](docs/business-update-2026-10-01.md): отдельная база обзвона, контакты, импорт исходных таблиц и квот, внутренние коды, документы с логотипом и запуск заказа независимо от оплаты.
 
 Для подробной ручной проверки используйте [функциональный тест-план](docs/manual-functional-test-plan.md): в нём приведены тестовые данные, порядок действий, ожидаемые результаты и критерии приёмки.
@@ -44,16 +46,20 @@ docker compose exec api python -m app.bootstrap \
 
 ## Проверка исходного кода
 
-Для разработки нужны Python 3.13 и Node.js 24. После установки зависимостей:
+Для разработки нужны Python 3.13 и Node.js 24. Зависимости backend для разработки ставятся из `backend/requirements-dev.lock` (`pip install -r backend/requirements-dev.lock` в виртуальном окружении), после чего:
 
 ```bash
 DATABASE_URL=sqlite:// PYTHONPATH=backend pytest backend/tests -m 'not postgres and not integration' -q
-ruff check backend
+ruff check backend scripts
 pnpm --dir frontend install --frozen-lockfile
 pnpm --dir frontend test
 pnpm --dir frontend build
 ```
 
-Тесты с маркером `postgres` требуют отдельной тестовой PostgreSQL-базы. Тесты с маркером `integration` требуют выделенной среды для проверки восстановления, переноса истории или worker; они не входят в короткий цикл проверки повседневной CRM.
+Контракт API описан в `docs/openapi.json`, его пересобирает `python3 scripts/export_openapi.py`. Типы TypeScript для фронтенда генерируются из него командой `pnpm --dir frontend run api:types` в `frontend/src/lib/api-schema.d.ts`. CI проверяет, что код, документ и типы совпадают. Модели ответов (`response_model`) пока описаны для сессии и пользователей; остальные эндпоинты типизируются по мере перевода на них.
+
+Зависимости backend перечислены в `backend/pyproject.toml`: рабочие — в `[project].dependencies`, инструменты тестов и проверок — в группе `dev`. Точные версии закреплены в `backend/requirements.lock` (его ставит Docker-образ) и `backend/requirements-dev.lock` (те же версии плюс инструменты). После изменения `pyproject.toml` выполните `python3 scripts/lock_backend.py` в окружении разработки; CI проверяет актуальность файлов флагом `--check`.
+
+Тесты с маркером `postgres` требуют отдельной тестовой PostgreSQL-базы. Весь обычный набор тоже можно прогнать на PostgreSQL: задайте `TEST_DATABASE_URL=postgresql+psycopg://…` — каждый тест получит собственную схему, как в CI. Тесты с маркером `integration` требуют выделенной среды для проверки восстановления, переноса истории или worker; они не входят в короткий цикл проверки повседневной CRM.
 
 Файлы `.env`, базы данных, пароли и пользовательские вложения не входят в Git. Не применяйте демонстрационный профиль к реальным счетам, пока ваши правила расчёта не проверены на контрольных примерах.

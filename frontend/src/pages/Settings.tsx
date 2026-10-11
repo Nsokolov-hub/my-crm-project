@@ -464,7 +464,7 @@ export function Settings() {
             { key: 'entity_type', label: 'Объект' },
             { key: 'action', label: 'Действие' },
             { key: 'reason', label: 'Основание' },
-            { key: 'request_id', label: 'Код операции' },
+            { key: 'correlation_id', label: 'Код операции' },
           ]}
         />
       )}
@@ -477,6 +477,11 @@ export function Settings() {
             { key: 'status', label: 'Состояние', render: (r) => <Badge value={r.status} /> },
             { key: 'progress', label: 'Прогресс' },
             { key: 'attempts', label: 'Попытки' },
+            {
+              key: 'next_attempt_at',
+              label: 'Следующая попытка',
+              render: (r) => date(r.next_attempt_at, true),
+            },
             { key: 'error', label: 'Причина ошибки' },
           ]}
         />

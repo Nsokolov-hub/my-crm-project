@@ -12,8 +12,20 @@ vi.mock('../lib/hooks', () => ({
 function renderLayout(permissions: string[]) {
   vi.mocked(useAuth).mockReturnValue({
     session: {
-      user: { id: 'user-1', name: 'Тестовый сотрудник', email: 'test@example.com' },
+      user: {
+        id: 'user-1',
+        name: 'Тестовый сотрудник',
+        email: 'test@example.com',
+        active: true,
+        own_requests_only: false,
+        version: 1,
+        mfa_enabled: false,
+        roles: [],
+        grants: [],
+        permissions: {},
+      },
       csrf_token: 'test',
+      permissions: {},
     },
     loading: false,
     login: vi.fn(),

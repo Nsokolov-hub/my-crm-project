@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.communication.access import check_chat
@@ -22,17 +22,34 @@ from app.core.config import settings
 from app.core.db import SessionLocal, utcnow
 from app.core.errors import DomainError
 from app.core.models import AppSetting, OutboxEvent, User
-from app.core.security import can
+from app.core.security import users_with_permission
 from app.core.service import advisory, audit, notify
 from app.crm.models import ImportBatch, Task
 
 logger = logging.getLogger('crm.worker')
-MAX_ATTEMPTS = 5
+# Transient failures (scanner, mail server, storage, database) are retried with exponential backoff
+# for about five hours, so a restart of ClamAV or SMTP does not turn jobs into permanent failures.
+MAX_ATTEMPTS = 12
+RETRY_BASE_DELAY = timedelta(seconds=30)
+RETRY_MAX_DELAY = timedelta(hours=1)
+# Deterministic business rejections do not change on retry; they fail at once for quick feedback.
+# A version conflict (409) may resolve itself and is retried like a transient failure.
+PERMANENT_STATUSES = frozenset({400, 401, 403, 404, 410, 422})
+# Tasks are checked for reminders in batches of this size, with one query for the existing ones.
+REMINDER_BATCH = 250
 
 
 def safe_job_error(value: str | None) -> str:
     """Expose stable error codes, never exception text, paths, or legacy diagnostics."""
     return value if value and re.fullmatch(r'[A-Z][A-Z0-9_]{0,79}', value) else 'JOB_EXECUTION_FAILED'
+
+
+def retry_delay(attempt: int) -> timedelta:
+    return min(RETRY_MAX_DELAY, RETRY_BASE_DELAY * 2 ** (attempt - 1))
+
+
+def is_permanent(exc: Exception) -> bool:
+    return isinstance(exc, DomainError) and exc.status in PERMANENT_STATUSES
 
 
 def aware(value: datetime) -> datetime:
@@ -76,6 +93,22 @@ def reminder_at(due_at: datetime, policy: ReminderPolicy) -> datetime:
     return local.astimezone(timezone.utc)
 
 
+def reminder_horizon(now: datetime, policy: ReminderPolicy) -> datetime:
+    """Latest due time whose reminder may have come by `now`; the scan skips later tasks in SQL."""
+    if policy.lead_minutes is not None:
+        return (now + timedelta(minutes=policy.lead_minutes)).astimezone(timezone.utc)
+    zone = ZoneInfo(policy.timezone)
+    day = now.astimezone(zone).date()
+    remaining = policy.lead_working_days
+    while remaining:
+        day += timedelta(days=1)
+        if day.weekday() in policy.working_days and day not in policy.holidays:
+            remaining -= 1
+    # reminder_at() keeps the time of day and steps back whole days, so the reminder of a task
+    # due after this day falls on tomorrow at the earliest.
+    return datetime.combine(day + timedelta(days=1), datetime.min.time(), zone).astimezone(timezone.utc)
+
+
 def schedule_reminders(db: Session, now: datetime | None = None) -> int:
     now = aware(now or utcnow())
     setting = db.scalar(select(AppSetting).where(AppSetting.key == 'task_reminders', AppSetting.status == 'published'))
@@ -86,26 +119,36 @@ def schedule_reminders(db: Session, now: datetime | None = None) -> int:
     if not policy.enabled:
         return 0
     created = 0
-    # Streaming avoids loading the task register into memory, including overdue tasks.
-    tasks = db.scalars(select(Task).where(Task.status.in_(['assigned', 'in_progress']))
-                       .order_by(Task.due_at, Task.id).execution_options(yield_per=250))
-    for task in tasks:
-        due_at = aware(task.due_at)
-        if due_at <= now:
-            stage = 'overdue'
-        elif reminder_at(due_at, policy) <= now:
-            stage = 'approaching'
-        else:
-            continue
-        stamp = due_at.astimezone(timezone.utc).isoformat()
-        key = f'task-reminder:{task.id}:{task.assignee_id}:{stamp}:{stage}'
-        advisory(db, key)
-        if db.scalar(select(OutboxEvent.id).where(OutboxEvent.event_key == key)):
-            continue
-        db.add(OutboxEvent(event_key=key, kind='task.reminder', payload={
-            'task_id': task.id, 'user_id': task.assignee_id, 'due_at': stamp, 'stage': stage}))
-        db.flush()
-        created += 1
+    # Only tasks that may need a reminder are read, in batches; each batch looks up its existing
+    # reminders with one query, so overdue tasks do not cost two queries a minute each.
+    tasks = db.scalars(select(Task).where(Task.status.in_(['assigned', 'in_progress']),
+                                          Task.due_at <= reminder_horizon(now, policy))
+                       .order_by(Task.due_at, Task.id).execution_options(yield_per=REMINDER_BATCH))
+    for batch in tasks.partitions():
+        due = []
+        for task in batch:
+            due_at = aware(task.due_at)
+            if due_at <= now:
+                stage = 'overdue'
+            elif reminder_at(due_at, policy) <= now:
+                stage = 'approaching'
+            else:
+                continue
+            stamp = due_at.astimezone(timezone.utc).isoformat()
+            due.append((f'task-reminder:{task.id}:{task.assignee_id}:{stamp}:{stage}', task, stamp, stage))
+        queued = set(db.scalars(select(OutboxEvent.event_key)
+                                .where(OutboxEvent.event_key.in_([key for key, *_ in due])))) if due else set()
+        for key, task, stamp, stage in due:
+            if key in queued:
+                continue
+            advisory(db, key)
+            # Another worker may have queued it after the batch lookup.
+            if db.scalar(select(OutboxEvent.id).where(OutboxEvent.event_key == key)):
+                continue
+            db.add(OutboxEvent(event_key=key, kind='task.reminder', payload={
+                'task_id': task.id, 'user_id': task.assignee_id, 'due_at': stamp, 'stage': stage}))
+            db.flush()
+            created += 1
     return created
 
 
@@ -165,13 +208,12 @@ def process_events(db: Session, limit: int = 25, now: datetime | None = None) ->
     """Process a bounded batch within the caller's transaction; caller commits or rolls back."""
     now = aware(now or utcnow())
     counts = {'succeeded': 0, 'retried': 0, 'failed': 0}
-    events = db.scalars(select(OutboxEvent).where(OutboxEvent.status == 'pending')
-                        .order_by(OutboxEvent.created_at, OutboxEvent.id).limit(limit)
-                        .with_for_update(skip_locked=True)).all()
+    # Events waiting for their next attempt are not selected, so they cannot hold back newer ones.
+    events = db.scalars(select(OutboxEvent).where(
+        OutboxEvent.status == 'pending',
+        or_(OutboxEvent.next_attempt_at.is_(None), OutboxEvent.next_attempt_at <= now),
+    ).order_by(OutboxEvent.created_at, OutboxEvent.id).limit(limit).with_for_update(skip_locked=True)).all()
     for event in events:
-        delay = min(300, 2 ** event.attempts)
-        if event.attempts and event.started_at and aware(event.started_at) + timedelta(seconds=delay) > now:
-            continue
         event.attempts += 1
         event.version += 1
         event.started_at = now
@@ -186,13 +228,15 @@ def process_events(db: Session, limit: int = 25, now: datetime | None = None) ->
             event.progress = 100
             event.error = None
             event.finished_at = now
+            event.next_attempt_at = None
             counts['succeeded'] += 1
         except Exception as exc:
             event.error = safe_job_error(exc.code if isinstance(exc, DomainError) else None)
-            final = event.attempts >= MAX_ATTEMPTS
+            final = is_permanent(exc) or event.attempts >= MAX_ATTEMPTS
             event.status = 'failed' if final else 'pending'
             event.progress = 0
             event.finished_at = now if final else None
+            event.next_attempt_at = None if final else now + retry_delay(event.attempts)
             counts['failed' if final else 'retried'] += 1
             logger.warning('outbox_failed event_id=%s kind=%s attempts=%s error=%s',
                            event.id, event.kind, event.attempts, event.error)
@@ -225,10 +269,9 @@ def process_events(db: Session, limit: int = 25, now: datetime | None = None) ->
                 audit(db, None, 'job', event.id, 'failed', after={'kind': event.kind, 'status': event.status,
                                                                'attempts': event.attempts, 'error': event.error})
                 # No payload, filenames, amounts, or technical exception messages in alerts.
-                for target in db.scalars(select(User).where(User.active.is_(True))):
-                    if can(db, target, 'admin.settings'):
-                        notify(db, target.id, f'job-failed:{event.id}:{event.version}',
-                               'Фоновая операция требует внимания', 'job', event.id)
+                for target in users_with_permission(db, 'admin.settings'):
+                    notify(db, target.id, f'job-failed:{event.id}:{event.version}',
+                           'Фоновая операция требует внимания', 'job', event.id)
     db.flush()
     return counts
 
@@ -245,7 +288,7 @@ def run_once(*, reminders: bool = True, limit: int = 25) -> dict[str, int]:
 
 def main() -> None:
     # Populate all referenced ORM tables before worker queries are compiled.
-    import app.commerce.models  # noqa: F401
+    import app.models  # noqa: F401
     parser = argparse.ArgumentParser(description='Обработка очереди CRM и напоминаний')
     parser.add_argument('--once', action='store_true')
     parser.add_argument('--interval', type=float, default=2.0)
