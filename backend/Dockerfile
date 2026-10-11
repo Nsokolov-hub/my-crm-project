@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-co
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 crm && useradd --uid 10001 --gid crm --create-home crm \
     && mkdir -p /data/files && chown crm:crm /data/files
+# Runtime dependencies only; tests and linters are pinned separately in requirements-dev.lock.
 COPY requirements.lock ./requirements.lock
 RUN pip install --no-cache-dir -r requirements.lock
 COPY --chown=crm:crm . .

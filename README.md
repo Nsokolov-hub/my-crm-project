@@ -46,7 +46,7 @@ docker compose exec api python -m app.bootstrap \
 
 ## Проверка исходного кода
 
-Для разработки нужны Python 3.13 и Node.js 24. После установки зависимостей:
+Для разработки нужны Python 3.13 и Node.js 24. Зависимости backend для разработки ставятся из `backend/requirements-dev.lock` (`pip install -r backend/requirements-dev.lock` в виртуальном окружении), после чего:
 
 ```bash
 DATABASE_URL=sqlite:// PYTHONPATH=backend pytest backend/tests -m 'not postgres and not integration' -q
@@ -55,6 +55,8 @@ pnpm --dir frontend install --frozen-lockfile
 pnpm --dir frontend test
 pnpm --dir frontend build
 ```
+
+Зависимости backend перечислены в `backend/pyproject.toml`: рабочие — в `[project].dependencies`, инструменты тестов и проверок — в группе `dev`. Точные версии закреплены в `backend/requirements.lock` (его ставит Docker-образ) и `backend/requirements-dev.lock` (те же версии плюс инструменты). После изменения `pyproject.toml` выполните `python3 scripts/lock_backend.py` в окружении разработки; CI проверяет актуальность файлов флагом `--check`.
 
 Тесты с маркером `postgres` требуют отдельной тестовой PostgreSQL-базы. Весь обычный набор тоже можно прогнать на PostgreSQL: задайте `TEST_DATABASE_URL=postgresql+psycopg://…` — каждый тест получит собственную схему, как в CI. Тесты с маркером `integration` требуют выделенной среды для проверки восстановления, переноса истории или worker; они не входят в короткий цикл проверки повседневной CRM.
 

@@ -1,3 +1,43 @@
+[project]
+name = "reaktiv-crm-backend"
+version = "0.1.0"
+description = "API, фоновый worker и миграции Реактив CRM"
+requires-python = ">=3.13"
+# Direct runtime dependencies. requirements.lock pins them with everything they pull in and is what
+# the Docker image installs; after any change here run python3 scripts/lock_backend.py.
+dependencies = [
+    "alembic>=1.20",
+    "argon2-cffi>=25.1",
+    "cryptography>=50.0",
+    # openpyxl parses uploaded workbooks with defusedxml when it is installed.
+    "defusedxml>=0.7.1",
+    "email-validator>=2.3",
+    "fastapi>=0.141.1",
+    "openpyxl>=3.1.5",
+    "prometheus-client>=0.26",
+    "psycopg[binary]>=3.3.5",
+    "pydantic>=2.13",
+    "pydantic-settings>=2.15",
+    "pyotp>=2.10",
+    "python-multipart>=0.0.32",
+    "reportlab>=4.5",
+    "sqlalchemy>=2.0.52",
+    "uvicorn[standard]>=0.52",
+]
+
+[dependency-groups]
+# Tests, linters and audit; pinned in requirements-dev.lock together with the runtime set.
+dev = [
+    "httpx>=0.28.1",
+    "mypy>=1.20",
+    "pip-audit>=2.10",
+    "pytest>=9.0.3",
+    "pytest-cov>=6.3",
+    "ruff>=0.16.7",
+    # Resolves the lock files: scripts/lock_backend.py.
+    "uv>=0.11.29",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
