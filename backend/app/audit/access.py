@@ -8,7 +8,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.business.models import CalendarEntry, SupplierMail, SupplierOrderLine, WorkflowReview
-from app.commerce.financial import filter_calculation_snapshot
+from app.commerce.financial import RequestAccess, filter_calculation_snapshot
 from app.commerce.models import (
     Approval,
     Calculation,
@@ -105,7 +105,7 @@ def finance_rights(db: Session, user: User, request_ids: Iterable[str | None]) -
 
 
 def redact(db: Session, user: User, row: dict[str, Any], request_id: str | None,
-           rights: dict[str | None, dict[str, bool]]) -> dict[str, Any]:
+           rights: dict[str | None, dict[str, bool]], access: RequestAccess | None = None) -> dict[str, Any]:
     allowed = rights[request_id]
     purchase, calculations, reward, profit = (allowed[code] for code in FINANCE)
     sides = [row[side] for side in ("before", "after") if isinstance(row.get(side), dict)]
@@ -113,7 +113,7 @@ def redact(db: Session, user: User, row: dict[str, Any], request_id: str | None,
         snapshot_owner = request_id if request_id != UNRESOLVED else None
         for side in sides:
             if "snapshot" in side:
-                side["snapshot"] = filter_calculation_snapshot(db, user, snapshot_owner, side["snapshot"])
+                side["snapshot"] = filter_calculation_snapshot(db, user, snapshot_owner, side["snapshot"], access)
     elif row["entity_type"] == "quote":
         if not purchase:
             for side in sides:

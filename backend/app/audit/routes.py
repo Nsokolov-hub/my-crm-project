@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.audit.access import finance_rights, redact, request_ids_of
+from app.commerce.financial import RequestAccess
 from app.core.db import get_db
 from app.core.models import AuditEvent, User
 from app.core.security import current_user, require_permission
@@ -28,5 +29,6 @@ def list_audit(
     result = paginate(db, stmt.order_by(AuditEvent.created_at.desc()), page, page_size)
     owners = request_ids_of(db, result["items"])
     rights = finance_rights(db, user, owners.values())
-    result["items"] = [redact(db, user, row, owners[row["id"]], rights) for row in result["items"]]
+    access = RequestAccess(db, user)
+    result["items"] = [redact(db, user, row, owners[row["id"]], rights, access) for row in result["items"]]
     return result
