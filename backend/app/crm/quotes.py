@@ -288,24 +288,22 @@ def delete_quote_sheet(entity_id: str, body: VersionCommand,
                 body.model_dump(mode='json'), operation)
 
 
-@router.post('/requests/{entity_id}/quote-sheets', status_code=201)
-def create_quote_sheet(
-    entity_id: str, body: QuoteSheetInput, idempotency_key: str | None = Header(default=None),
-    user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
-) -> dict[str, Any]:
-    check_request(db, user, entity_id, 'quotes.write')
+def record_quote_sheet(db: Session, user: User, request_id: str, body: QuoteSheetInput,
+                       idempotency_key: str | None = None) -> dict[str, Any]:
+    """Validate and save a supplier's quote sheet for the request; table imports use it too."""
+    check_request(db, user, request_id, 'quotes.write')
     require_supplier(db, body.supplier_id)
     if body.supplier_request_id:
         from app.commerce.models import SupplierRequest
         rfq = db.get(SupplierRequest, body.supplier_request_id)
-        if not rfq or rfq.request_id != entity_id or rfq.supplier_id not in (None, body.supplier_id):
+        if not rfq or rfq.request_id != request_id or rfq.supplier_id not in (None, body.supplier_id):
             raise DomainError('SUPPLIER_REQUEST_INVALID', 'Запрос поставщику не соответствует заявке и поставщику', 422, 'supplier_request_id')
 
     def operation() -> dict[str, Any]:
         advisory(db, 'quote_sheet.number')
         count = db.scalar(select(func.count()).select_from(QuoteSheet)) or 0
         sheet = QuoteSheet(
-            number=f'Q-{count + 1:06d}', request_id=entity_id, supplier_id=body.supplier_id,
+            number=f'Q-{count + 1:06d}', request_id=request_id, supplier_id=body.supplier_id,
             supplier_request_id=body.supplier_request_id, author_id=user.id,
         )
         db.add(sheet)
@@ -315,12 +313,12 @@ def create_quote_sheet(
             require_packing(db, item.packing_id, nomenclature.id)
             source = db.get(RequestItem, item.source_request_item_id) if item.source_request_item_id else None
             if source is None and not item.source_request_item_id:
-                source = RequestItem(request_id=entity_id, description=nomenclature.name, nomenclature_id=nomenclature.id,
+                source = RequestItem(request_id=request_id, description=nomenclature.name, nomenclature_id=nomenclature.id,
                                      packing_id=item.packing_id, product_group_id=nomenclature.product_group_id,
                                      quantity=item.quantity, unit='pcs', quote_only=True)
                 db.add(source)
                 db.flush()
-            if not source or source.request_id != entity_id or source.archived:
+            if not source or source.request_id != request_id or source.archived:
                 raise DomainError('REQUEST_ITEM_INVALID', 'Позиция не относится к выбранной заявке', 422, 'source_request_item_id')
             if not source.nomenclature_id or not source.packing_id or source.quantity is None or source.unit != 'pcs':
                 raise DomainError('REQUEST_ITEM_UNSTRUCTURED', 'Сначала укажите номенклатуру, фасовку и количество в позиции заявки', 422, 'source_request_item_id')
@@ -356,7 +354,7 @@ def create_quote_sheet(
             db.add(row)
             db.flush()
             audit(db, user, 'quote_item', row.id, 'created', after=serialize(row))
-        parent = lock(db, Request, entity_id)
+        parent = lock(db, Request, request_id)
         if parent.commercial_stage in ('new', 'clarification', 'collecting_quotes', 'quotes'):
             before_stage = parent.commercial_stage
             parent.commercial_stage = 'quote_given'
@@ -372,5 +370,13 @@ def create_quote_sheet(
 
     payload = body.model_dump(mode='json')
     if idempotency_key:
-        return idem(db, user, idempotency_key, f'quote_sheets.create:{entity_id}', payload, operation)
+        return idem(db, user, idempotency_key, f'quote_sheets.create:{request_id}', payload, operation)
     return operation()
+
+
+@router.post('/requests/{entity_id}/quote-sheets', status_code=201)
+def create_quote_sheet(
+    entity_id: str, body: QuoteSheetInput, idempotency_key: str | None = Header(default=None),
+    user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
+) -> dict[str, Any]:
+    return record_quote_sheet(db, user, entity_id, body, idempotency_key)

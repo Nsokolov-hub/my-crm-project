@@ -39,7 +39,7 @@ from app.crm.models import (
     RequestItemRevision,
     TableImport,
 )
-from app.crm.quotes import create_quote_sheet
+from app.crm.quotes import record_quote_sheet
 from app.crm.requests import structured_item_fields
 from app.crm.schemas import ItemInput, QuoteItemInput, QuoteSheetInput
 
@@ -780,12 +780,9 @@ def confirm(
                 for supplier_id, entries in groups.items():
                     # Use the same invariants and audit trail as the regular quote editor.
                     for offset in range(0, len(entries), 100):
-                        result = create_quote_sheet(
-                            request_id,
+                        result = record_quote_sheet(
+                            db, user, request_id,
                             QuoteSheetInput(supplier_id=supplier_id, items=entries[offset : offset + 100]),
-                            None,
-                            user,
-                            db,
                         )
                         sheet_ids.append(result["id"])
             finally:

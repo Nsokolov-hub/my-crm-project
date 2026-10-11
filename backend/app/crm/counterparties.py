@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.communication.attachments import attach_file, file_download
 from app.core.db import get_db
 from app.core.errors import DomainError
 from app.core.models import User
@@ -171,13 +172,12 @@ def counterparty_documents(entity_id: str, archived: bool = False, page: int = 1
 def upload_counterparty_document(entity_id: str, file: UploadFile = File(), category: str = Form('other'),
                                  idempotency_key: str | None = Header(default=None),
                                  user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
-    from app.communication.routes import upload_file
     client = check_client(db, user, entity_id, 'clients.write')
     if client.archived:
         raise DomainError('CLIENT_ARCHIVED', 'Контрагент в архиве', 409)
     if category not in ('founding', 'contract', 'other'):
         raise DomainError('DOCUMENT_CATEGORY_INVALID', 'Выберите категорию документа', 422, 'category')
-    saved = upload_file(file, 'client', entity_id, 'general', user, db, idempotency_key)
+    saved = attach_file(db, user, file, 'client', entity_id, 'general', idempotency_key)
     row = db.scalar(select(CounterpartyDocument).where(CounterpartyDocument.file_id == saved['id']))
     if row:
         if row.category != category:
@@ -191,12 +191,11 @@ def upload_counterparty_document(entity_id: str, file: UploadFile = File(), cate
 @router.get('/counterparty-documents/{entity_id}/download')
 def download_counterparty_document(entity_id: str, user: User = Depends(current_user),
                                    db: Session = Depends(get_db, scope="function")):
-    from app.communication.routes import download_file
     row = db.get(CounterpartyDocument, entity_id)
     if not row:
         raise DomainError('NOT_FOUND', 'Документ не найден', 404)
     check_client(db, user, row.counterparty_id)
-    return download_file(row.file_id, user, db)
+    return file_download(db, user, row.file_id)
 
 
 @router.patch('/counterparty-documents/{entity_id}')
