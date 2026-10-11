@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { api, authenticate, clearSession, setCsrf } from '../lib/api';
+import { queryClient } from '../lib/queryClient';
 import type { Session } from '../lib/types';
 const Context = createContext<{
   session?: Session;
@@ -26,6 +27,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
     const expired = () => {
       clearSession();
+      // Nothing read for the previous session may show up for whoever signs in next.
+      queryClient.clear();
       setSession(undefined);
     };
     window.addEventListener('session-expired', expired);
@@ -43,6 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function logout() {
     await api('/auth/logout', { method: 'POST' });
     clearSession();
+    queryClient.clear();
     setSession(undefined);
   }
   function can(code: string) {
