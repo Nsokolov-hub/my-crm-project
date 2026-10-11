@@ -31,7 +31,18 @@ from app.core.security import (
     task_predicate,
     users_with_permission,
 )
-from app.core.service import advisory, audit, check_version, idem, lock, notify, page, plain, serialize
+from app.core.service import (
+    advisory,
+    audit,
+    check_version,
+    idem,
+    lock,
+    notify,
+    page,
+    plain,
+    prefetch,
+    serialize,
+)
 from app.crm.models import Counterparty, Nomenclature, Packing, QuoteItem, RequestItem, Seller
 from app.crm.models import Request as CRMRequest
 
@@ -177,16 +188,29 @@ def calendar_visible(db, user, row):
         error("NOT_FOUND", "Платёж недоступен", 404)
 
 
+def calendar_views(db, rows):
+    """Calendar entries with counterparty names and their latest review, in three queries per page."""
+    parties = prefetch(db, Counterparty, (row.counterparty_id for row in rows))
+    latest = {}
+    for review in db.scalars(select(WorkflowReview).where(
+            WorkflowReview.kind == "calendar", WorkflowReview.entity_id.in_([row.id for row in rows]))
+            .order_by(WorkflowReview.created_at.desc(), WorkflowReview.id.desc())):
+        latest.setdefault(review.entity_id, review)
+    views = []
+    for row in rows:
+        result = serialize(row)
+        party = parties.get(row.counterparty_id) if row.counterparty_id else None
+        result["counterparty_name"] = party.name if party else None
+        review = latest.get(row.id)
+        result["review_id"] = review.id if review and review.status == "pending" else None
+        result["review_version"] = review.version if review and review.status == "pending" else None
+        result["decision_reason"] = review.reason if review else None
+        views.append(result)
+    return views
+
+
 def calendar_view(db, row):
-    result = serialize(row)
-    party = db.get(Counterparty, row.counterparty_id) if row.counterparty_id else None
-    result["counterparty_name"] = party.name if party else None
-    review = db.scalar(select(WorkflowReview).where(WorkflowReview.kind == "calendar", WorkflowReview.entity_id == row.id)
-                       .order_by(WorkflowReview.created_at.desc()).limit(1))
-    result["review_id"] = review.id if review and review.status == "pending" else None
-    result["review_version"] = review.version if review and review.status == "pending" else None
-    result["decision_reason"] = review.reason if review else None
-    return result
+    return calendar_views(db, [row])[0]
 
 
 class CalendarIn(Command):
@@ -232,19 +256,18 @@ def calendar_list(
             continue
         rows.append(row)
     totals, daily = cashflow.projection(db, user, all_rows, start, end, currency)
+    paid = [row for row in all_rows if row.status == "confirmed" and row.actual_date and start <= row.actual_date <= end
+            and row.counterparty_id and not (currency and currency != row.currency)]
+    names = {key: party.name for key, party in prefetch(db, Counterparty, (row.counterparty_id for row in paid)).items()}
     parties = {}
-    for row in all_rows:
-        if row.status != "confirmed" or not row.actual_date or not start <= row.actual_date <= end or not row.counterparty_id:
-            continue
-        if currency and currency != row.currency:
-            continue
+    for row in paid:
         key = (row.counterparty_id, row.currency, row.direction)
-        parties.setdefault(key, {"counterparty_name": calendar_view(db, row)["counterparty_name"],
-                               "currency": row.currency, "direction": row.direction, "amount": Decimal(0)})["amount"] += row.amount
+        parties.setdefault(key, {"counterparty_name": names.get(row.counterparty_id),
+                                 "currency": row.currency, "direction": row.direction, "amount": Decimal(0)})["amount"] += row.amount
     for row in parties.values():
         denominator = next(item[row["direction"]] for item in totals if item["currency"] == row["currency"])
         row["share_percent"] = row["amount"] / denominator * 100 if denominator else Decimal(0)
-    return {"items": [calendar_view(db, row) for row in rows[(page_number-1)*page_size:page_number*page_size]],
+    return {"items": calendar_views(db, rows[(page_number-1)*page_size:page_number*page_size]),
             "total": len(rows), "page": page_number, "page_size": page_size,
             "summary": plain(totals), "daily": plain(daily), "parties": plain(list(parties.values())),
             "from_date": start.isoformat(), "to_date": end.isoformat(),
@@ -344,10 +367,11 @@ def calendar_export(on_date: date, db: DB, user: Actor, date_basis: Literal["pla
             selected.append(row)
     statuses = {"draft": "Черновик", "pending": "На согласовании", "approved": "Согласовано",
                 "confirmed": "Подтверждено", "rejected": "Отклонено", "cancelled": "Отменено"}
+    views = calendar_views(db, selected)
     content = workbook(["Контрагент", "Сумма", "Плановая дата", "Фактическая дата", "Валюта", "Тип", "Статус", "Назначение"],
-        [[calendar_view(db, row)["counterparty_name"] or "—", row.amount, row.planned_date, row.actual_date,
+        [[view["counterparty_name"] or "—", row.amount, row.planned_date, row.actual_date,
           row.currency, "Приход" if row.direction == "income" else "Расход", statuses.get(row.status, row.status), row.purpose]
-         for row in selected], f"Реестр {on_date}")
+         for row, view in zip(selected, views, strict=True)], f"Реестр {on_date}")
     from io import BytesIO
 
     from openpyxl import load_workbook

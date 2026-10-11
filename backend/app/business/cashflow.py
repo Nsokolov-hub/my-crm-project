@@ -1,9 +1,11 @@
 """Payment policy and cash projections; plans never change the actual ledger."""
 
 import calendar
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from itertools import accumulate
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select
@@ -91,6 +93,33 @@ def global_balance_allowed(db, user):
     return can(db, user, "approvals.decide") and scope_for(db, user, "requests.read") == "all"
 
 
+def _balance_reader(facts, anchors):
+    """balance_at(day) = latest dated balance on or before day plus the cash facts recorded since it.
+
+    Facts are summed once into a running total over their dates, so each day costs two binary searches
+    instead of a pass over the whole history (the daily chart asks for up to 366 days).
+    """
+    facts = sorted(facts, key=lambda row: row.actual_date)
+    fact_dates = [row.actual_date for row in facts]
+    running = list(accumulate((row.amount if row.direction == "income" else -row.amount for row in facts),
+                              initial=Decimal(0)))
+    anchors = sorted(anchors, key=lambda row: row.balance_date)
+    anchor_dates = [row.balance_date for row in anchors]
+
+    def total(day, *, inclusive):
+        return running[(bisect_right if inclusive else bisect_left)(fact_dates, day)]
+
+    def balance_at(day, *, before=False):
+        position = bisect_right(anchor_dates, day)
+        anchor = anchors[position - 1] if position else None
+        value = total(day, inclusive=not before)
+        if anchor:
+            value += anchor.amount - total(anchor.balance_date, inclusive=False)
+        return value, anchor
+
+    return balance_at
+
+
 def projection(db, user, rows, start, end, selected_currency=None):
     actual = [r for r in rows if r.status == "confirmed" and r.actual_date]
     balances = db.scalars(select(CalendarBalance).order_by(CalendarBalance.balance_date)).all() if global_balance_allowed(db, user) else []
@@ -99,16 +128,8 @@ def projection(db, user, rows, start, end, selected_currency=None):
     for currency in currencies:
         if selected_currency and currency != selected_currency:
             continue
-        facts = [r for r in actual if r.currency == currency]
-        anchors = [r for r in balances if r.currency == currency]
-        def balance_at(day, *, before=False):
-            valid = [r for r in anchors if r.balance_date <= day]
-            anchor = valid[-1] if valid else None
-            value = anchor.amount if anchor else Decimal(0)
-            for r in facts:
-                if (not anchor or r.actual_date >= anchor.balance_date) and (r.actual_date < day if before else r.actual_date <= day):
-                    value += r.amount if r.direction == "income" else -r.amount
-            return value, anchor
+        balance_at = _balance_reader([r for r in actual if r.currency == currency],
+                                     [r for r in balances if r.currency == currency])
         opening, anchor = balance_at(start, before=True)
         closing, closing_anchor = balance_at(end)
         current, current_anchor = balance_at(company_today())

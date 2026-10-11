@@ -239,3 +239,16 @@ def test_selecting_loss_reason_closes_quote_stage_and_reopening_clears_it(crm): 
         "commercial_stage": "clarification", "loss_reason": "no_budget", "reason": "Клиент возобновил закупку"})
     assert reopened.status_code == 200, reopened.text
     assert reopened.json()["loss_reason"] is None and reopened.json()["closed_at"] is None
+
+
+def test_calendar_page_does_not_query_per_entry(crm):
+    from tests.support.queries import query_count
+
+    login(crm)
+    period = "/payment-calendar?from_date=2026-10-01&to_date=2026-10-31"
+    for _ in range(2):
+        planned(crm)
+    few = query_count(crm, period)
+    for _ in range(6):
+        planned(crm)
+    assert query_count(crm, period) == few
