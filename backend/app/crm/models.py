@@ -48,9 +48,12 @@ class Counterparty(Entity):
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     external_id: Mapped[str | None] = mapped_column(String(250), unique=True)
     source: Mapped[str | None] = mapped_column(String(250))
-    # Normalized copies for search (see app.crm.text_search); maintained on every insert and update.
-    search_text: Mapped[str] = mapped_column(Text, default='', server_default='')
-    search_fields: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, server_default='{}')
+    # Normalized copies for search (see app.crm.text_search); maintained on every insert and update,
+    # used only in SQL filters, so they are neither loaded with the row nor shown in views and history.
+    search_text: Mapped[str] = mapped_column(Text, default='', server_default='', deferred=True,
+                                             info={'internal': True})
+    search_fields: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, server_default='{}', deferred=True,
+                                                          info={'internal': True})
 
 
 @event.listens_for(Counterparty, 'before_insert')

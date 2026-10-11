@@ -457,3 +457,17 @@ def test_counterparty_search_runs_in_sql_and_follows_edits(crm):
     assert response.status_code == 200, response.text
     assert search(q='елочка')['total'] == 0
     assert search(q='сосна')['items'][0]['id'] == target['id']
+
+
+def test_search_copies_stay_out_of_views_and_history(crm):
+    login(crm)
+    row = post(crm, '/counterparties', {'name': 'ООО «Кедр»', 'details': {'city': 'Томск'}})
+    response = crm['client'].patch(f"/api/v1/counterparties/{row['id']}", json={'version': row['version'],
+                                                                                'name': 'ООО «Пихта»'})
+    assert response.status_code == 200, response.text
+    views = [row, response.json(), *crm['client'].get('/api/v1/counterparties').json()['items']]
+    history = crm['client'].get('/api/v1/admin/audit', params={'entity_id': row['id']}).json()['items']
+    snapshots = [side for event in history for side in (event.get('before'), event.get('after')) if side]
+    assert history and snapshots
+    for value in views + snapshots:
+        assert not {'search_text', 'search_fields'} & set(value)

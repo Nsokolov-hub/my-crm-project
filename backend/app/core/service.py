@@ -33,7 +33,9 @@ def plain(value: Any) -> Any:
 
 
 def serialize(obj: Any) -> dict[str, Any]:
-    return {a.key: plain(getattr(obj, a.key)) for a in inspect(type(obj)).column_attrs}
+    # Columns marked info={'internal': True} hold derived data for queries, not object state.
+    return {a.key: plain(getattr(obj, a.key)) for a in inspect(type(obj)).column_attrs
+            if not a.columns[0].info.get('internal')}
 
 
 def advisory(db: Session, key: str) -> None:
