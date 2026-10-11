@@ -93,6 +93,23 @@ class RequestAccess:
         return self.answers[key]
 
 
+# What people without every finance right may see of a saved calculation. Snapshots are filtered by
+# these allow-lists, so a field added to snapshots later stays hidden until it is listed here.
+SNAPSHOT_FIELDS = frozenset({
+    "algorithm_version", "base_version_id", "calculation_number", "currency", "delivery_days", "lines",
+    "management_currency", "origin_source_id", "origin_source_type", "profile_created_at", "profile_id",
+    "request_number", "request_version", "source_id", "source_label", "source_type", "totals", "vat_deductible",
+    "version_number", "wave",
+})
+LINE_FIELDS = frozenset({
+    "calculation_type", "delivery_days", "description", "item_id", "line_id", "net", "packing", "product",
+    "product_group", "quantity", "quote_id", "quote_item_id", "quote_revision", "tax", "tax_category", "total",
+    "unit", "unit_price",
+})
+PURCHASE_LINE_FIELDS = frozenset({"purchase_currency", "quote", "quote_item", "supplier_id", "supplier_name"})
+WAVE_FIELDS = frozenset({"existing_quantity", "financial_digest", "id", "number", "revision_digest"})
+
+
 def filter_calculation_snapshot(db, user, request_id: str | None, snapshot: dict,
                                 access: RequestAccess | None = None) -> dict:
     if not snapshot:
@@ -106,34 +123,35 @@ def filter_calculation_snapshot(db, user, request_id: str | None, snapshot: dict
     can_profit = access.allows(request_id, "finance.profit.read")
     all_finances = can_purchase and can_reward and can_profit
 
-    lines = snapshot.get("lines", [])
-    for line in lines:
-        if not can_purchase:
-            line.pop("quote", None)
-            line.pop("quote_item", None)
-            line.pop("supplier_id", None)
-            line.pop("purchase_currency", None)
-        if not all_finances:
-            line.pop("expense_details", None)
-            line.pop("customs_rule", None)
+    if can_calculations and all_finances:
+        return visible_wave_parts(db, snapshot, access)
 
-        if "detail" in line:
-            if not can_calculations:
-                line.pop("detail", None)
-            elif not all_finances:
-                # Expose only known outputs; arbitrary constants/intermediate
-                # expressions may alias a denied price, reward or margin.
-                allowed = {"quantity", "sale_net", "sale_tax"}
-                if can_purchase:
-                    allowed.add("purchase")
-                    allowed.update(("purchase_foreign", "exchange_rate", "purchase_rub"))
-                if can_reward:
-                    allowed.update((
-                        "reward", "manager_bonus", "internal_bonus", "bonus_coefficient", "service_fee",
-                        "bonus_withdrawal_percent", "bonus_withdrawal_fee", "additional_service_fee",
-                    ))
-                if can_profit:
-                    allowed.update(("cost", "profit", "margin", "markup_amount", "profitability_percent", "margin_percent", "cost_profitability_percent"))
+    fields = SNAPSHOT_FIELDS | {"profile"} if can_calculations else SNAPSHOT_FIELDS
+    if can_reward:
+        fields |= {"internal_adjustment"}
+    snapshot = {key: value for key, value in snapshot.items() if key in fields}
+
+    line_fields = LINE_FIELDS | PURCHASE_LINE_FIELDS if can_purchase else LINE_FIELDS
+    if can_calculations:
+        line_fields |= {"detail"}
+    snapshot["lines"] = [{key: value for key, value in line.items() if key in line_fields}
+                         for line in snapshot.get("lines", [])]
+    if can_calculations and not all_finances:
+        # Expose only known outputs; arbitrary constants/intermediate
+        # expressions may alias a denied price, reward or margin.
+        allowed = {"quantity", "sale_net", "sale_tax"}
+        if can_purchase:
+            allowed.add("purchase")
+            allowed.update(("purchase_foreign", "exchange_rate", "purchase_rub"))
+        if can_reward:
+            allowed.update((
+                "reward", "manager_bonus", "internal_bonus", "bonus_coefficient", "service_fee",
+                "bonus_withdrawal_percent", "bonus_withdrawal_fee", "additional_service_fee",
+            ))
+        if can_profit:
+            allowed.update(("cost", "profit", "margin", "markup_amount", "profitability_percent", "margin_percent", "cost_profitability_percent"))
+        for line in snapshot["lines"]:
+            if "detail" in line:
                 line["detail"] = {key: value for key, value in line["detail"].items() if key in allowed}
 
     if "totals" in snapshot and not all_finances:
@@ -146,53 +164,58 @@ def filter_calculation_snapshot(db, user, request_id: str | None, snapshot: dict
             allowed.update(("cost", "profit", "markup_amount", "profitability_percent", "margin_percent", "cost_profitability_percent"))
         snapshot["totals"] = {key: value for key, value in snapshot["totals"].items() if key in allowed}
 
-    if not can_calculations:
-        snapshot.pop("profile", None)
-    elif "profile" in snapshot:
+    if "profile" in snapshot:
         snapshot["profile"] = filter_profile_definition(
             snapshot["profile"], purchase=can_purchase, reward=can_reward, profit=can_profit
         )
 
-    if can_calculations and all_finances and "wave_distribution" in snapshot:
-        distribution = snapshot["wave_distribution"]
-        visible_quote_ids = {line.get("quote_item_id") for line in lines}
-        visible_allocations = []
-        for allocation in distribution.get("allocations", []):
-            peer_id = allocation.get("request_id")
-            visible = allocation.get("forecast", False) or (peer_id and all(
-                access.allows(peer_id, permission)
-                for permission in ("requests.read", "finance.purchase.read", "finance.calculations.read")
-            ))
-            if visible:
-                visible_allocations.append(allocation)
-                visible_quote_ids.add(allocation.get("quote_item_id"))
-        distribution["allocations"] = visible_allocations
-        for allocation in snapshot.get("expense_allocations", []):
-            if "wave_parts" in allocation:
-                allocation["wave_parts"] = {key: value for key, value in allocation["wave_parts"].items()
-                                            if key in visible_quote_ids}
-        for expenses in (snapshot.get("resolved_expenses", []), (snapshot.get("input") or {}).get("expenses") or []):
-            for expense in expenses:
-                if expense.get("method") == "MANUAL":
-                    expense["manual"] = {key: value for key, value in (expense.get("manual") or {}).items()
-                                         if key in visible_quote_ids}
-        source_id = (snapshot.get("wave") or {}).get("expense_source_calculation_id")
-        source = db.get(Calculation, source_id) if source_id else None
-        if source and not access.allows(source.request_id, "finance.calculations.read"):
-            snapshot["wave"]["expense_source_calculation_id"] = None
+    if isinstance(snapshot.get("wave"), dict):
+        wave_fields = WAVE_FIELDS | {"supplier_id"} if can_purchase else WAVE_FIELDS
+        wave = snapshot["wave"]
+        snapshot["wave"] = {key: value for key, value in wave.items() if key in wave_fields}
+        if can_calculations and "expense_source_calculation_id" in wave:
+            snapshot["wave"]["expense_source_calculation_id"] = visible_expense_source(
+                db, wave["expense_source_calculation_id"], access)
+    return snapshot
 
-    if not can_calculations or not all_finances:
-        # Inputs include per-line coefficient overrides and expense allocations
-        # can disclose the purchase basis, even after detail has been filtered.
-        snapshot.pop("input", None)
-        snapshot.pop("expense_allocations", None)
-        snapshot.pop("rates", None)
-        snapshot.pop("payment_terms", None)
-        snapshot.pop("wave_distribution", None)
-        snapshot.pop("resolved_expenses", None)
-    if not can_reward:
-        snapshot.pop("internal_adjustment", None)
 
+def visible_expense_source(db, calculation_id: str | None, access: RequestAccess) -> str | None:
+    """The calculation whose wave expenses were reused, unless it belongs to a request the reader cannot see."""
+    source = db.get(Calculation, calculation_id) if calculation_id else None
+    if source and not access.allows(source.request_id, "finance.calculations.read"):
+        return None
+    return calculation_id
+
+
+def visible_wave_parts(db, snapshot: dict, access: RequestAccess) -> dict:
+    """A full-rights view still shows other requests of the wave only to those who may see them."""
+    if "wave_distribution" not in snapshot:
+        return snapshot
+    distribution = snapshot["wave_distribution"]
+    visible_quote_ids = {line.get("quote_item_id") for line in snapshot.get("lines", [])}
+    visible_allocations = []
+    for allocation in distribution.get("allocations", []):
+        peer_id = allocation.get("request_id")
+        visible = allocation.get("forecast", False) or (peer_id and all(
+            access.allows(peer_id, permission)
+            for permission in ("requests.read", "finance.purchase.read", "finance.calculations.read")
+        ))
+        if visible:
+            visible_allocations.append(allocation)
+            visible_quote_ids.add(allocation.get("quote_item_id"))
+    distribution["allocations"] = visible_allocations
+    for allocation in snapshot.get("expense_allocations", []):
+        if "wave_parts" in allocation:
+            allocation["wave_parts"] = {key: value for key, value in allocation["wave_parts"].items()
+                                        if key in visible_quote_ids}
+    for expenses in (snapshot.get("resolved_expenses", []), (snapshot.get("input") or {}).get("expenses") or []):
+        for expense in expenses:
+            if expense.get("method") == "MANUAL":
+                expense["manual"] = {key: value for key, value in (expense.get("manual") or {}).items()
+                                     if key in visible_quote_ids}
+    wave = snapshot.get("wave") or {}
+    if wave.get("expense_source_calculation_id"):
+        wave["expense_source_calculation_id"] = visible_expense_source(db, wave["expense_source_calculation_id"], access)
     return snapshot
 
 
