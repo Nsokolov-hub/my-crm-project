@@ -23,6 +23,14 @@ import { api } from '../lib/api';
 import { useApi, useCommand } from '../lib/hooks';
 import type { Entity, Field, Page, User } from '../lib/types';
 import { CounterpartyDocuments } from '../components/CounterpartyDocuments';
+// The API requires a reason to change the owner and keeps it in the counterparty history.
+const reassignmentReasonField: Field = {
+  name: 'reason',
+  label: 'Причина изменения',
+  type: 'textarea',
+  wide: true,
+  help: 'Обязательна, если меняете ответственного. Сохраняется в истории контрагента.',
+};
 const callProspectFields: Field[] = [
   { name: 'name', label: 'Название', required: true, wide: true },
   { name: 'tax_id', label: 'ИНН', required: true },
@@ -69,8 +77,9 @@ function CallHistory({ clientId }: { clientId: string }) {
 }
 export function Clients() {
   const auth = useAuth();
+  const canReassign = auth.can('requests.assign');
   const editableClientFields = clientFields.filter(
-    (field) => field.name !== 'owner_id' || auth.can('requests.assign'),
+    (field) => field.name !== 'owner_id' || canReassign,
   );
   const [selected, setSelected] = useState<Entity>();
   const [form, setForm] = useState<'edit' | 'call'>();
@@ -208,7 +217,11 @@ export function Clients() {
           title={form === 'edit' ? 'Редактировать контрагента' : 'Записать звонок'}
           endpoint={form === 'edit' ? `/counterparties/${selected.id}` : '/calls'}
           method={form === 'edit' ? 'PATCH' : 'POST'}
-          fields={form === 'edit' ? editableClientFields : callFields}
+          fields={
+            form === 'edit'
+              ? [...editableClientFields, ...(canReassign ? [reassignmentReasonField] : [])]
+              : callFields
+          }
           initial={form === 'edit' ? selected : { client_id: selected.id }}
           extra={form === 'edit' ? { version: selected.version } : {}}
           onClose={() => setForm(undefined)}
