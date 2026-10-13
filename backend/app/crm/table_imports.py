@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.commerce.calculator import convert
 from app.commerce.files import put_file
+from app.commerce.models import Manufacturer, ManufacturerAlias
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import DomainError
@@ -28,6 +29,7 @@ from app.core.security import check_request, current_user, require_permission
 from app.core.service import advisory, audit, idem, lock, serialize
 from app.crm.catalogue import packing_name
 from app.crm.imports import string_value, xlsx
+from app.crm.manufacturers import find_manufacturer, manufacturer_fields, normalized
 from app.crm.models import (
     Counterparty,
     Currency,
@@ -390,6 +392,17 @@ def quote_plan(db, request_id, columns, rows, mapping):
                 limits = {"name": 250, "manufacturer": 250, "cas": 30, "linear_formula": 500, "purity": 200}
                 if any(len(data.get(key) or "") > limit for key, limit in limits.items()):
                     raise ValueError("Слишком длинное описание новой номенклатуры")
+                # The manufacturer is a registry number or a spelling; a new spelling joins the registry.
+                maker = find_manufacturer(db, data.get("manufacturer"))
+                if maker:
+                    data["manufacturer"], data["manufacturer_id"] = maker.name, maker.id
+                elif (data.get("manufacturer") or "").isdigit():
+                    raise ValueError(f"Производителя с номером {data['manufacturer']} нет в реестре")
+                else:
+                    data["manufacturer_id"] = None
+                    data["manufacturer_new"] = bool(data.get("manufacturer"))
+            else:
+                data["manufacturer"], data["manufacturer_id"] = n.manufacturer, n.manufacturer_id
             existing_packings = packings[n.id] if n else []
             packing = None
             if data.get("packing_value"):
@@ -434,9 +447,9 @@ def quote_plan(db, request_id, columns, rows, mapping):
             )
             if not n:
                 definition = {
-                    key: data.get(key)
-                    for key in ("name", "manufacturer", "cas", "linear_formula", "purity", "product_group_id")
+                    key: data.get(key) for key in ("name", "cas", "linear_formula", "purity", "product_group_id")
                 }
+                definition["manufacturer"] = data["manufacturer_id"] or normalized(data.get("manufacturer") or "")
                 old = new_definitions.setdefault(article.casefold(), definition)
                 if old != definition:
                     raise ValueError("Для одного нового артикула указаны разные характеристики")
@@ -452,6 +465,8 @@ def summarize(plan):
         "total": len(plan),
         "checked": sum(row["action"] == "checked" for row in plan),
         "create_nomenclature": sum(row["action"] == "create_nomenclature" for row in plan),
+        "new_manufacturers": len({normalized(row["data"]["manufacturer"]) for row in plan
+                                  if row["data"].get("manufacturer_new") and not row["errors"]}),
         "errors": sum(bool(row["errors"]) for row in plan),
     }
 
@@ -567,11 +582,13 @@ def quote_template(request_id: str, user: User = Depends(current_user), db: Sess
         p = db.get(Packing, item.packing_id) if item.packing_id else None
         group_id = n.product_group_id if n else item.product_group_id
         group = db.get(ProductGroup, group_id) if group_id else None
+        maker = db.get(Manufacturer, n.manufacturer_id) if n and n.manufacturer_id else None
         values = {
             "source_row": str(index),
             "article": n.article if n else item.article,
             "name": n.name if n else item.description,
-            "manufacturer": n.manufacturer if n else "",
+            # The registry number: the form names manufacturers by number.
+            "manufacturer": str(maker.internal_code) if maker else (n.manufacturer if n else ""),
             "cas": n.cas if n else item.cas,
             "packing_value": p.value if p else "0",
             "packing_unit": p.unit if p else "0",
@@ -596,6 +613,33 @@ def quote_template(request_id: str, user: User = Depends(current_user), db: Sess
     directory.column_dimensions["A"].width = 40
     directory.column_dimensions["B"].width = 28
     directory.freeze_panes = "A2"
+    makers_sheet = book.create_sheet("Производители")
+    makers_sheet.append(["Номер", "Производитель", "Зонтичный бренд", "Другие написания"])
+    makers = list(db.scalars(select(Manufacturer).where(Manufacturer.merged_into_id.is_(None))
+                             .order_by(Manufacturer.name)))
+    umbrellas = {row.id: row.name for row in makers}
+    spellings = defaultdict(list)
+    for alias in db.scalars(select(ManufacturerAlias).order_by(ManufacturerAlias.name)):
+        spellings[alias.manufacturer_id].append(alias.name)
+    for row in makers:
+        others = [name for name in spellings[row.id] if normalized(name) != normalized(row.name)]
+        makers_sheet.append([str(row.internal_code), row.name, umbrellas.get(row.umbrella_id or "", ""),
+                             ", ".join(others)])
+    for row in makers_sheet:
+        for cell in row:
+            cell.data_type = "s"
+            cell.number_format = "@"
+    for letter, width in (("A", 10), ("B", 40), ("C", 30), ("D", 60)):
+        makers_sheet.column_dimensions[letter].width = width
+    makers_sheet.freeze_panes = "A2"
+    maker_prompt = DataValidation(allow_blank=True)
+    maker_prompt.showInputMessage = True
+    maker_prompt.promptTitle = "Производитель новой номенклатуры"
+    maker_prompt.prompt = ("Номер с листа «Производители» или название. Новое название добавит "
+                           "производителя в реестр.")
+    sheet.add_data_validation(maker_prompt)
+    maker_column = sheet.cell(1, list(QUOTE_COLUMNS).index("manufacturer") + 1).column_letter
+    maker_prompt.add(f"{maker_column}2:{maker_column}{MAX_ROWS + 1}")
     if groups:
         book.defined_names.add(
             DefinedName("QuoteProductGroups", attr_text=f"'Товарные группы'!$A$2:$A${len(groups) + 1}")
@@ -690,17 +734,19 @@ def confirm(
                 require_permission(db, user, "catalog.write")
             groups = defaultdict(list)
             new_catalogue, new_packings, updated_sources = {}, {}, set()
+            new_makers: set[str] = set()
             for entry in fresh:
                 data = entry["data"]
                 n_id = data["nomenclature_id"] or new_catalogue.get(data["article"].casefold())
                 if not n_id:
-                    n = Nomenclature(
-                        **{
-                            key: data.get(key)
-                            for key in ("name", "article", "manufacturer", "cas", "linear_formula", "purity")
-                        },
-                        product_group_id=data["product_group_id"],
-                    )
+                    fields = manufacturer_fields(db, user, {
+                        key: data.get(key)
+                        for key in ("name", "article", "manufacturer", "manufacturer_id", "cas", "linear_formula",
+                                    "purity")
+                    })
+                    if data.get("manufacturer_new"):
+                        new_makers.add(fields["manufacturer_id"])
+                    n = Nomenclature(**fields, product_group_id=data["product_group_id"])
                     db.add(n)
                     db.flush()
                     n_id = n.id
@@ -790,7 +836,7 @@ def confirm(
                     db.info.pop("quote_import_batch", None)
                 else:
                     db.info["quote_import_batch"] = previous_batch
-            batch.result = {"quote_sheet_ids": sheet_ids}
+            batch.result = {"quote_sheet_ids": sheet_ids, "manufacturers_created": len(new_makers)}
         parent.version += 1
         batch.status = "completed"
         batch.result = {**batch.result, "imported": len(batch.rows), "nomenclatures_created": created}

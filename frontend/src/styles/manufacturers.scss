@@ -1,0 +1,82 @@
+// Registry of manufacturers and the brand analytics.
+
+.manufacturer-duplicates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  padding: 0 23px 20px;
+}
+
+.manufacturer-duplicates article {
+  display: grid;
+  gap: 12px;
+  align-content: space-between;
+  padding: 14px 16px;
+  border: 1px solid #ece4f6;
+  border-radius: 10px;
+  background: #fcfbff;
+}
+
+.manufacturer-duplicates ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.manufacturer-duplicates li {
+  display: grid;
+  gap: 2px;
+  font-size: 14px;
+}
+
+.manufacturer-duplicates li span {
+  color: #808394;
+  font-size: 12px;
+}
+
+.manufacturer-merge {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid #e9eaf0;
+  border-radius: 10px;
+}
+
+.manufacturer-merge legend {
+  padding: 0 6px;
+  font-weight: 650;
+}
+
+.manufacturer-merge label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.segmented-text {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid #e9eaf0;
+  border-radius: 8px;
+}
+
+.segmented-text button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6e7283;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 10px;
+}
+
+.segmented-text button.active {
+  background: #f2eef9;
+  color: #6a4fc4;
+}

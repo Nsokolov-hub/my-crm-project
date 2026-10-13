@@ -18,11 +18,16 @@ import {
 import { api } from '../lib/api';
 import { useApi, useCommand, useDebounced } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
+import { ManufacturerRegistry } from './Manufacturers';
 
 type Packing = Entity & { value: string; unit: string; display_name: string };
 type Nomenclature = Entity & {
   name: string;
   article?: string;
+  manufacturer?: string;
+  manufacturer_id?: string;
+  manufacturer_code?: number;
+  umbrella_name?: string;
   product_group_name?: string;
   cas?: string;
   linear_formula?: string;
@@ -34,7 +39,19 @@ type Nomenclature = Entity & {
 const nomenclatureFields: Field[] = [
   { name: 'name', label: 'Название', required: true, wide: true },
   { name: 'article', label: 'Артикул' },
-  { name: 'manufacturer', label: 'Производитель / бренд' },
+  {
+    name: 'manufacturer_id',
+    label: 'Производитель',
+    type: 'select',
+    source: '/manufacturers',
+    labelKey: 'label',
+    help: 'Из реестра производителей. Нет в списке — добавьте здесь же.',
+    create: {
+      title: 'Новый производитель',
+      endpoint: '/manufacturers',
+      fields: [{ name: 'name', label: 'Название', required: true }],
+    },
+  },
   { name: 'purity', label: 'Чистота' },
   { name: 'product_group_id', label: 'Товарная группа', type: 'select', source: '/product-groups' },
   { name: 'cas', label: 'CAS' },
@@ -58,7 +75,7 @@ const editFields = nomenclatureFields.filter((field) => !field.name.startsWith('
 export function Catalog() {
   const auth = useAuth();
   const canCreate = auth.can('catalog.write') || auth.can('requests.write');
-  const [tab, setTab] = useState<'nomenclature' | 'legacy' | 'groups'>('nomenclature');
+  const [tab, setTab] = useState<'nomenclature' | 'legacy' | 'groups' | 'makers'>('nomenclature');
   const [search, setSearch] = useState('');
   const [cas, setCas] = useState('');
   const [maker, setMaker] = useState('');
@@ -138,11 +155,16 @@ export function Catalog() {
         >
           Номенклатура и фасовки
         </button>
+        <button className={tab === 'makers' ? 'active' : ''} onClick={() => setTab('makers')}>
+          Производители и бренды
+        </button>
         <button className={tab === 'legacy' ? 'active' : ''} onClick={() => setTab('legacy')}>
           Ранее созданные товарные варианты
         </button>
       </div>
-      {tab === 'groups' ? (
+      {tab === 'makers' ? (
+        <ManufacturerRegistry />
+      ) : tab === 'groups' ? (
         <Collection
           title="Товарные группы"
           endpoint="/product-groups"
@@ -218,7 +240,22 @@ export function Catalog() {
                     label: 'Группа',
                     render: (row) => row.product_group_name || 'Другое',
                   },
-                  { key: 'manufacturer', label: 'Производитель' },
+                  {
+                    key: 'manufacturer',
+                    label: 'Производитель',
+                    render: (row) =>
+                      row.manufacturer ? (
+                        <span className="stacked">
+                          <span>
+                            {row.manufacturer_code ? `${row.manufacturer_code} · ` : ''}
+                            {row.manufacturer}
+                          </span>
+                          {row.umbrella_name && <small>{row.umbrella_name}</small>}
+                        </span>
+                      ) : (
+                        '—'
+                      ),
+                  },
                   { key: 'cas', label: 'CAS', render: (row) => row.cas || '—' },
                   {
                     key: 'formula',
@@ -314,7 +351,10 @@ export function Catalog() {
             <DetailPairs
               values={{
                 Артикул: selected.article || '—',
-                Производитель: selected.manufacturer || '—',
+                Производитель: selected.manufacturer
+                  ? `${selected.manufacturer_code ? `${selected.manufacturer_code} · ` : ''}${selected.manufacturer}`
+                  : '—',
+                ...(selected.umbrella_name ? { 'Зонтичный бренд': selected.umbrella_name } : {}),
                 Чистота: selected.purity || '—',
                 'Товарная группа': selected.product_group_name || 'Другое',
                 CAS: selected.cas || '—',
@@ -355,6 +395,7 @@ export function Catalog() {
           transform={(values) => ({
             ...values,
             article: values.article || null,
+            manufacturer_id: values.manufacturer_id || null,
             product_group_id: values.product_group_id || null,
             cas: values.cas || null,
             linear_formula: values.linear_formula || null,

@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -22,7 +23,24 @@ from app.core.db import Base, Entity
 
 
 class Manufacturer(Entity, Base):
+    """An entry of the manufacturer registry; nomenclature and analytics refer to it."""
+
     __tablename__ = "manufacturers"
+    __table_args__ = (CheckConstraint("internal_code > 0"),)
+    name: Mapped[str] = mapped_column(String(250))
+    normalized_name: Mapped[str] = mapped_column(String(250))
+    # The number used in Excel quote forms: assigned in order and never reused.
+    internal_code: Mapped[int] = mapped_column(Integer, unique=True)
+    # The umbrella brand is another entry; the analytics groups by it.
+    umbrella_id: Mapped[str | None] = mapped_column(ForeignKey("manufacturers.id"), index=True)
+    merged_into_id: Mapped[str | None] = mapped_column(ForeignKey("manufacturers.id"))
+
+
+class ManufacturerAlias(Entity, Base):
+    """A known spelling of a manufacturer, its registry name included; each spelling names one entry."""
+
+    __tablename__ = "manufacturer_aliases"
+    manufacturer_id: Mapped[str] = mapped_column(ForeignKey("manufacturers.id"), index=True)
     name: Mapped[str] = mapped_column(String(250))
     normalized_name: Mapped[str] = mapped_column(String(250), unique=True)
 
