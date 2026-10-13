@@ -2,8 +2,8 @@
 
 from fastapi import APIRouter
 
-from . import activities, catalogue, counterparties, quotes, requests
+from . import activities, catalogue, counterparties, manufacturers, quotes, requests
 
 router = APIRouter()
-for domain in (catalogue, counterparties, activities, requests, quotes):
+for domain in (catalogue, manufacturers, counterparties, activities, requests, quotes):
     router.include_router(domain.router)

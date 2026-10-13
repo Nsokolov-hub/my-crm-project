@@ -317,9 +317,32 @@ class PackingPatch(Input):
     active: bool = Field(default=None)
 
 
+class ManufacturerInput(Input):
+    name: str = Field(min_length=1, max_length=250)
+    aliases: list[str] = Field(default_factory=list, max_length=100)
+    umbrella_id: str | None = None
+
+
+class ManufacturerPatch(Input):
+    version: int = Field(ge=1)
+    name: str = Field(default=None, min_length=1, max_length=250)
+    # Other spellings; the previous name stays among them after a rename.
+    aliases: list[str] = Field(default=None, max_length=100)
+    umbrella_id: str | None = None
+
+
+class ManufacturerMergeInput(Input):
+    version: int = Field(ge=1)
+    target_id: str
+    reason: str = Field(min_length=3)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+
+
 class NomenclatureInput(Input):
     name: str = Field(min_length=1, max_length=250)
     article: str | None = Field(default=None, max_length=150)
+    # A registry entry, or a spelling: a known one finds its entry, a new one is added to the registry.
+    manufacturer_id: str | None = None
     manufacturer: str | None = Field(default=None, max_length=250)
     purity: str | None = Field(default=None, max_length=200)
     product_group_id: str | None = None
@@ -333,6 +356,7 @@ class NomenclaturePatch(Input):
     version: int = Field(ge=1)
     name: str = Field(default=None, min_length=1, max_length=250)
     article: str | None = Field(default=None, max_length=150)
+    manufacturer_id: str | None = None
     manufacturer: str | None = Field(default=None, max_length=250)
     purity: str | None = Field(default=None, max_length=200)
     product_group_id: str | None = None

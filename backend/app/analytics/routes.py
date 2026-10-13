@@ -15,7 +15,10 @@ from app.core.security import current_user, request_predicate, require_permissio
 from app.core.service import audit, plain, serialize
 from app.crm.models import Call, Counterparty, Request, Task
 
+from . import brands
+
 router = APIRouter(tags=["Аналитика"])
+router.include_router(brands.router)
 
 
 def report_data(

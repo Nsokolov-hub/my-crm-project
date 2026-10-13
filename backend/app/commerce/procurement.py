@@ -17,6 +17,7 @@ from app.core.models import User
 from app.core.security import Actor, check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.crm.imports import xlsx as literal_workbook
+from app.crm.manufacturers import ensure_manufacturer
 from app.crm.models import Counterparty, Nomenclature, Packing, RequestItem, TableImport
 from app.crm.models import Request as CRMRequest
 
@@ -53,13 +54,7 @@ def ensure_product(db: Session, data: ProductIn) -> Product:
         substance = Substance(name=data.name.strip(), cas=cas, no_cas_reason=data.no_cas_reason)
         db.add(substance)
         db.flush()
-    maker_name = normalized(data.manufacturer)
-    advisory(db, f"manufacturer:{maker_name}")
-    maker = db.scalar(select(Manufacturer).where(Manufacturer.normalized_name == maker_name))
-    if maker is None:
-        maker = Manufacturer(name=data.manufacturer.strip(), normalized_name=maker_name)
-        db.add(maker)
-        db.flush()
+    maker = ensure_manufacturer(db, None, data.manufacturer)
     fingerprint = digest(
         {
             "substance_id": substance.id,

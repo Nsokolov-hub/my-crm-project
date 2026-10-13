@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.commerce.models import Manufacturer
 from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
 from app.core.models import AuditEvent, User
@@ -16,6 +17,7 @@ from app.core.security import can, current_user, require_permission
 from app.core.service import advisory, audit, check_version, lock, prefetch, serialize
 from app.core.service import page as paginate
 from app.crm.common import save
+from app.crm.manufacturers import manufacturer_fields
 from app.crm.models import Country, Currency, Nomenclature, Packing, ProductGroup
 from app.crm.schemas import (
     CountryInput,
@@ -89,6 +91,8 @@ def nomenclature_views(db: Session, rows: list[Nomenclature]) -> list[dict[str, 
     ).order_by(AuditEvent.created_at, AuditEvent.id)):
         creators.setdefault(entity_id, actor_id)
     groups = prefetch(db, ProductGroup, (row.product_group_id for row in rows))
+    makers = prefetch(db, Manufacturer, (row.manufacturer_id for row in rows))
+    umbrellas = prefetch(db, Manufacturer, (maker.umbrella_id for maker in makers.values()))
     packings: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for packing in db.scalars(select(Packing).where(Packing.nomenclature_id.in_(ids), Packing.active.is_(True))
                               .order_by(Packing.value, Packing.unit)):
@@ -100,6 +104,10 @@ def nomenclature_views(db: Session, rows: list[Nomenclature]) -> list[dict[str, 
         group = groups.get(row.product_group_id) if row.product_group_id else None
         value['product_group_name'] = group.name if group else None
         value['product_group_slug'] = group.slug if group else None
+        maker = makers.get(row.manufacturer_id) if row.manufacturer_id else None
+        umbrella = umbrellas.get(maker.umbrella_id) if maker and maker.umbrella_id else None
+        value['manufacturer_code'] = maker.internal_code if maker else None
+        value['umbrella_name'] = umbrella.name if umbrella else None
         value['packings'] = packings[row.id]
         views.append(value)
     return views
@@ -188,7 +196,7 @@ def create_country(body: CountryInput, user: User = Depends(current_user), db: S
 def nomenclatures(
     q: str = '', product_group_id: str | None = None, page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100), active: bool = True,
-    cas: str = '', manufacturer: str = '', article: str = '',
+    cas: str = '', manufacturer: str = '', article: str = '', manufacturer_id: str | None = None,
     user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     require_permission(db, user, 'catalog.read')
@@ -197,6 +205,8 @@ def nomenclatures(
         stmt = stmt.where(or_(Nomenclature.name.ilike(f'%{q}%'), Nomenclature.article.ilike(f'%{q}%'), Nomenclature.cas.ilike(f'%{q}%')))
     if product_group_id:
         stmt = stmt.where(Nomenclature.product_group_id == product_group_id)
+    if manufacturer_id:
+        stmt = stmt.where(Nomenclature.manufacturer_id == manufacturer_id)
     for column, value in ((Nomenclature.cas, cas), (Nomenclature.manufacturer, manufacturer), (Nomenclature.article, article)):
         if value:
             stmt = stmt.where(column.ilike(f'%{value}%'))
@@ -213,7 +223,8 @@ def create_nomenclature(body: NomenclatureInput, user: User = Depends(current_us
     keys = [(item.value, item.unit.strip()) for item in body.packings]
     if len(keys) != len(set(keys)):
         raise DomainError('PACKING_DUPLICATE', 'Фасовка повторяется', 422, 'packings')
-    row = Nomenclature(**body.model_dump(exclude={'packings', 'product_group_id'}), product_group_id=group.id)
+    fields = manufacturer_fields(db, user, body.model_dump(exclude={'packings', 'product_group_id'}))
+    row = Nomenclature(**fields, product_group_id=group.id)
     db.add(row)
     db.flush()
     for item in body.packings:
@@ -250,6 +261,8 @@ def edit_nomenclature(entity_id: str, body: NomenclaturePatch, user: User = Depe
     data = body.model_dump(exclude_unset=True, exclude={'version'})
     if 'product_group_id' in data:
         data['product_group_id'] = require_group(db, data['product_group_id']).id
+    if 'manufacturer_id' in data or 'manufacturer' in data:
+        data = manufacturer_fields(db, user, data)
     for key, value in data.items():
         setattr(row, key, value)
     row.version += 1

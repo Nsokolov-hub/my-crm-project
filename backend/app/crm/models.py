@@ -206,7 +206,9 @@ class Nomenclature(Entity):
     __tablename__ = 'nomenclatures'
     name: Mapped[str] = mapped_column(String(250), index=True)
     article: Mapped[str | None] = mapped_column(String(150), index=True)
+    # The registry entry; the text keeps its name for documents and requests to suppliers.
     manufacturer: Mapped[str | None] = mapped_column(String(250))
+    manufacturer_id: Mapped[str | None] = mapped_column(ForeignKey('manufacturers.id'), index=True)
     purity: Mapped[str | None] = mapped_column(String(200))
     product_group_id: Mapped[str | None] = mapped_column(ForeignKey('product_groups.id'), index=True)
     cas: Mapped[str | None] = mapped_column(String(30), index=True)

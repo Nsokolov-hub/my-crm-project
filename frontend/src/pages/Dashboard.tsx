@@ -29,6 +29,7 @@ import { download } from '../lib/api';
 import { date, decimal, stageLabels, today } from '../lib/format';
 import { useApi } from '../lib/hooks';
 import type { Entity } from '../lib/types';
+import { ManufacturerReport } from './Manufacturers';
 export type DashboardData = {
   period: { from: string; to: string; basis: string; timezone: string; generated_at: string };
   new_requests: number;
@@ -408,6 +409,7 @@ export function Analytics() {
                 ]}
               />
             </Section>
+            <ManufacturerReport from={from} to={to} />
             <Section title="Взаиморасчёты по валютам">
               <DataTable
                 rows={d.receivables.map((r) => ({ ...r, id: r.currency }))}

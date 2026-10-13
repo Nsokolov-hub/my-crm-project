@@ -455,6 +455,85 @@ export interface paths {
         patch: operations["edit_packing_api_v1_packings__entity_id__patch"];
         trace?: never;
     };
+    "/api/v1/manufacturers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Manufacturers
+         * @description The registry; `umbrellas` leaves only entries that can be an umbrella brand.
+         */
+        get: operations["manufacturers_api_v1_manufacturers_get"];
+        put?: never;
+        /** Create Manufacturer */
+        post: operations["create_manufacturer_api_v1_manufacturers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/manufacturers/duplicates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Duplicates
+         * @description Entries whose names or spellings look alike: the same letters, or one name starting the other.
+         */
+        get: operations["duplicates_api_v1_manufacturers_duplicates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/manufacturers/{entity_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Manufacturer Detail */
+        get: operations["manufacturer_detail_api_v1_manufacturers__entity_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Edit Manufacturer */
+        patch: operations["edit_manufacturer_api_v1_manufacturers__entity_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/manufacturers/{entity_id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge Manufacturer
+         * @description Move spellings, nomenclature and brand members of a duplicate to the main entry.
+         */
+        post: operations["merge_manufacturer_api_v1_manufacturers__entity_id__merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/counterparties": {
         parameters: {
             query?: never;
@@ -1250,6 +1329,26 @@ export interface paths {
         put?: never;
         /** Confirm */
         post: operations["confirm_api_v1_requests__request_id__table_imports__batch_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/analytics/manufacturers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Manufacturer Report
+         * @description Positions of requests created in the period, their supplier prices and accepted orders, by manufacturer.
+         */
+        get: operations["manufacturer_report_api_v1_analytics_manufacturers_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3677,6 +3776,37 @@ export interface components {
             /** Subject */
             subject: string;
         };
+        /** ManufacturerInput */
+        ManufacturerInput: {
+            /** Name */
+            name: string;
+            /** Aliases */
+            aliases?: string[];
+            /** Umbrella Id */
+            umbrella_id?: string | null;
+        };
+        /** ManufacturerMergeInput */
+        ManufacturerMergeInput: {
+            /** Version */
+            version: number;
+            /** Target Id */
+            target_id: string;
+            /** Reason */
+            reason: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+        };
+        /** ManufacturerPatch */
+        ManufacturerPatch: {
+            /** Version */
+            version: number;
+            /** Name */
+            name?: string;
+            /** Aliases */
+            aliases?: string[];
+            /** Umbrella Id */
+            umbrella_id?: string | null;
+        };
         /** MemberInput */
         MemberInput: {
             /** User Id */
@@ -3709,6 +3839,8 @@ export interface components {
             name: string;
             /** Article */
             article?: string | null;
+            /** Manufacturer Id */
+            manufacturer_id?: string | null;
             /** Manufacturer */
             manufacturer?: string | null;
             /** Purity */
@@ -3732,6 +3864,8 @@ export interface components {
             name?: string;
             /** Article */
             article?: string | null;
+            /** Manufacturer Id */
+            manufacturer_id?: string | null;
             /** Manufacturer */
             manufacturer?: string | null;
             /** Purity */
@@ -6300,6 +6434,7 @@ export interface operations {
                 cas?: string;
                 manufacturer?: string;
                 article?: string;
+                manufacturer_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -6632,6 +6767,330 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PackingPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    manufacturers_api_v1_manufacturers_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                merged?: boolean;
+                umbrellas?: boolean;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_manufacturer_api_v1_manufacturers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManufacturerInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    duplicates_api_v1_manufacturers_duplicates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    manufacturer_detail_api_v1_manufacturers__entity_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    edit_manufacturer_api_v1_manufacturers__entity_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManufacturerPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    merge_manufacturer_api_v1_manufacturers__entity_id__merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManufacturerMergeInput"];
             };
         };
         responses: {
@@ -9859,6 +10318,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    manufacturer_report_api_v1_analytics_manufacturers_get: {
+        parameters: {
+            query?: {
+                date_from?: string | null;
+                date_to?: string | null;
+                by?: "manufacturer" | "umbrella";
+                include_test?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Сеанс отсутствует или отозван */

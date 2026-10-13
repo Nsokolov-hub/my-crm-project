@@ -198,7 +198,7 @@ def test_existing_nomenclature_keeps_group_when_quote_specifies_different_valid_
         },
     )
     batch = quote_preview(crm, req, supplier, different["name"])
-    assert batch["summary"] == {"total": 1, "checked": 1, "create_nomenclature": 0, "errors": 0}
+    assert batch["summary"] == {"total": 1, "checked": 1, "create_nomenclature": 0, "new_manufacturers": 0, "errors": 0}
     assert batch["rows"][0]["data"]["product_group_name"] == original["name"]
     confirm(crm, req["id"], batch["id"])
     with crm["sessions"]() as db:
@@ -332,7 +332,7 @@ def test_quote_template_import_uses_quotes_sheet_when_directory_was_last_open(cr
     )
     assert response.status_code == 200, response.text
     batch = response.json()
-    assert batch["summary"] == {"total": 1, "checked": 0, "create_nomenclature": 1, "errors": 0}
+    assert batch["summary"] == {"total": 1, "checked": 0, "create_nomenclature": 1, "new_manufacturers": 0, "errors": 0}
     assert batch["rows"][0]["data"]["product_group_name"] == selected["name"]
     assert confirm(crm, req["id"], batch["id"])["result"]["imported"] == 1
     with crm["sessions"]() as db:
