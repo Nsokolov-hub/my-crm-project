@@ -221,7 +221,9 @@ def test_attachment_export_scope_uses_owning_request(commerce, entity_type, clas
     allowed = env["client"].get(f"/api/v1/files/{file_id}/download")
     assert allowed.status_code == 200 and allowed.content == content
     make_foreign(env, env["request_id"])
-    get(env, f"/files/{file_id}/download", expected=404)
+    # The request stays visible, so the answer names the right that works only in own requests.
+    refused = get(env, f"/files/{file_id}/download", expected=403)
+    assert refused["code"] == "REQUEST_NOT_SHARED" and "Экспорт и скачивание" in refused["message"]
     set_scope(env, "exports.download", "all")
     allowed = env["client"].get(f"/api/v1/files/{file_id}/download")
     assert allowed.status_code == 200 and allowed.content == content

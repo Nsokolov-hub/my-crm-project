@@ -52,7 +52,33 @@ describe('calculation checks before a request', () => {
 
   it('needs a supply wave for imported positions', () => {
     expect(calculationErrors(draft({ waveId: null }))).toEqual([
-      'Руководитель должен назначить волну поставки в заявке.',
+      'Руководитель должен назначить волну поставки в заявке. Поставщику по DAP или внутри РФ волна не нужна: укажите это в его карточке («Тип расчёта»).',
+    ]);
+    const rows = [{ ...draft().rows[0], supplier_name: 'Pharmaffiliates Pvt Ltd' }];
+    expect(calculationErrors(draft({ waveId: null, rows }))[0]).toContain(
+      'Импорт: Pharmaffiliates Pvt Ltd.',
+    );
+  });
+
+  it('calculates DAP and resale in Russia without a wave or its expenses', () => {
+    for (const type of ['DAP', 'RUSSIA']) {
+      const rows = [{ ...draft().rows[0], calculation_type: type }];
+      expect(
+        calculationErrors(
+          draft({ waveId: null, rows, waveExpenses: { loading: false, error: new Error('Нет') } }),
+        ),
+      ).toEqual([]);
+    }
+  });
+
+  it('keeps imports apart from DAP and resale in Russia', () => {
+    const rows = [draft().rows[0], { ...draft().rows[0], id: 'q2', calculation_type: 'RUSSIA' }];
+    const selections = {
+      ...draft().selections,
+      q2: { quote_item_id: 'q2', quantity: '1', markup_coefficient: '1.5' },
+    };
+    expect(calculationErrors(draft({ rows, selections }))).toEqual([
+      'Импорт и DAP или перепродажу внутри РФ посчитайте отдельными расчётами: волна и её расходы относятся только к импорту.',
     ]);
   });
 

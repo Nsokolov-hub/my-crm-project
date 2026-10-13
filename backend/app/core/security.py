@@ -161,7 +161,17 @@ def check_request(db: Session, user: User, entity_id: str, permission: str = 're
     from app.crm.models import Request as CRMRequest
     row = db.scalar(select(CRMRequest).where(CRMRequest.id == entity_id, request_predicate(db, user, permission)))
     if row is None:
-        raise DomainError('NOT_FOUND', 'Объект не найден или недоступен', 404)
+        # A request the user can open is no secret: say which right is missing instead of "not found".
+        visible = permission != 'requests.read' and db.scalar(
+            select(CRMRequest).where(CRMRequest.id == entity_id, request_predicate(db, user)))
+        if not visible:
+            raise DomainError('NOT_FOUND', 'Объект не найден или недоступен', 404)
+        if not scope_for(db, user, permission):
+            raise DomainError('FORBIDDEN', 'Недостаточно прав для этого действия', 403)
+        owner = db.get(User, visible.owner_id)
+        raise DomainError('REQUEST_NOT_SHARED', f'Право «{PERMISSIONS.get(permission, permission)}» у вас действует '
+                          f'только для своих заявок. Ответственный за заявку №{visible.number} — '
+                          f'{owner.name if owner else "не назначен"}', 403)
     return row
 
 def has_request_permission(db: Session, user: User, entity_id: str, permission: str) -> bool:
