@@ -17,7 +17,13 @@ const categories: Record<string, string> = {
   other: 'Прочие документы',
 };
 
-export function CounterpartyDocuments({ counterpartyId }: { counterpartyId: string }) {
+export function CounterpartyDocuments({
+  counterpartyId,
+  readOnly = false,
+}: {
+  counterpartyId: string;
+  readOnly?: boolean;
+}) {
   const auth = useAuth();
   const [page, setPage] = useState(1);
   const documents = useApi<Page>(
@@ -31,7 +37,7 @@ export function CounterpartyDocuments({ counterpartyId }: { counterpartyId: stri
   const uploading = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const archive = useCommand();
-  const canWrite = auth.can('clients.write');
+  const canWrite = auth.can('clients.write') && !readOnly;
   const canUpload = canWrite && auth.can('files.upload');
 
   const scanning = Boolean(

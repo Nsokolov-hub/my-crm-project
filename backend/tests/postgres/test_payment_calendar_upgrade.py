@@ -37,6 +37,7 @@ def test_legacy_payments_files_and_refusals_survive_postgres_upgrade(legacy_cale
         conn = db.connection()
         payments = sa.Table("calendar_entries", sa.MetaData(), autoload_with=conn)
         files = sa.Table("files", sa.MetaData(), autoload_with=conn)
+        requests = sa.Table("requests", sa.MetaData(), autoload_with=conn)
         db.execute(payments.insert(), {"id": paid_id, "created_at": datetime(2026, 1, 31, tzinfo=timezone.utc),
             "version": 1, "direction": "income", "planned_date": date(2026, 1, 20), "amount": 100,
             "currency": "RUB", "purpose": "Исторический платёж", "status": "confirmed", "recurrence": "none",
@@ -46,9 +47,9 @@ def test_legacy_payments_files_and_refusals_survive_postgres_upgrade(legacy_cale
             "name": "Исторический счёт.pdf", "media_type": "application/pdf", "size": 20,
             "sha256": "a" * 64, "storage_key": "legacy/" + old_file_id, "classification": "general",
             "status": "clean", "author_id": env["owner_id"], "request_id": env["request_id"]})
-        req = db.get(Request, env["request_id"])
-        req.commercial_stage, req.loss_reason = "quote_given", "no_budget"
-        db.flush()
+        # The current Request model may have columns this older schema lacks.
+        db.execute(requests.update().where(requests.c.id == env["request_id"]).values(
+            commercial_stage="quote_given", loss_reason="no_budget"))
         config = Config(str(BACKEND_DIR / "alembic.ini"))
         config.attributes["connection"] = conn
         migrations.upgrade(config, "head")

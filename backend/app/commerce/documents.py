@@ -12,6 +12,7 @@ from app.core.db import DB
 from app.core.errors import DomainError, error
 from app.core.security import Actor, check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, serialize
+from app.crm.common import party_root
 from app.crm.models import Counterparty, QuoteItem, QuoteSheet, RequestItem, Seller
 from app.crm.models import Request as CRMRequest
 from app.crm.stages import advance_stage
@@ -409,7 +410,8 @@ def issue_invoice(request_id: str, data: InvoiceIn, db: DB, user: Actor):
             or proposal.status != "accepted"
         ):
             error("ACCEPTED_PROPOSAL_REQUIRED", "Счёт создаётся только для принятого КП этой заявки")
-        if req.seller_id != proposal.seller_id or req.client_id != proposal.client_id:
+        # A proposal issued to a duplicate stays valid after the duplicate is merged into the client.
+        if req.seller_id != proposal.seller_id or party_root(db, req.client_id) != party_root(db, proposal.client_id):
             error("DOCUMENT_PARTIES_CHANGED", "Стороны заявки изменились. Согласуйте новое КП")
         if len({line.execution_id for line in data.lines}) != len(data.lines):
             error("DUPLICATE_LINE", "Позиция исполнения указана повторно")

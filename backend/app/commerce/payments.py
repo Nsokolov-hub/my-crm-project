@@ -8,6 +8,7 @@ from app.core.db import DB, utcnow
 from app.core.errors import error
 from app.core.security import Actor, check_request, has_request_permission, require_permission
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
+from app.crm.common import party_ids, party_root
 from app.crm.models import Currency
 from app.crm.models import Request as CRMRequest
 
@@ -187,7 +188,7 @@ def declare_payment(request_id: str, data: PaymentIn, db: DB, user: Actor):
         candidates = db.scalars(
             select(Payment).where(
                 Payment.seller_id == req.seller_id,
-                Payment.client_id == req.client_id,
+                Payment.client_id.in_(party_ids(db, party_root(db, req.client_id))),
                 Payment.amount == data.amount,
                 Payment.currency == data.currency,
                 Payment.payment_date == data.payment_date,
@@ -282,11 +283,12 @@ def allocate_payment(payment_id: str, data: PaymentAllocateIn, db: DB, user: Act
         for selected in sorted(data.allocations, key=lambda row: row.invoice_id):
             invoice = lock(db, CommercialDocument, selected.invoice_id)
             check_request(db, user, invoice.request_id, "payments.confirm")
+            # Invoices issued to a duplicate count as the client's once the duplicate is merged into it.
             if (
                 invoice.kind != "invoice"
                 or invoice.status == "cancelled"
-                or (invoice.seller_id, invoice.client_id, invoice.currency)
-                != (current.seller_id, current.client_id, current.currency)
+                or (invoice.seller_id, party_root(db, invoice.client_id), invoice.currency)
+                != (current.seller_id, party_root(db, current.client_id), current.currency)
             ):
                 error(
                     "PAYMENT_PARTIES", "Распределять можно только на счета того же клиента, продавца и валюты"

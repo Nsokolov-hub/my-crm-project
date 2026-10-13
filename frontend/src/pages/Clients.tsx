@@ -1,4 +1,4 @@
-import { History, Pencil, Phone, Plus, Upload } from 'lucide-react';
+import { Archive, ArchiveRestore, History, Merge, Pencil, Phone, Plus, Upload } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../app/Auth';
@@ -31,6 +31,30 @@ const reassignmentReasonField: Field = {
   wide: true,
   help: 'Обязательна, если меняете ответственного. Сохраняется в истории контрагента.',
 };
+const archiveReasonField: Field = {
+  name: 'reason',
+  label: 'Причина',
+  type: 'textarea',
+  required: true,
+  minLength: 3,
+};
+const mergeFields: Field[] = [
+  {
+    name: 'target_id',
+    label: 'Основная карточка',
+    type: 'select',
+    source: '/counterparties?client_base=working',
+    required: true,
+    help: 'Карточка, которая останется. Найдите её по названию, ИНН или коду.',
+  },
+  archiveReasonField,
+];
+function mergeNotice(moved: Record<string, number>) {
+  return (
+    `Дубль объединён. Перенесено: заявок — ${moved.requests}, контактов — ${moved.contacts}, ` +
+    `звонков — ${moved.calls}, документов — ${moved.documents}, задач — ${moved.tasks}.`
+  );
+}
 const callProspectFields: Field[] = [
   { name: 'name', label: 'Название', required: true, wide: true },
   { name: 'tax_id', label: 'ИНН', required: true },
@@ -82,10 +106,21 @@ export function Clients() {
     (field) => field.name !== 'owner_id' || canReassign,
   );
   const [selected, setSelected] = useState<Entity>();
-  const [form, setForm] = useState<'edit' | 'call'>();
+  const [form, setForm] = useState<'edit' | 'call' | 'archive' | 'merge'>();
+  const [notice, setNotice] = useState('');
+  const [archive, setArchive] = useState(false);
   const [importing, setImporting] = useState(false);
   const [revision, setRevision] = useState(0);
   const refreshClients = useCallback(() => setRevision((value) => value + 1), []);
+  function open(row: Entity | undefined) {
+    setNotice('');
+    setSelected(row);
+  }
+  function changed(row: Entity) {
+    setSelected(row);
+    setForm(undefined);
+    setRevision((value) => value + 1);
+  }
   return (
     <>
       <PageHeading
@@ -98,13 +133,27 @@ export function Clients() {
           </Button>
         }
       />
+      <div className="tabs">
+        <button className={!archive ? 'active' : ''} onClick={() => setArchive(false)}>
+          Действующие
+        </button>
+        <button className={archive ? 'active' : ''} onClick={() => setArchive(true)}>
+          Архив
+        </button>
+      </div>
       <Collection
-        title="База контрагентов"
+        key={archive ? 'archive' : 'working'}
+        title={archive ? 'Архив контрагентов' : 'База контрагентов'}
+        description={
+          archive
+            ? 'Контрагенты из архива не предлагаются в заявках, квотах и волнах. Их можно вернуть, кроме объединённых дублей.'
+            : undefined
+        }
         endpoint="/counterparties"
-        query="&client_base=working"
+        query={archive ? '&archived=true' : '&client_base=working'}
         fields={editableClientFields}
         createLabel="Добавить контрагента"
-        canCreate={auth.can('clients.write')}
+        canCreate={!archive && auth.can('clients.write')}
         refreshKey={revision}
         columns={[
           { key: 'internal_code', label: 'Код' },
@@ -130,33 +179,84 @@ export function Clients() {
           { key: 'country', label: 'Страна' },
           { key: 'phone', label: 'Телефон' },
           { key: 'email', label: 'Почта' },
-          { key: 'created_at', label: 'Добавлен', render: (row) => date(row.created_at) },
+          ...(archive
+            ? [
+                {
+                  key: 'merged_into_name',
+                  label: 'Объединён с',
+                  render: (row: Entity) => String(row.merged_into_name || '—'),
+                },
+              ]
+            : [
+                {
+                  key: 'created_at',
+                  label: 'Добавлен',
+                  render: (row: Entity) => date(row.created_at),
+                },
+              ]),
         ]}
-        onSelect={setSelected}
+        onSelect={open}
       />
       {selected && !form && (
-        <Modal title={String(selected.name)} wide onClose={() => setSelected(undefined)}>
+        <Modal title={String(selected.name)} wide onClose={() => open(undefined)}>
           <div className="form-body">
+            {notice && (
+              <p className="info-note" role="status">
+                {notice}
+              </p>
+            )}
+            {Boolean(selected.archived) && (
+              <p className="info-note">
+                {selected.merged_into_id
+                  ? `Дубль объединён с «${String(selected.merged_into_name || '')}»: заявки, контакты, звонки и документы перенесены туда. Выпущенные КП, счета и оплаты остаются за этой карточкой и засчитываются основной.`
+                  : 'Контрагент в архиве: его не предлагают в заявках, квотах и волнах. Верните его из архива, если он снова нужен.'}
+              </p>
+            )}
             <div className="inline-actions">
-              {auth.can('clients.write') && (
+              {!selected.archived && auth.can('clients.write') && (
                 <Button variant="secondary" onClick={() => setForm('edit')}>
                   <Pencil size={15} />
                   Редактировать
                 </Button>
               )}
-              {auth.can('calls.write') && auth.can('clients.write') && (
+              {!selected.archived && auth.can('calls.write') && auth.can('clients.write') && (
                 <Button onClick={() => setForm('call')}>
                   <Phone size={15} />
                   Записать звонок
                 </Button>
               )}
-              <Link
-                className="button secondary"
-                to={`/requests?client_id=${selected.id}`}
-                onClick={() => setSelected(undefined)}
-              >
-                Заявки клиента
-              </Link>
+              {selected.merged_into_id ? (
+                <Button
+                  variant="secondary"
+                  onClick={() =>
+                    void api<Entity>(`/counterparties/${String(selected.merged_into_id)}`).then(
+                      open,
+                    )
+                  }
+                >
+                  Открыть основную карточку
+                </Button>
+              ) : (
+                <Link
+                  className="button secondary"
+                  to={`/requests?client_id=${selected.id}`}
+                  onClick={() => open(undefined)}
+                >
+                  Заявки клиента
+                </Link>
+              )}
+              {!selected.archived && canReassign && auth.can('clients.write') && (
+                <Button variant="secondary" onClick={() => setForm('merge')}>
+                  <Merge size={15} />
+                  Объединить с основной
+                </Button>
+              )}
+              {!selected.merged_into_id && auth.can('clients.write') && (
+                <Button variant="secondary" onClick={() => setForm('archive')}>
+                  {selected.archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+                  {selected.archived ? 'Вернуть из архива' : 'В архив'}
+                </Button>
+              )}
             </div>
             <div className="client-card-columns">
               <div>
@@ -178,7 +278,7 @@ export function Clients() {
                   endpoint={`/counterparties/${selected.id}/contacts`}
                   fields={contactFields}
                   createLabel="Добавить контакт"
-                  canCreate={auth.can('clients.write')}
+                  canCreate={!selected.archived && auth.can('clients.write')}
                   columns={[
                     {
                       key: 'name',
@@ -194,7 +294,10 @@ export function Clients() {
                 />
               </aside>
             </div>
-            <CounterpartyDocuments counterpartyId={selected.id} />
+            <CounterpartyDocuments
+              counterpartyId={selected.id}
+              readOnly={Boolean(selected.archived)}
+            />
             <Collection
               title="История звонков"
               endpoint={`/calls?client_id=${selected.id}`}
@@ -212,7 +315,39 @@ export function Clients() {
           </div>
         </Modal>
       )}
-      {selected && form && (
+      {selected && form === 'archive' && (
+        <RecordForm
+          title={selected.archived ? 'Вернуть контрагента из архива' : 'Убрать контрагента в архив'}
+          endpoint={`/counterparties/${selected.id}/archive`}
+          command
+          extra={{ version: selected.version, archived: !selected.archived }}
+          fields={[archiveReasonField]}
+          note={
+            selected.archived
+              ? 'Контрагент вернётся в списки и в выбор в заявках. Вместе с ним вернутся заявки, ушедшие в архив с ним.'
+              : 'Контрагент пропадёт из списков и из выбора в заявках, квотах и волнах, история сохранится. Его завершённые заявки уйдут в архив вместе с ним. Пока идёт работа по заявкам, волнам или заказам поставщику, система их назовёт и в архив не пустит. Дубль лучше объединить с основной карточкой.'
+          }
+          onClose={() => setForm(undefined)}
+          onSuccess={changed}
+        />
+      )}
+      {selected && form === 'merge' && (
+        <RecordForm
+          title="Объединить дубль с основной карточкой"
+          endpoint={`/counterparties/${selected.id}/merge`}
+          command
+          extra={{ version: selected.version }}
+          fields={mergeFields}
+          submitLabel="Объединить"
+          note={`«${String(selected.name)}» уйдёт в архив. Его заявки, контакты, звонки, задачи и документы перейдут в основную карточку, а пустые реквизиты основной заполнятся из дубля. Выпущенные КП, счета и оплаты останутся за дублем и будут засчитываться основной карточке.`}
+          onClose={() => setForm(undefined)}
+          onSuccess={(result) => {
+            changed(result);
+            setNotice(mergeNotice(result.moved as Record<string, number>));
+          }}
+        />
+      )}
+      {selected && (form === 'edit' || form === 'call') && (
         <RecordForm
           title={form === 'edit' ? 'Редактировать контрагента' : 'Записать звонок'}
           endpoint={form === 'edit' ? `/counterparties/${selected.id}` : '/calls'}

@@ -87,13 +87,26 @@ class ClientPatch(Input):
     phone: str | None = None
     owner_id: str = Field(default=None)
     details: dict[str, Any] = Field(default=None)
-    archived: bool = Field(default=None)
     reason: str | None = None
 
     @field_validator('details')
     @classmethod
     def known_details(cls, value):
         return checked_details(value)
+
+
+class CounterpartyArchiveInput(Input):
+    version: int = Field(ge=1)
+    archived: bool
+    reason: str = Field(min_length=3)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+
+
+class CounterpartyMergeInput(Input):
+    version: int = Field(ge=1)
+    target_id: str
+    reason: str = Field(min_length=3)
+    idempotency_key: str = Field(min_length=8, max_length=128)
 
 
 class ContactInput(Input):
