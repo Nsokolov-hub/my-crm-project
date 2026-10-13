@@ -66,7 +66,7 @@ const matrix = {
 };
 
 it('shows per position who priced it, who left it without a price and who has not answered', async () => {
-  vi.mocked(api).mockImplementation(async (path, options) =>
+  vi.mocked(api).mockImplementation(async (_path, options) =>
     options?.method === 'POST' ? { id: 'mail-b' } : matrix,
   );
   render(<RequestSupplierResponses requestId="request" />);
