@@ -2218,6 +2218,119 @@
         }
       }
     },
+    "/api/v1/counterparties/{entity_id}/archive": {
+      "post": {
+        "tags": [
+          "CRM"
+        ],
+        "summary": "Archive Counterparty",
+        "operationId": "archive_counterparty_api_v1_counterparties__entity_id__archive_post",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CounterpartyArchiveInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Archive Counterparty Api V1 Counterparties  Entity Id  Archive Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/counterparties/{entity_id}/merge": {
+      "post": {
+        "tags": [
+          "CRM"
+        ],
+        "summary": "Merge Counterparty",
+        "description": "Moves the working records of a duplicate to the main card and archives the duplicate.\n\nIssued documents, payments and supplier quotations are recorded facts: they keep the duplicate,\nwhich then stands for the main card (see app.crm.common.party_root).",
+        "operationId": "merge_counterparty_api_v1_counterparties__entity_id__merge_post",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CounterpartyMergeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Merge Counterparty Api V1 Counterparties  Entity Id  Merge Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/counterparties/{entity_id}/documents": {
       "get": {
         "tags": [
@@ -12106,10 +12219,6 @@
             "type": "object",
             "title": "Details"
           },
-          "archived": {
-            "type": "boolean",
-            "title": "Archived"
-          },
           "reason": {
             "anyOf": [
               {
@@ -12429,6 +12538,39 @@
         ],
         "title": "ContactPatch"
       },
+      "CounterpartyArchiveInput": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "archived": {
+            "type": "boolean",
+            "title": "Archived"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "title": "Reason"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version",
+          "archived",
+          "reason",
+          "idempotency_key"
+        ],
+        "title": "CounterpartyArchiveInput"
+      },
       "CounterpartyDocumentPatch": {
         "properties": {
           "version": {
@@ -12460,6 +12602,39 @@
           "archived"
         ],
         "title": "CounterpartyDocumentPatch"
+      },
+      "CounterpartyMergeInput": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "target_id": {
+            "type": "string",
+            "title": "Target Id"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "title": "Reason"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version",
+          "target_id",
+          "reason",
+          "idempotency_key"
+        ],
+        "title": "CounterpartyMergeInput"
       },
       "CountryInput": {
         "properties": {

@@ -2,12 +2,33 @@
 
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import DomainError
 from app.core.models import User
 from app.core.service import audit, serialize
 from app.crm.models import Contact, Counterparty
+
+
+def party_root(db: Session, counterparty_id: str) -> str:
+    """The card that stands for a counterparty now: a merged duplicate stands for its main card."""
+    seen = {counterparty_id}
+    while target := db.scalar(select(Counterparty.merged_into_id).where(Counterparty.id == counterparty_id)):
+        if target in seen:
+            break
+        seen.add(target)
+        counterparty_id = target
+    return counterparty_id
+
+
+def party_ids(db: Session, counterparty_id: str) -> set[str]:
+    """A counterparty and every duplicate merged into it."""
+    ids, frontier = {counterparty_id}, {counterparty_id}
+    while frontier:
+        frontier = set(db.scalars(select(Counterparty.id).where(Counterparty.merged_into_id.in_(frontier)))) - ids
+        ids |= frontier
+    return ids
 
 
 def active_user(db: Session, entity_id: str) -> User:

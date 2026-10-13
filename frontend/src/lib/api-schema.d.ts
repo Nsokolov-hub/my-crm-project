@@ -525,6 +525,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/counterparties/{entity_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Counterparty */
+        post: operations["archive_counterparty_api_v1_counterparties__entity_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/counterparties/{entity_id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge Counterparty
+         * @description Moves the working records of a duplicate to the main card and archives the duplicate.
+         *
+         *     Issued documents, payments and supplier quotations are recorded facts: they keep the duplicate,
+         *     which then stands for the main card (see app.crm.common.party_root).
+         */
+        post: operations["merge_counterparty_api_v1_counterparties__entity_id__merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/counterparties/{entity_id}/documents": {
         parameters: {
             query?: never;
@@ -3104,8 +3144,6 @@ export interface components {
             details?: {
                 [key: string]: unknown;
             };
-            /** Archived */
-            archived?: boolean;
             /** Reason */
             reason?: string | null;
         };
@@ -3173,6 +3211,17 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /** CounterpartyArchiveInput */
+        CounterpartyArchiveInput: {
+            /** Version */
+            version: number;
+            /** Archived */
+            archived: boolean;
+            /** Reason */
+            reason: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+        };
         /** CounterpartyDocumentPatch */
         CounterpartyDocumentPatch: {
             /** Version */
@@ -3181,6 +3230,17 @@ export interface components {
             archived: boolean;
             /** Reason */
             reason?: string | null;
+        };
+        /** CounterpartyMergeInput */
+        CounterpartyMergeInput: {
+            /** Version */
+            version: number;
+            /** Target Id */
+            target_id: string;
+            /** Reason */
+            reason: string;
+            /** Idempotency Key */
+            idempotency_key: string;
         };
         /** CountryInput */
         CountryInput: {
@@ -6893,6 +6953,118 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    archive_counterparty_api_v1_counterparties__entity_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CounterpartyArchiveInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    merge_counterparty_api_v1_counterparties__entity_id__merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CounterpartyMergeInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Сеанс отсутствует или отозван */
