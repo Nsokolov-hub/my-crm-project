@@ -121,7 +121,8 @@ def test_delete_entire_quote_checks_permission_and_version_and_excludes_price_re
         source_item_id = q.source_request_item_id
     sheet = post(crm, f"/requests/{req['id']}/quote-sheets", {"supplier_id": supplier["id"], "items": [item, {**item, "source_request_item_id": source_item_id}]})
     login(crm, "manager@example.com")
-    assert cmd(crm, f"/quote-sheets/{sheet['id']}/delete", {"version": sheet["version"]}, status=404)["code"] == "NOT_FOUND"
+    # The manager sees the request but may not delete quotations in it.
+    assert cmd(crm, f"/quote-sheets/{sheet['id']}/delete", {"version": sheet["version"]}, status=403)["code"] == "FORBIDDEN"
     login(crm)
     cmd(crm, f"/quote-sheets/{sheet['id']}/delete", {"version": sheet["version"] + 1}, status=409)
     result = cmd(crm, f"/quote-sheets/{sheet['id']}/delete", {"version": sheet["version"]})

@@ -33,13 +33,25 @@ export type CalculationDraft = {
 /** Reasons why the calculation cannot be requested yet, in the order the editor shows them. */
 export function calculationErrors(draft: CalculationDraft): string[] {
   const errors: string[] = [];
-  if (
-    !draft.waveId &&
-    draft.rows.some((row) => !row.calculation_type || row.calculation_type === 'IMPORT')
-  )
-    errors.push('Руководитель должен назначить волну поставки в заявке.');
-  if (draft.waveExpenses.loading) errors.push('Загружаются расходы волны.');
-  if (draft.waveExpenses.error)
+  // Only imports travel in a supply wave; DAP and resale in Russia are calculated without one.
+  const imported = draft.rows.filter(
+    (row) => !row.calculation_type || row.calculation_type === 'IMPORT',
+  );
+  const importers = [...new Set(imported.map((row) => String(row.supplier_name || '')))]
+    .filter(Boolean)
+    .join(', ');
+  if (imported.length && imported.length < draft.rows.length)
+    errors.push(
+      'Импорт и DAP или перепродажу внутри РФ посчитайте отдельными расчётами: волна и её расходы относятся только к импорту.',
+    );
+  else if (imported.length && !draft.waveId)
+    errors.push(
+      'Руководитель должен назначить волну поставки в заявке.' +
+        (importers ? ` Импорт: ${importers}.` : '') +
+        ' Поставщику по DAP или внутри РФ волна не нужна: укажите это в его карточке («Тип расчёта»).',
+    );
+  if (imported.length && draft.waveExpenses.loading) errors.push('Загружаются расходы волны.');
+  if (imported.length && draft.waveExpenses.error)
     errors.push(
       'Не удалось загрузить расходы волны. Проверьте тариф поставщика и повторно откройте расчёт.',
     );

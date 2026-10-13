@@ -752,6 +752,10 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
                 error("CURRENCY_REQUIRED", f"Валюта курса {rate['currency']} не найдена в справочнике", field=f"rates.{index}.currency")
         selections = [itemized_selection(db, request_id, selection, index) for index, selection in enumerate(data.selections)]
         importing = any(row['calculation_type'] == 'IMPORT' for row in selections)
+        # The wave and its shared expenses belong to imports only; DAP and resale in Russia need no wave.
+        if importing and any(row['calculation_type'] != 'IMPORT' for row in selections):
+            error('CALCULATION_TYPES_MIXED', 'Импорт и DAP или перепродажу внутри РФ посчитайте отдельными расчётами: '
+                  'волна и её расходы относятся только к импорту', field='selections')
         if importing and (not country or not country.active):
             error('IMPORT_COUNTRY_REQUIRED', 'Выберите действующую страну ввоза из справочника', field='profile_id')
         wave = None
