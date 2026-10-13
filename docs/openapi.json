@@ -7611,6 +7611,38 @@
         }
       }
     },
+    "/api/v1/waves/board": {
+      "get": {
+        "tags": [
+          "Согласования и поставки"
+        ],
+        "summary": "Wave Board",
+        "description": "Waves in use for the board, earliest arrival first.\n\nQuantities need every request of the wave to be visible, amounts also the purchase and calculation rights\non each of them, and profitability the profit right.",
+        "operationId": "wave_board_api_v1_waves_board_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/executions/{execution_id}/cancel": {
       "post": {
         "tags": [

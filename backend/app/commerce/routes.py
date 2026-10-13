@@ -6,11 +6,12 @@ from app.core.security import Actor, request_predicate, require_permission
 from app.core.service import serialize
 from app.crm.models import Request as CRMRequest
 
-from . import documents, financial, fulfillment, payments, procurement
+from . import documents, financial, fulfillment, payments, procurement, wave_board
 from .models import Approval, CommercialDocument, Execution, Payment
 
 router = APIRouter()
-for domain in (procurement, financial, documents, payments, fulfillment):
+# The board comes before fulfillment, whose /waves/{wave_id} would otherwise take /waves/board.
+for domain in (procurement, financial, documents, payments, wave_board, fulfillment):
     router.include_router(domain.router)
 
 
