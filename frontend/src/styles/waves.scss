@@ -1,0 +1,299 @@
+// Board of waves: months across, planned and working lanes down. Type is large: the board is read from afar.
+
+.wave-board {
+  border: 1px solid #e9eaf0;
+  border-radius: 12px;
+  background: #fff;
+  padding: 18px 0 8px;
+  margin-bottom: 22px;
+  min-width: 0;
+}
+
+.wave-board-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  padding: 0 20px;
+  font-size: 15px;
+}
+
+.wave-board-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #535768;
+}
+
+.wave-board-toolbar select {
+  font-size: 15px;
+  padding: 7px 10px;
+  border: 1px solid #dcdde6;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.wave-board-lanes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 3px;
+  border: 1px solid #e9eaf0;
+  border-radius: 10px;
+}
+
+.wave-board-lanes button {
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #535768;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 8px 14px;
+}
+
+.wave-board-lanes button.active {
+  background: #f2eef9;
+  color: #6a4fc4;
+}
+
+.wave-board-basis {
+  padding: 12px 20px 0;
+  color: #6e7283;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.wave-board-scroll {
+  overflow-x: auto;
+  margin-top: 14px;
+  padding-bottom: 6px;
+}
+
+.wave-board-grid {
+  display: grid;
+  min-width: max-content;
+}
+
+.wave-board-corner,
+.wave-board-lane {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #fff;
+  border-right: 1px solid #e9eaf0;
+}
+
+.wave-board-month {
+  display: grid;
+  gap: 4px;
+  padding: 12px 16px;
+  border-bottom: 2px solid #e4e1ef;
+  background: #fafafd;
+}
+
+.wave-board-month strong {
+  font-size: 18px;
+  font-weight: 750;
+  color: #242638;
+}
+
+.wave-board-month span {
+  font-size: 14px;
+  color: #6e7283;
+}
+
+.wave-board-month.current {
+  background: #f2eef9;
+  border-bottom-color: #7960d6;
+}
+
+.wave-board-gap {
+  display: grid;
+  place-items: center;
+  border-bottom: 2px solid #e4e1ef;
+  background: repeating-linear-gradient(135deg, #f6f7fa 0 6px, #fff 6px 12px);
+  color: #9699aa;
+  font-size: 18px;
+  cursor: help;
+}
+
+.wave-board-lane {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 16px 14px;
+  border-top: 1px solid #e9eaf0;
+}
+
+.wave-board-lane strong {
+  font-size: 18px;
+  font-weight: 750;
+}
+
+.wave-board-lane span {
+  font-size: 14px;
+  color: #535768;
+}
+
+.wave-board-lane span b {
+  display: block;
+  font-size: 16px;
+  font-weight: 750;
+  color: #242638;
+}
+
+.wave-board-lane small {
+  font-size: 13px;
+  line-height: 1.4;
+  color: #8a8d9c;
+}
+
+.wave-board-lane.plan strong {
+  color: #6a6f80;
+}
+
+.wave-board-lane.work strong {
+  color: #6a4fc4;
+}
+
+.wave-board-cell {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 14px 12px;
+  border-top: 1px solid #e9eaf0;
+  border-left: 1px solid #f1f1f5;
+  min-height: 120px;
+}
+
+.wave-board-cell.current {
+  background: #fcfbff;
+}
+
+.wave-board-gap-cell {
+  border-top: 1px solid #e9eaf0;
+  background: repeating-linear-gradient(135deg, #f9f9fb 0 6px, #fff 6px 12px);
+}
+
+.wave-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #e3e4ec;
+  border-left: 5px solid #b9bccb;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 2px 10px #25334a0d;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.wave-card.work {
+  border-left-color: #7960d6;
+}
+
+.wave-card:hover {
+  border-color: #cfc5ee;
+  box-shadow: 0 4px 16px #25334a17;
+}
+
+.wave-card header {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+.wave-card-title {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: #242638;
+  font-size: 18px;
+  font-weight: 750;
+  line-height: 1.3;
+  text-align: left;
+}
+
+.wave-card-number {
+  font-size: 14px;
+  color: #6e7283;
+  line-height: 1.4;
+}
+
+.wave-card-date {
+  font-size: 15px;
+  font-weight: 600;
+  color: #3d4152;
+}
+
+.wave-card header .badge {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.wave-card dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.wave-card dl > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 12px;
+}
+
+.wave-card dt {
+  font-size: 15px;
+  color: #6e7283;
+}
+
+.wave-card dd {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #242638;
+  text-align: right;
+}
+
+.wave-card dd small {
+  font-size: 14px;
+  font-weight: 500;
+  color: #6e7283;
+}
+
+.wave-card-sales dd {
+  font-size: 21px;
+}
+
+.wave-card .loss dd {
+  color: #be3d59;
+}
+
+.wave-card footer {
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid #efeff4;
+  font-size: 14px;
+  color: #535768;
+  line-height: 1.5;
+}
+
+.wave-card-warning {
+  color: #9a6b1f;
+}
+
+@media (width <= 700px) {
+  .wave-board-toolbar {
+    padding: 0 16px;
+  }
+
+  .wave-board-basis {
+    padding: 12px 16px 0;
+  }
+}

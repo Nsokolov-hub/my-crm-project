@@ -15,6 +15,8 @@ vi.mock('../app/Auth', () => ({
 }));
 beforeEach(() => {
   vi.clearAllMocks();
+  // These tests work with the table of waves; the board is covered in wave-board.test.tsx.
+  localStorage.setItem('waves:view', 'table');
   HTMLDialogElement.prototype.showModal = function () {
     this.setAttribute('open', '');
   };

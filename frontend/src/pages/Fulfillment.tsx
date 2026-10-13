@@ -16,6 +16,16 @@ import { date, decimal, nowLocal, metric } from '../lib/format';
 import { useApi } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
 import { waveKindLabel, waveKindOptions, waveWeekInitial, waveWeekLabel } from '../lib/waves';
+import { WaveBoard } from './WaveBoard';
+
+const VIEW_KEY = 'waves:view';
+function savedView(): 'board' | 'table' {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'board';
+  } catch {
+    return 'board';
+  }
+}
 export function RequestFulfillment({ requestId }: { requestId: string }) {
   const auth = useAuth();
   const [approval, setApproval] = useState<Entity>();
@@ -437,6 +447,8 @@ function WaveFinancialSummary({ summary }: { summary: Entity }) {
 export function Waves() {
   const auth = useAuth();
   const [archive, setArchive] = useState(false);
+  const [view, setView] = useState<'board' | 'table'>(savedView);
+  const [creating, setCreating] = useState(false);
   const [forecast, setForecast] = useState<Entity>();
   const [addingForecast, setAddingForecast] = useState(false);
   const [selected, setSelected] = useState<Entity>();
@@ -460,6 +472,14 @@ export function Waves() {
     setOpenError(undefined);
     api<Entity>(`/waves/${id}`).then(setSelected, setOpenError);
   }
+  function chooseView(next: 'board' | 'table') {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      /* the choice is only a convenience */
+    }
+  }
   const plan = selected?.kind === 'plan';
   const writable = auth.can('waves.write') && !selected?.archived;
   const forecasts = (selected?.forecasts || []) as Entity[];
@@ -471,48 +491,88 @@ export function Waves() {
         description="Плановая волна поставщика задаёт плановый объём для расчётов, подтверждённые заказы собираются в её рабочих волнах. Ненужные волны убирайте в архив."
       />
       <div className="tabs">
-        <button className={!archive ? 'active' : ''} onClick={() => setArchive(false)}>
-          Действующие
+        <button
+          className={!archive && view === 'board' ? 'active' : ''}
+          onClick={() => {
+            setArchive(false);
+            chooseView('board');
+          }}
+        >
+          Доска
+        </button>
+        <button
+          className={!archive && view === 'table' ? 'active' : ''}
+          onClick={() => {
+            setArchive(false);
+            chooseView('table');
+          }}
+        >
+          Таблица
         </button>
         <button className={archive ? 'active' : ''} onClick={() => setArchive(true)}>
           Архив
         </button>
       </div>
-      <Collection
-        title={archive ? 'Архив волн' : 'Расписание волн'}
-        description={
-          archive
-            ? 'Волны из архива не предлагаются в заявках и расчётах. Их можно вернуть.'
-            : undefined
-        }
-        endpoint={archive ? '/waves?archived=true' : '/waves'}
-        fields={waveFields}
-        canCreate={!archive}
-        command
-        createLabel="Новая волна"
-        refreshKey={revision}
-        onSelect={setSelected}
-        columns={[
-          { key: 'number', label: 'Волна' },
-          {
-            key: 'kind',
-            label: 'Вид',
-            render: (r) => (
-              <Badge value={waveKindLabel(r)} tone={r.kind === 'plan' ? 'gray' : 'purple'} />
-            ),
-          },
-          { key: 'supplier_name', label: 'Поставщик' },
-          { key: 'route', label: 'Маршрут' },
-          { key: 'status', label: 'Состояние', render: (r) => <Badge value={r.status} /> },
-          { key: 'close_week', label: 'Приём до', render: (r) => waveWeekLabel(r, 'close') },
-          {
-            key: 'departure_week',
-            label: 'Отправка',
-            render: (r) => waveWeekLabel(r, 'departure'),
-          },
-          { key: 'arrival_week', label: 'Прибытие', render: (r) => waveWeekLabel(r, 'arrival') },
-        ]}
-      />
+      {!archive && view === 'board' && (
+        <>
+          {auth.can('waves.write') && (
+            <div className="inline-actions">
+              <Button onClick={() => setCreating(true)}>Новая волна</Button>
+            </div>
+          )}
+          <WaveBoard refreshKey={revision} onOpen={openWave} />
+          {creating && (
+            <RecordForm
+              title="Новая волна"
+              endpoint="/waves"
+              fields={waveFields}
+              command
+              onClose={() => setCreating(false)}
+              onSuccess={() => {
+                setCreating(false);
+                setRevision((v) => v + 1);
+              }}
+            />
+          )}
+        </>
+      )}
+      {(archive || view === 'table') && (
+        <Collection
+          title={archive ? 'Архив волн' : 'Расписание волн'}
+          description={
+            archive
+              ? 'Волны из архива не предлагаются в заявках и расчётах. Их можно вернуть.'
+              : undefined
+          }
+          endpoint={archive ? '/waves?archived=true' : '/waves'}
+          fields={waveFields}
+          canCreate={!archive}
+          command
+          createLabel="Новая волна"
+          refreshKey={revision}
+          onSelect={setSelected}
+          columns={[
+            { key: 'number', label: 'Волна' },
+            {
+              key: 'kind',
+              label: 'Вид',
+              render: (r) => (
+                <Badge value={waveKindLabel(r)} tone={r.kind === 'plan' ? 'gray' : 'purple'} />
+              ),
+            },
+            { key: 'supplier_name', label: 'Поставщик' },
+            { key: 'route', label: 'Маршрут' },
+            { key: 'status', label: 'Состояние', render: (r) => <Badge value={r.status} /> },
+            { key: 'close_week', label: 'Приём до', render: (r) => waveWeekLabel(r, 'close') },
+            {
+              key: 'departure_week',
+              label: 'Отправка',
+              render: (r) => waveWeekLabel(r, 'departure'),
+            },
+            { key: 'arrival_week', label: 'Прибытие', render: (r) => waveWeekLabel(r, 'arrival') },
+          ]}
+        />
+      )}
       <ErrorBox error={openError} />
       {selected && !editing && !archiving && !allocationAction && !addingForecast && (
         <Modal title={`Волна ${selected.number}`} wide onClose={() => setSelected(undefined)}>
