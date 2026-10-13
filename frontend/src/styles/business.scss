@@ -151,3 +151,32 @@
     padding: 16px;
   }
 }
+
+.supplier-responses th {
+  min-width: 180px;
+  vertical-align: top;
+  text-align: left;
+}
+
+.supplier-responses th strong,
+.supplier-responses th small {
+  display: block;
+}
+
+.supplier-responses th small {
+  margin-top: 4px;
+  color: #808394;
+  font-weight: 500;
+}
+
+.supplier-responses th .button {
+  margin-top: 6px;
+}
+
+.supplier-responses td:first-child {
+  min-width: 240px;
+}
+
+.supplier-responses-empty {
+  padding: 0 23px 20px;
+}

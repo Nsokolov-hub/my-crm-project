@@ -2,8 +2,8 @@
 
 from fastapi import APIRouter
 
-from . import absences, calendar, reports, reviews, supplier_mail, supplier_orders
+from . import absences, calendar, reports, reviews, supplier_mail, supplier_orders, supplier_stats
 
 router = APIRouter()
-for domain in (calendar, reviews, absences, supplier_orders, supplier_mail, reports):
+for domain in (calendar, reviews, absences, supplier_orders, supplier_mail, supplier_stats, reports):
     router.include_router(domain.router)

@@ -10,6 +10,7 @@ import type { Entity, Field, Page } from '../lib/types';
 import { useAuth } from '../app/Auth';
 import { SupplierMailEditor } from '../components/SupplierMailEditor';
 import { TableImportDialog } from '../components/TableImportDialog';
+import { RequestSupplierResponses } from './SupplierResponses';
 export function RequestRfqs({
   requestId,
   requestNumber,
@@ -68,6 +69,7 @@ export function RequestRfqs({
           { key: 'sent_at', label: 'Дата', render: (r) => date(r.sent_at, true) },
         ]}
       />
+      <RequestSupplierResponses requestId={requestId} refreshKey={revision} />
       {mailing && (
         <SupplierMailEditor
           requestId={requestId}

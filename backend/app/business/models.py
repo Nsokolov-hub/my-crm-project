@@ -120,3 +120,8 @@ class SupplierMail(Entity):
     status: Mapped[str] = mapped_column(String(20), default="queued")
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     author_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    # Positions of the request in the mail; None for mails sent before positions were recorded.
+    item_ids: Mapped[list[str] | None] = mapped_column(JSON)
+    # A reply without prices, recorded by hand: positions without a quote then count as declined.
+    replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reply_note: Mapped[str] = mapped_column(Text, default="", server_default="")

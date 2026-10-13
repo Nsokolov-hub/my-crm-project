@@ -1,19 +1,20 @@
 """Requests for quotes mailed to suppliers."""
 
+from datetime import timedelta
 from html import escape
 
 from fastapi import APIRouter
-from pydantic import EmailStr, Field, TypeAdapter, ValidationError
+from pydantic import AwareDatetime, EmailStr, Field, TypeAdapter, ValidationError
 from sqlalchemy import select
 
 from app.commerce.procurement import rfq_table, supplier
-from app.commerce.schemas import Command
+from app.commerce.schemas import Command, VersionCommand
 from app.core.config import settings
-from app.core.db import DB
+from app.core.db import DB, as_utc, utcnow
 from app.core.errors import error
 from app.core.models import OutboxEvent
 from app.core.security import Actor, check_request, require_permission
-from app.core.service import audit, idem, page, serialize
+from app.core.service import audit, check_version, idem, lock, page, serialize
 from app.crm.models import RequestItem
 
 from .models import SupplierMail
@@ -107,6 +108,7 @@ def mail_send(request_id: str, data: MailSendIn, db: DB, user: Actor):
             mail = SupplierMail(
                 request_id=request_id,
                 supplier_id=draft["supplier_id"],
+                item_ids=list(dict.fromkeys(data.item_ids)),
                 recipient=draft["recipient"],
                 cc=draft["cc"],
                 subject=data.subject,
@@ -152,3 +154,37 @@ def mail_list(request_id: str, db: DB, user: Actor):
         1,
         100,
     )
+
+
+class MailReplyIn(VersionCommand):
+    replied_at: AwareDatetime | None = None
+    note: str = Field(min_length=3, max_length=2000)
+
+
+@router.post("/supplier-mails/{mail_id}/reply")
+def mail_reply(mail_id: str, data: MailReplyIn, db: DB, user: Actor):
+    """A supplier answered without prices: positions of the mail without a quote count as declined."""
+    mail = db.get(SupplierMail, mail_id)
+    if not mail:
+        error("NOT_FOUND", "Письмо не найдено", 404)
+    check_request(db, user, mail.request_id, "quotes.write")
+
+    def operation():
+        current = lock(db, SupplierMail, mail_id)
+        check_version(current, data.version)
+        if not current.sent_at:
+            error("MAIL_NOT_SENT", "Письмо ещё не отправлено: ответа на него быть не может", 409)
+        replied = data.replied_at or utcnow()
+        if replied < as_utc(current.sent_at):
+            error("REPLY_BEFORE_MAIL", "Ответ не может прийти раньше отправки письма", field="replied_at")
+        if replied > utcnow() + timedelta(minutes=1):
+            error("REPLY_FUTURE", "Дата ответа не может быть в будущем", field="replied_at")
+        before = {"replied_at": current.replied_at, "reply_note": current.reply_note}
+        current.replied_at, current.reply_note = replied, data.note
+        current.version += 1
+        audit(db, user, "supplier_mail", current.id, "reply_recorded", before,
+              {"replied_at": replied, "reply_note": data.note})
+        return serialize(current)
+
+    return idem(db, user, data.idempotency_key, f"supplier-mail-reply:{mail_id}", data.model_dump(mode="json"),
+                operation)

@@ -75,16 +75,20 @@ function DuplicateMerge({
   const [reason, setReason] = useState('Одно и то же написание производителя');
   const merge = useCommand();
   async function run() {
-    for (const row of group.filter((entry) => entry.id !== mainId)) {
-      const result = await merge.run(
-        `/manufacturers/${row.id}/merge`,
-        { version: row.version, target_id: mainId, reason },
-        'POST',
-        true,
-      );
-      if (!result) return;
+    try {
+      for (const row of group.filter((entry) => entry.id !== mainId)) {
+        const result = await merge.run(
+          `/manufacturers/${row.id}/merge`,
+          { version: row.version, target_id: mainId, reason },
+          'POST',
+          true,
+        );
+        if (!result) return;
+      }
+      onDone();
+    } catch {
+      /* the error is shown in the dialog */
     }
-    onDone();
   }
   return (
     <Modal title="Объединить написания производителя" onClose={onClose}>
