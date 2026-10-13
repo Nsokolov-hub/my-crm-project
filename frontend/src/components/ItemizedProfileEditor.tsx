@@ -9,9 +9,12 @@ import './FinancialProfileEditor.scss';
 
 type CustomsRule = {
   product_group_slug: string;
-  type: 'PERCENTAGE' | 'FIXED_GROUP' | 'NONE';
+  type: 'PERCENTAGE' | 'NONE';
   value: string;
 };
+type FixedGroupFee = { product_group_slug: string; amount: string };
+// Profiles published before 5 October 2026 may also hold FIXED_GROUP rules.
+type StoredCustomsRule = Omit<CustomsRule, 'type'> & { type: CustomsRule['type'] | 'FIXED_GROUP' };
 type FeeBracket = {
   from_amount: string;
   to_amount: string | null;
@@ -60,7 +63,7 @@ type ItemizedDefinition = {
   exchange_rates: ProfileRate[];
   customs_rules: CustomsRule[];
   customs_fee_brackets: FeeBracket[];
-  customs_fee_overrides: { product_group_slug: string; amount: string }[];
+  customs_fee_overrides: FixedGroupFee[];
   tax_category: string;
   template: { title: string; show_cas: boolean; show_manufacturer: boolean };
   [key: string]: unknown;
@@ -95,6 +98,27 @@ const groupNames: Record<string, string> = {
 };
 const decimal = /^\d+(?:[.,]\d+)?$/;
 
+/**
+ * A fixed amount per group is a customs fee, never a duty. Old profiles record the 73 800 ₽ of
+ * columns as a FIXED_GROUP duty; a new version keeps the amount as the group's fixed fee, unless
+ * the profile already sets one, and the group gets no duty.
+ */
+export function customsWithFixedFees(
+  rules: StoredCustomsRule[],
+  fees: FixedGroupFee[],
+): { customs_rules: CustomsRule[]; customs_fee_overrides: FixedGroupFee[] } {
+  const moved = rules
+    .filter((rule) => rule.type === 'FIXED_GROUP')
+    .filter((rule) => !fees.some((fee) => fee.product_group_slug === rule.product_group_slug))
+    .map((rule) => ({ product_group_slug: rule.product_group_slug, amount: rule.value }));
+  return {
+    customs_rules: rules.map(({ type, ...rule }) =>
+      type === 'FIXED_GROUP' ? { ...rule, type: 'NONE', value: '0' } : { ...rule, type },
+    ),
+    customs_fee_overrides: [...fees, ...moved],
+  };
+}
+
 export function ItemizedProfileEditor({
   initial,
   onClose,
@@ -123,11 +147,11 @@ export function ItemizedProfileEditor({
     ...raw,
     bonus_withdrawal_percent: String(raw.bonus_withdrawal_percent ?? '16'),
     round_sale_up_to_ruble: raw.round_sale_up_to_ruble !== false,
-    customs_rules: Array.isArray(raw.customs_rules) ? raw.customs_rules : [],
+    ...customsWithFixedFees(
+      Array.isArray(raw.customs_rules) ? raw.customs_rules : [],
+      Array.isArray(raw.customs_fee_overrides) ? raw.customs_fee_overrides : [],
+    ),
     customs_fee_brackets: Array.isArray(raw.customs_fee_brackets) ? raw.customs_fee_brackets : [],
-    customs_fee_overrides: Array.isArray(raw.customs_fee_overrides)
-      ? raw.customs_fee_overrides
-      : [],
     default_expenses: Array.isArray(raw.default_expenses) ? raw.default_expenses : [],
     exchange_rates: Array.isArray(raw.exchange_rates) ? raw.exchange_rates : [],
   };
@@ -644,10 +668,16 @@ function ItemizedProfileForm({
                       (rule) => rule.product_group_slug === row.product_group_slug,
                     ),
                 );
+                const customFees = definition.customs_fee_overrides.filter(
+                  (row) =>
+                    !defaults.customs_fee_overrides.some(
+                      (fee) => fee.product_group_slug === row.product_group_slug,
+                    ),
+                );
                 update({
                   customs_rules: [...defaults.customs_rules, ...custom],
                   customs_fee_brackets: defaults.customs_fee_brackets,
-                  customs_fee_overrides: defaults.customs_fee_overrides,
+                  customs_fee_overrides: [...defaults.customs_fee_overrides, ...customFees],
                   vat_deduction_mode: true,
                 });
               }}
@@ -656,7 +686,8 @@ function ItemizedProfileForm({
             </Button>
             <p>
               Изменения сохраняются новой версией профиля. Для новых расчётов опубликуйте эту
-              версию.
+              версию. Фиксированная сумма на группу, например 73 800 ₽ на колонки, — это таможенный
+              сбор, а не пошлина: она задаётся ниже, в фиксированном сборе по группам.
             </p>
             <div className="itemized-rule-list">
               {definition.customs_rules.map((rule, index) => (
@@ -688,12 +719,11 @@ function ItemizedProfileForm({
                       }
                     >
                       <option value="PERCENTAGE">Процент</option>
-                      <option value="FIXED_GROUP">Фиксировано на группу</option>
                       <option value="NONE">Без пошлины</option>
                     </select>
                   </label>
                   <label className="field">
-                    {rule.type === 'PERCENTAGE' ? 'Ставка, %' : 'Сумма, ₽'}
+                    Ставка, %
                     <input
                       inputMode="decimal"
                       value={rule.value}

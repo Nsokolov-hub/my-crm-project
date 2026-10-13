@@ -1,14 +1,20 @@
-"""Regression checks for supplier wave cost sharing and shared column duty."""
+"""Regression checks for supplier wave cost sharing and the fixed customs fee of columns."""
 
 from decimal import Decimal
 
+import pytest
+
 from app.commerce.itemized import calculate_itemized
 from app.commerce.itemized import itemized_profile as current_profile
+from app.core.errors import DomainError
 from tests.support.itemized import quote_selection
+
+USD_RATE = [{"currency": "USD", "management_per_unit": "100", "quoted_units": "1",
+             "date": "2026-09-28", "source": "Профиль"}]
 
 
 def itemized_profile():
-    """Historical profile: reproducibility remains supported after the new defaults."""
+    """Historical profile without fixed-fee groups: earlier wave positions without groups share the scale."""
     profile = current_profile()
     profile['customs_fee_overrides'] = []
     profile['vat_deduction_mode'] = False
@@ -16,12 +22,21 @@ def itemized_profile():
     for rule in profile['customs_rules']:
         if rule['product_group_slug'] in ('other', 'lab_glassware'):
             rule.update(type='NONE', value='0')
-        if rule['product_group_slug'] == 'columns':
-            rule.update(type='FIXED_GROUP', value='73800')
     return profile
 
 
-def test_wave_quantity_shares_fixed_expenses_and_fee_and_columns_share_duty():
+def columns_duty_profile(customs_fee_overrides=()):
+    """Profile published before 5 October 2026: the 73 800 ₽ of columns is recorded as a FIXED_GROUP duty."""
+    profile = current_profile()
+    profile["import_country_id"] = "country-1"
+    profile["customs_fee_overrides"] = list(customs_fee_overrides)
+    for rule in profile["customs_rules"]:
+        if rule["product_group_slug"] == "columns":
+            rule.update(type="FIXED_GROUP", value="73800")
+    return profile
+
+
+def test_wave_quantity_shares_fixed_expenses_and_fee():
     profile = itemized_profile()
     profile["import_country_id"] = "country-1"
     profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "4997"}]
@@ -44,7 +59,7 @@ def test_wave_quantity_shares_fixed_expenses_and_fee_and_columns_share_duty():
     assert result["expense_allocations"][0]["existing_wave_share"] == "12500.00"
     assert sample["expense_details"]["Декларант"] == "6250.00"
     assert columns["expense_details"]["Декларант"] == "6250.00"
-    assert Decimal(columns["detail"]["duty"]) == Decimal("73800.00")
+    assert Decimal(columns["detail"]["duty"]) == 0
     assert Decimal(sample["detail"]["duty"]) == Decimal("1000.00")
     assert Decimal(sample["detail"]["internal_bonus"]) == (
         Decimal(sample["detail"]["pre_bonus_sale_net"]) * Decimal("0.15")
@@ -60,26 +75,49 @@ def test_wave_quantity_shares_fixed_expenses_and_fee_and_columns_share_duty():
         Decimal(result["wave_distribution"]["existing_customs_fee_share"]) == Decimal("4997.00")
 
 
-def test_fixed_group_duty_is_split_between_column_rows():
-    profile = itemized_profile()
-    profile["import_country_id"] = "country-1"
-    profile["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "4997"}]
-    result = calculate_itemized(
-        profile,
-        [
-            quote_selection("columns-a", "columns", "2", "100", "1"),
-            quote_selection("columns-b", "columns", "1", "100", "1"),
-        ],
-        [],
-        [{"currency": "USD", "management_per_unit": "100", "quoted_units": "1",
-          "date": "2026-09-28", "source": "Профиль"}],
-    )
+def test_old_columns_duty_is_charged_as_the_columns_fee():
+    # Business remark of 13 October 2026: columns carry no duty, the customs fee is 73 800 ₽,
+    # and the 1 231 ₽ of the scale is not charged on top.
+    selection = quote_selection("columns", "columns", "1", "53950", "1")
+    selection["currency_code"] = "RUB"
+    result = calculate_itemized(columns_duty_profile(), [selection], [
+        {"name": "Международная логистика", "amount": "52000", "currency": "RUB", "method": "BY_QUANTITY",
+         "stage": "INTERNATIONAL_LOGISTICS", "calculation_type": "FIXED"},
+    ], [])
 
-    first, second = result["lines"]
-    assert first["detail"]["duty"] == "49200.00"
-    assert second["detail"]["duty"] == "24600.00"
-    assert first["detail"]["fixed_group_quantity"] == "3"
-    assert second["detail"]["fixed_group_quantity"] == "3"
+    totals = result["totals"]
+    assert totals["customs_base"] == "105950.00"
+    assert Decimal(totals["duty"]) == 0
+    assert Decimal(totals["customs_fee_1"]) == 0
+    assert totals["customs_fee_2"] == totals["customs_fee"] == "73800.00"
+    # The fee enters neither the import VAT base nor the markup base.
+    assert totals["import_vat_base"] == totals["markup_base"] == "105950.00"
+    assert result["lines"][0]["customs_rule"] == {"product_group_slug": "columns", "type": "NONE", "value": "0"}
+
+
+@pytest.mark.parametrize("explicit_fee", [(), [{"product_group_slug": "columns", "amount": "73800"}]])
+def test_old_columns_fee_is_split_between_columns_and_left_out_of_the_scale(explicit_fee):
+    result = calculate_itemized(columns_duty_profile(explicit_fee), [
+        quote_selection("columns-a", "columns", "2", "1000", "1"),
+        quote_selection("columns-b", "columns", "1", "1000", "1"),
+        quote_selection("sample", "reference_standards", "2", "100", "1"),
+    ], [], USD_RATE)
+
+    first, second, sample = result["lines"]
+    assert Decimal(first["detail"]["duty"]) == Decimal(second["detail"]["duty"]) == 0
+    assert first["detail"]["customs_fee_2"] == "49200.00"
+    assert second["detail"]["customs_fee_2"] == "24600.00"
+    assert sample["detail"]["duty"] == "1000.00"
+    # 300 000 ₽ of columns would move the scale to 2 462 ₽; only 20 000 ₽ of standards count.
+    assert sample["detail"]["customs_fee_1"] == "1231.00"
+    assert result["wave_distribution"]["progressive_customs_value"] == "20000.00"
+    assert result["wave_distribution"]["customs_fee"] == "75031.00"
+
+
+def test_old_columns_fee_needs_the_groups_of_earlier_wave_positions():
+    with pytest.raises(DomainError, match="состав всех позиций волны"):
+        calculate_itemized(columns_duty_profile(), [quote_selection("columns", "columns", "1", "100", "1")],
+                           [], USD_RATE, wave_existing_quantity=Decimal("2"))
 
 
 def test_wave_logistics_and_transfer_fees_include_ruble_minimum():

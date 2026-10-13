@@ -219,8 +219,9 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     for expense in expenses:
         if expense.get("stage", "GENERAL") == "INTERNATIONAL_LOGISTICS":
             ledger.apply(expense)
-    rules = _apply_customs_duty(profile, rows, rounding)
-    fee = _apply_customs_fee(profile, wave, rounding)
+    rules, fixed_fees = _customs_by_group(profile)
+    _apply_customs_duty(rules, rows, rounding)
+    fee = _apply_customs_fee(profile, fixed_fees, wave, rounding)
     for expense in expenses:
         if expense.get("stage", "GENERAL") != "INTERNATIONAL_LOGISTICS":
             ledger.apply(expense)
@@ -399,9 +400,28 @@ class _ExpenseLedger:
         })
 
 
-def _apply_customs_duty(profile, rows, rounding) -> dict:
-    """Customs value and duty of every position by its product group rule; returns the rules by group."""
-    rules = {rule["product_group_slug"]: rule for rule in profile["customs_rules"]}
+def _customs_by_group(profile) -> tuple[dict, dict[str, Decimal]]:
+    """Duty rules and fixed customs fees by product group.
+
+    A fixed amount per group is a customs fee, never a duty: columns carry no duty and
+    73 800 ₽ of fee 2 instead of the scale. Profiles published before 5 October 2026 record
+    that amount as a FIXED_GROUP duty; it is the group's fixed fee unless the profile sets
+    one explicitly.
+    """
+    fees = {rule['product_group_slug']: dec(rule['amount']) for rule in profile.get('customs_fee_overrides') or []}
+    rules = {}
+    for rule in profile["customs_rules"]:
+        group = rule["product_group_slug"]
+        if rule["type"] == "FIXED_GROUP":
+            fees.setdefault(group, dec(rule.get("value", "0")))
+            rules[group] = {"product_group_slug": group, "type": "NONE", "value": "0"}
+        else:
+            rules[group] = rule
+    return rules, fees
+
+
+def _apply_customs_duty(rules, rows, rounding) -> None:
+    """Customs value and duty of every position by its product group rule."""
     groups = {row["group"] for row in rows if row["calculation_type"] == "IMPORT"}
     missing = groups - rules.keys()
     if missing:
@@ -415,33 +435,18 @@ def _apply_customs_duty(profile, rows, rounding) -> dict:
         if rule["type"] == "PERCENTAGE":
             for row in group_rows:
                 row["duty"] = _money(row["customs_base"] * value / 100, rounding) if row['calculation_type'] == 'IMPORT' else Decimal('0')
-        elif rule["type"] == "FIXED_GROUP":
-            # The old CRM charges this amount once for all columns in the
-            # calculation and divides it by their quantity.
-            group_rows = [row for row in group_rows if row['calculation_type'] == 'IMPORT']
-            if not group_rows:
-                continue
-            group_quantity = sum(row["quantity"] for row in group_rows)
-            parts = distribute(_money(value, rounding),
-                               {row["id"]: row["quantity"] for row in group_rows},
-                               Decimal("0.01"), rounding)
-            for row in group_rows:
-                row["duty"] = parts[row["id"]]
-                row["fixed_group_quantity"] = group_quantity
     for row in rows:
         if row['calculation_type'] == 'DAP':
             row['duty'] = _money(row['purchase_rub'] * Decimal('0.05'), rounding)
         elif row['calculation_type'] == 'RUSSIA':
             row['duty'] = Decimal('0')
-    return rules
 
 
-def _apply_customs_fee(profile, wave: _Wave, rounding) -> dict:
+def _apply_customs_fee(profile, overrides: dict[str, Decimal], wave: _Wave, rounding) -> dict:
     """Customs fee: the scale on the customs value of the whole wave plus the fixed fees of special groups."""
     rows, existing = wave.rows, wave.existing
     import_rows = [row for row in rows if row['calculation_type'] == 'IMPORT']
     customs_basis = sum((row['customs_base'] for row in import_rows), Decimal('0')) + existing['purchase_rub'] + existing['international_logistics']
-    overrides = {rule['product_group_slug']: dec(rule['amount']) for rule in profile.get('customs_fee_overrides', [])}
     if wave.existing_quantity and overrides:
         error('WAVE_BASIS_REQUIRED', 'Для двух видов сбора нужен состав всех позиций волны с товарными группами')
     ordinary_rows = [row for row in import_rows if row['group'] not in overrides]
@@ -601,7 +606,6 @@ def _priced_line(row, profile, rules, terms: _Terms, selected_ids, rounding) -> 
         "duty_per_unit": row["duty"] / qty,
         "customs_fee_per_unit": row["customs_fee"] / qty,
         'customs_fee_1': row['customs_fee_1'], 'customs_fee_2': row['customs_fee_2'],
-        "fixed_group_quantity": row.get("fixed_group_quantity", Decimal("0")),
         "general_expenses": row["general_expenses"], "expenses_total": expenses_total,
         "cash_expenses": row["cash_expenses"],
         "import_vat_base": import_vat_base, "import_vat": incoming_vat,
