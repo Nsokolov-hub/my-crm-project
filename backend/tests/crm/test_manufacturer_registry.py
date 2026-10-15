@@ -177,7 +177,7 @@ def test_quote_import_takes_registry_numbers_and_adds_new_spellings(crm):
     assert refused["rows"][2]["errors"] == ["Производителя с номером 99 нет в реестре"]
     batch = preview(crm, req["id"], list(QUOTE_COLUMNS.values()), rows[:2], "quotes")
     assert batch["summary"] == {"total": 2, "checked": 0, "create_nomenclature": 2, "new_manufacturers": 1,
-                                "errors": 0}
+                                "errors": 0, "request_positions": 3, "missing_positions": [3]}
     assert [row["data"]["manufacturer"] for row in batch["rows"]] == ["Sigma-Aldrich", "Toronto Research"]
     result = confirm(crm, req["id"], batch["id"])["result"]
     assert (result["nomenclatures_created"], result["manufacturers_created"]) == (2, 1)

@@ -443,7 +443,11 @@ def _apply_customs_duty(rules, rows, rounding) -> None:
 
 
 def _apply_customs_fee(profile, overrides: dict[str, Decimal], wave: _Wave, rounding) -> dict:
-    """Customs fee: the scale on the customs value of the whole wave plus the fixed fees of special groups."""
+    """Customs fee of the wave: the scale on the customs value, or the fixed fee of a special group.
+
+    A paid fixed fee (73 800 ₽ for columns) replaces every other fee of the declaration: the scale is
+    not charged, the fixed fee falls on the positions of its group only and other groups carry no fee.
+    """
     rows, existing = wave.rows, wave.existing
     import_rows = [row for row in rows if row['calculation_type'] == 'IMPORT']
     customs_basis = sum((row['customs_base'] for row in import_rows), Decimal('0')) + existing['purchase_rub'] + existing['international_logistics']
@@ -451,8 +455,9 @@ def _apply_customs_fee(profile, overrides: dict[str, Decimal], wave: _Wave, roun
         error('WAVE_BASIS_REQUIRED', 'Для двух видов сбора нужен состав всех позиций волны с товарными группами')
     ordinary_rows = [row for row in import_rows if row['group'] not in overrides]
     ordinary_basis = sum((row['customs_base'] for row in ordinary_rows), Decimal('0')) + existing['purchase_rub'] + existing['international_logistics']
+    fixed_fee_paid = any(row['group'] in overrides and overrides[row['group']] > 0 for row in import_rows)
     bracket_fee = (_money(_bracket_amount(profile['customs_fee_brackets'], _money(ordinary_basis, rounding), field='customs_fee_brackets'), rounding)
-                   if ordinary_rows or wave.existing_quantity else Decimal('0'))
+                   if (ordinary_rows or wave.existing_quantity) and not fixed_fee_paid else Decimal('0'))
     fee_bases = {row['id']: row['quantity'] for row in ordinary_rows}
     if wave.existing_quantity:
         fee_bases['__wave_existing__'] = wave.existing_quantity
@@ -476,7 +481,8 @@ def _apply_customs_fee(profile, overrides: dict[str, Decimal], wave: _Wave, roun
         row['customs_fee_1'] = Decimal('0') if row['id'] in fixed_parts else row['customs_fee']
         row['customs_fee_2'] = fixed_parts.get(row['id'], Decimal('0'))
     return {"customs_basis": customs_basis, "ordinary_basis": ordinary_basis, "bracket_fee": bracket_fee,
-            "fixed_fee": fixed_fee, "fee": bracket_fee + fixed_fee, "existing_fee_share": existing_fee_share}
+            "fixed_fee": fixed_fee, "fee": bracket_fee + fixed_fee, "existing_fee_share": existing_fee_share,
+            "scale_waived": fixed_fee_paid and bool(ordinary_rows)}
 
 
 @dataclass(frozen=True)
@@ -695,6 +701,7 @@ def _wave_distribution(wave: _Wave, wave_lines: list[dict], fee: dict) -> dict:
             "customs_fee": _string(fee["fee"]),
             'customs_fee_1': _string(fee["bracket_fee"]), 'customs_fee_2': _string(fee["fixed_fee"]),
             'progressive_customs_value': _string(fee["ordinary_basis"]),
+            "customs_fee_scale_waived": fee["scale_waived"],
             "customs_value": _string(fee["customs_basis"]),
             "import_vat": _string(sum(dec(line["detail"]["import_vat"]) for line in wave_lines)),
             "expenses_total": _string(sum(dec(line["detail"]["expenses_total"]) for line in wave_lines) + fee["existing_fee_share"] + existing["international_logistics"] + existing["general_expenses"]),

@@ -125,7 +125,8 @@ def test_quote_import_matches_articles_creates_only_catalogue_and_keeps_zero_fie
         quote_file(supplier["internal_code"], {"source_row": "2", "article": "002-new", "quantity": "3"}),
     ]
     batch = preview(crm, req["id"], list(QUOTE_COLUMNS.values()), rows, "quotes")
-    assert batch["summary"] == {"total": 2, "checked": 1, "create_nomenclature": 1, "new_manufacturers": 0, "errors": 0}
+    assert batch["summary"] == {"total": 2, "checked": 1, "create_nomenclature": 1, "new_manufacturers": 0, "errors": 0,
+                                "request_positions": 2, "missing_positions": []}
     with crm["sessions"]() as db:
         assert db.scalar(select(func.count()).select_from(Nomenclature)) == 1
     result = confirm(crm, req["id"], batch["id"])

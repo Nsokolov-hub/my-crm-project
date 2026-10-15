@@ -160,7 +160,7 @@ def prepare(env, with_invoice=False):
     command(env, f"/profiles/{profile['id']}/publish")
     payload = {
         "request_version": 1,
-        "profile_id": profile["id"],
+        "profile_id": profile["id"], "delivery_days": 14,
         "selections": [{"quote_id": quote["id"], "quote_revision": 1, "quantity": "10", "unit": "pcs"}],
         "rates": [
             {

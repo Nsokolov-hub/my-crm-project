@@ -1,11 +1,14 @@
 """Tasks, calls and the call result dictionary."""
 
+from datetime import datetime, time, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
 from app.core.models import AppSetting, User
@@ -23,7 +26,7 @@ from app.core.security import (
 from app.core.service import audit, check_version, idem, lock, notify, serialize
 from app.core.service import page as paginate
 from app.crm.common import active_user, contact_matches, save
-from app.crm.models import Call, Counterparty, Task
+from app.crm.models import Call, Counterparty, Request, Task
 from app.crm.schemas import BulkCallTaskInput, CallInput, CallPatch, TaskInput, TaskPatch
 
 router = APIRouter(tags=['CRM'])
@@ -84,27 +87,157 @@ def check_link(db: Session, user: User, kind: str | None, entity_id: str | None)
             raise DomainError('NOT_FOUND', 'Волна недоступна', 404)
 
 
+OPEN_TASK_STATUSES = ('assigned', 'in_progress')
+TASK_STATUS_LABELS = {'assigned': 'Назначена', 'in_progress': 'В работе', 'completed': 'Завершена', 'cancelled': 'Отменена'}
+TASK_PRIORITY_LABELS = {'high': 'Высокий', 'normal': 'Обычный', 'low': 'Низкий'}
+# Due groups in the order a person works through them; closed tasks come last.
+DUE_GROUPS = {'overdue': 'Просрочено', 'today': 'Сегодня', 'tomorrow': 'Завтра', 'week': 'На этой неделе',
+              'later': 'Позже', 'closed': 'Завершены и отменены'}
+TASK_GROUPS = ('due', 'assignee', 'client', 'status', 'priority')
+
+
+def day_starts(now: datetime) -> dict[str, datetime]:
+    """Starts of today, tomorrow, the day after and a week from today in the company time zone, in UTC."""
+    zone = ZoneInfo(settings.company_timezone)
+    today = datetime.combine(now.astimezone(zone).date(), time.min, zone)
+    return {key: (today + timedelta(days=days)).astimezone(timezone.utc)
+            for key, days in (('today', 0), ('tomorrow', 1), ('after_tomorrow', 2), ('week', 7))}
+
+
+def due_group(task: Task, now: datetime, starts: dict[str, datetime]) -> str:
+    if task.status not in OPEN_TASK_STATUSES:
+        return 'closed'
+    due = task.due_at if task.due_at.tzinfo else task.due_at.replace(tzinfo=timezone.utc)
+    if due < now:
+        return 'overdue'
+    if due < starts['tomorrow']:
+        return 'today'
+    if due < starts['after_tomorrow']:
+        return 'tomorrow'
+    return 'week' if due < starts['week'] else 'later'
+
+
 @router.get('/tasks')
-def tasks(status: str | None = None, q: str = '', entity_id: str | None = None, overdue: bool = False, page: int = 1, page_size: int = 25, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
+def tasks(status: str | None = None, q: str = '', entity_id: str | None = None, overdue: bool = False,
+          assignee_id: str | None = None, priority: str | None = None, due: str | None = None,
+          client_id: str | None = None, group: str | None = None, page: int = 1, page_size: int = 25,
+          user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'tasks.read')
+    if group and group not in TASK_GROUPS:
+        raise DomainError('TASK_GROUP', 'Неизвестная группировка задач', 422, 'group')
+    if due and due not in DUE_GROUPS:
+        raise DomainError('TASK_DUE', 'Неизвестный период срока', 422, 'due')
+    now = utcnow()
+    starts = day_starts(now)
     stmt = select(Task).where(task_predicate(db, user))
-    if status:
+    if status == 'active':
+        stmt = stmt.where(Task.status.in_(OPEN_TASK_STATUSES))
+    elif status:
         stmt = stmt.where(Task.status == status)
     if q:
         stmt = stmt.where(Task.title.ilike(f'%{q}%'))
     if entity_id:
         stmt = stmt.where(Task.entity_id == entity_id)
     if overdue:
-        stmt = stmt.where(Task.due_at < utcnow(), Task.status.in_(['assigned', 'in_progress']))
-    result = paginate(db, stmt.order_by(Task.due_at, Task.id), page, page_size)
-    client_ids = {item['entity_id'] for item in result['items'] if item['entity_type'] == 'counterparty'}
-    client_names = {row.id: row.name for row in db.scalars(select(Counterparty).where(Counterparty.id.in_(client_ids)))}
-    assignee_ids = {item['assignee_id'] for item in result['items']}
-    assignee_names = {row.id: row.name for row in db.scalars(select(User).where(User.id.in_(assignee_ids)))}
-    for item in result['items']:
-        item['client_name'] = client_names.get(item['entity_id']) if item['entity_type'] == 'counterparty' else None
-        item['assignee_name'] = assignee_names.get(item['assignee_id'])
+        stmt = stmt.where(Task.due_at < now, Task.status.in_(OPEN_TASK_STATUSES))
+    if assignee_id:
+        stmt = stmt.where(Task.assignee_id == assignee_id)
+    if priority:
+        stmt = stmt.where(Task.priority == priority)
+    if client_id:
+        stmt = stmt.where(or_(
+            (Task.entity_type == 'counterparty') & (Task.entity_id == client_id),
+            (Task.entity_type == 'request') & Task.entity_id.in_(select(Request.id).where(Request.client_id == client_id)),
+        ))
+    if due == 'closed':
+        stmt = stmt.where(Task.status.not_in(OPEN_TASK_STATUSES))
+    elif due:
+        bounds = {'overdue': (None, now), 'today': (now, starts['tomorrow']),
+                  'tomorrow': (starts['tomorrow'], starts['after_tomorrow']),
+                  'week': (starts['after_tomorrow'], starts['week']), 'later': (starts['week'], None)}[due]
+        stmt = stmt.where(Task.status.in_(OPEN_TASK_STATUSES))
+        if bounds[0] is not None:
+            stmt = stmt.where(Task.due_at >= bounds[0])
+        if bounds[1] is not None:
+            stmt = stmt.where(Task.due_at < bounds[1])
+    if not group:
+        result = paginate(db, stmt.order_by(Task.due_at, Task.id), page, page_size)
+        rows = [db.get(Task, item['id']) for item in result['items']]
+    else:
+        if page < 1 or not 1 <= page_size <= 100:
+            raise DomainError('PAGINATION_INVALID', 'Размер страницы от 1 до 100; номер от 1', 422)
+        everything = db.scalars(stmt.order_by(Task.due_at, Task.id)).all()
+        names = task_names(db, everything)
+        keys = {task.id: task_group(task, group, names, now, starts) for task in everything}
+        order = group_order(group, keys.values(), names)
+        everything = sorted(everything, key=lambda task: order.index(keys[task.id]))
+        counts = {key: 0 for key in order}
+        for key in keys.values():
+            counts[key] += 1
+        rows = everything[(page - 1) * page_size:page * page_size]
+        result = {'items': [serialize(task) for task in rows], 'total': len(everything), 'page': page,
+                  'page_size': page_size,
+                  'groups': [{'key': key, 'label': group_label(group, key, names), 'count': counts[key]}
+                             for key in order]}
+    names = task_names(db, rows)
+    for item, task in zip(result['items'], rows, strict=True):
+        item['client_id'] = names['client_of'].get(task.id)
+        item['client_name'] = names['clients'].get(item['client_id'])
+        item['request_number'] = names['request_numbers'].get(task.entity_id) if task.entity_type == 'request' else None
+        item['assignee_name'] = names['users'].get(task.assignee_id)
+        item['due_group'] = due_group(task, now, starts)
+        if group:
+            item['group'] = task_group(task, group, names, now, starts)
     return result
+
+
+def task_names(db: Session, rows) -> dict[str, dict]:
+    """Assignee and client names of tasks; a request task belongs to the request's client."""
+    request_ids = {task.entity_id for task in rows if task.entity_type == 'request'}
+    requests = {row.id: row for row in db.scalars(select(Request).where(Request.id.in_(request_ids)))}
+    client_of = {}
+    for task in rows:
+        if task.entity_type == 'counterparty':
+            client_of[task.id] = task.entity_id
+        elif task.entity_type == 'request' and task.entity_id in requests:
+            client_of[task.id] = requests[task.entity_id].client_id
+    clients = {row.id: row.name for row in db.scalars(select(Counterparty).where(Counterparty.id.in_(set(client_of.values()))))}
+    users = {row.id: row.name for row in db.scalars(select(User).where(User.id.in_({task.assignee_id for task in rows})))}
+    return {'client_of': client_of, 'clients': clients, 'users': users,
+            'request_numbers': {key: row.number for key, row in requests.items()}}
+
+
+def task_group(task: Task, group: str, names: dict, now: datetime, starts: dict) -> str:
+    if group == 'due':
+        return due_group(task, now, starts)
+    if group == 'assignee':
+        return task.assignee_id
+    if group == 'client':
+        return names['client_of'].get(task.id) or ''
+    return task.status if group == 'status' else task.priority
+
+
+def group_order(group: str, keys, names: dict) -> list[str]:
+    present = set(keys)
+    if group == 'due':
+        return [key for key in DUE_GROUPS if key in present]
+    if group == 'status':
+        return [key for key in TASK_STATUS_LABELS if key in present] + sorted(present - TASK_STATUS_LABELS.keys())
+    if group == 'priority':
+        return [key for key in TASK_PRIORITY_LABELS if key in present] + sorted(present - TASK_PRIORITY_LABELS.keys())
+    # Named groups go alphabetically; tasks without an assignee or a client come last.
+    return sorted(present, key=lambda key: (key == '', group_label(group, key, names).casefold()))
+
+
+def group_label(group: str, key: str, names: dict) -> str:
+    if group == 'due':
+        return DUE_GROUPS[key]
+    if group == 'assignee':
+        return names['users'].get(key) or 'Без исполнителя'
+    if group == 'client':
+        return names['clients'].get(key) or 'Без клиента'
+    labels = TASK_STATUS_LABELS if group == 'status' else TASK_PRIORITY_LABELS
+    return labels.get(key, key)
 
 
 @router.post('/tasks', status_code=201)

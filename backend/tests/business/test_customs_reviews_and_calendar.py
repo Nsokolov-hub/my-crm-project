@@ -43,7 +43,7 @@ def test_fee_scale_is_based_on_customs_value(basis, fee):
     assert Decimal(result["totals"]["duty"]) == (Decimal(basis) * Decimal(".05")).quantize(Decimal(".01"))
 
 
-def test_columns_are_separate_from_progressive_fees_and_strains_duty():
+def test_columns_fee_replaces_the_scale_and_falls_on_columns_only():
     rows = [
         quote_selection("a", "columns", "2", "10000", "1"),
         quote_selection("b", "columns", "1", "10000000", "1"),
@@ -58,8 +58,12 @@ def test_columns_are_separate_from_progressive_fees_and_strains_duty():
     assert Decimal(a["detail"]["customs_fee_2"]) == 49200
     assert Decimal(b["detail"]["customs_fee_2"]) == 24600
     assert Decimal(c["detail"]["customs_fee_2"]) == 0
+    # Business remark of 15 October 2026: paid 73 800 ₽ for columns means no other fee at all.
+    assert Decimal(c["detail"]["customs_fee"]) == Decimal(d["detail"]["customs_fee"]) == 0
+    assert Decimal(result["totals"]["customs_fee_1"]) == 0
     assert Decimal(d["detail"]["duty"]) == 120
-    assert Decimal(result["wave_distribution"]["customs_fee"]) == 73800 + 1231
+    assert Decimal(result["wave_distribution"]["customs_fee"]) == 73800
+    assert result["wave_distribution"]["customs_fee_scale_waived"] is True
     assert sum(Decimal(r["detail"]["customs_fee"]) for r in result["lines"]) == Decimal(
         result["totals"]["customs_fee"]
     )
@@ -92,7 +96,8 @@ def test_domestic_calculation_order_export_and_calendar_source(crm):  # noqa: F8
     assert req["commercial_stage"] == "quote_given"
     calculation = cmd(crm, f"/requests/{req['id']}/calculations", data)
     assert calculation["snapshot"]["vat_deductible"] is True
-    assert calculation["snapshot"]["delivery_days"] == 7
+    # The total term is what the person entered, not the longest quote term (7 days).
+    assert calculation["snapshot"]["delivery_days"] == 14
     proposal = cmd(
         crm,
         f"/requests/{req['id']}/proposals",

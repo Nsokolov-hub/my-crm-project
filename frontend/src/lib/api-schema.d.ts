@@ -3085,6 +3085,11 @@ export interface components {
             vat_deductible?: boolean | null;
             /** Delivery Days */
             delivery_days?: number | null;
+            /**
+             * Divide Wave Expenses
+             * @default true
+             */
+            divide_wave_expenses: boolean;
             /** Expected Wave Digest */
             expected_wave_digest?: string | null;
         };
@@ -8429,6 +8434,11 @@ export interface operations {
                 q?: string;
                 entity_id?: string | null;
                 overdue?: boolean;
+                assignee_id?: string | null;
+                priority?: string | null;
+                due?: string | null;
+                client_id?: string | null;
+                group?: string | null;
                 page?: number;
                 page_size?: number;
             };

@@ -7,10 +7,13 @@ import { Login } from '../pages/Login';
 
 // Sections load on their first visit, so signing in does not download the whole application.
 const Dashboard = lazy(() => import('../pages/Dashboard').then((m) => ({ default: m.Dashboard })));
-const Analytics = lazy(() => import('../pages/Dashboard').then((m) => ({ default: m.Analytics })));
+const Analytics = lazy(() => import('../pages/Analytics').then((m) => ({ default: m.Analytics })));
+const AnalyticsReport = lazy(() =>
+  import('../pages/Analytics').then((m) => ({ default: m.AnalyticsReport })),
+);
 const Clients = lazy(() => import('../pages/Clients').then((m) => ({ default: m.Clients })));
 const Calls = lazy(() => import('../pages/Clients').then((m) => ({ default: m.Calls })));
-const Tasks = lazy(() => import('../pages/Clients').then((m) => ({ default: m.Tasks })));
+const Tasks = lazy(() => import('../pages/Tasks').then((m) => ({ default: m.Tasks })));
 const Contacts = lazy(() => import('../pages/Contacts').then((m) => ({ default: m.Contacts })));
 const Requests = lazy(() => import('../pages/Requests').then((m) => ({ default: m.Requests })));
 const RequestDetail = lazy(() =>
@@ -58,6 +61,7 @@ function AuthenticatedApp() {
         <Route path="employee-absences" element={<EmployeeAbsences />} />
         <Route path="waves" element={<Waves />} />
         <Route path="analytics" element={<Analytics />} />
+        <Route path="analytics/:report" element={<AnalyticsReport />} />
         <Route path="chats" element={<Chats />} />
         <Route path="notifications" element={<Notifications />} />
         <Route path="settings" element={<Settings />} />

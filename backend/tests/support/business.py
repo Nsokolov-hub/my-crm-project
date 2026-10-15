@@ -177,7 +177,7 @@ def structured(env, mode="RUSSIA", markup="1.5", owner=None, wave_kind="work"):
         }
     data = {
         "request_version": req["version"],
-        "profile_id": profile_id,
+        "profile_id": profile_id, "delivery_days": 14,
         "selections": [{"quote_item_id": quote["items"][0]["id"], "markup_coefficient": markup}],
         "expenses": [],
         "delivery_required": False,

@@ -14,7 +14,14 @@ type Batch = Entity & {
     errors: string[];
     data: Record<string, unknown>;
   })[];
-  summary: { total: number; checked: number; create_nomenclature: number; errors: number };
+  summary: {
+    total: number;
+    checked: number;
+    create_nomenclature: number;
+    errors: number;
+    request_positions?: number;
+    missing_positions?: number[];
+  };
   status: string;
   result: { imported?: number; nomenclatures_created?: number };
 };
@@ -184,6 +191,13 @@ export function TableImportDialog({
                 </>
               )}
             </div>
+            {kind === 'quotes' && Boolean(batch.summary.missing_positions?.length) && (
+              <p className="info-note" role="note">
+                Строк в файле: {batch.summary.total}. В заявке позиций:{' '}
+                {batch.summary.request_positions}. Без строки в файле остались позиции заявки:{' '}
+                {batch.summary.missing_positions?.join(', ')}.
+              </p>
+            )}
             {batch.status === 'preview' && (
               <details>
                 <summary>Сопоставление столбцов</summary>

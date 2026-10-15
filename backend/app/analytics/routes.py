@@ -294,7 +294,7 @@ def invoices(
     from app.commerce.payments import invoice_balance
     from app.core.service import page as paginate
 
-    require_permission(db, user, "analytics.read")
+    require_permission(db, user, "analytics.reports")
     result = paginate(
         db,
         select(CommercialDocument)
@@ -326,6 +326,7 @@ def export(
     from app.crm.imports import xlsx
 
     require_permission(db, user, "exports.download")
+    require_permission(db, user, "analytics.reports")
     data = report_data(db, user, date_from, date_to, owner_id, include_test)
     rows = [
         ["Показатель", "Значение"],

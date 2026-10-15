@@ -253,6 +253,8 @@ class CalculationIn(Command):
     reason: str = ""
     vat_deductible: bool | None = None
     delivery_days: int | None = Field(default=None, ge=0, le=3650)
+    # False keeps the wave link but loads every wave expense into this calculation alone (leader only).
+    divide_wave_expenses: bool = True
     expected_wave_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 

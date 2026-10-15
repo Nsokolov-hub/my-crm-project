@@ -68,7 +68,7 @@ def manufacturer_report(
     """Positions of requests created in the period, their supplier prices and accepted orders, by manufacturer."""
     from app.commerce.models import Execution, Manufacturer
 
-    require_permission(db, user, "analytics.read")
+    require_permission(db, user, "analytics.reports")
     zone = ZoneInfo(settings.company_timezone)
     start = datetime.combine(date_from or date.today() - timedelta(days=30), time.min, zone).astimezone(timezone.utc)
     finish = datetime.combine((date_to or date.today()) + timedelta(days=1), time.min, zone).astimezone(timezone.utc)

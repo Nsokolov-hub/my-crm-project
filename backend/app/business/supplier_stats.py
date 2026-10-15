@@ -186,7 +186,7 @@ def supplier_summary(responses: Responses, supplier_id: str, name: str, pairs: l
 @router.get("/analytics/suppliers")
 def supplier_report(db: DB, user: Actor, date_from: date | None = None, date_to: date | None = None):
     """Suppliers asked for prices in the period: how many answered, how fast, and which brands they leave unpriced."""
-    require_permission(db, user, "analytics.read")
+    require_permission(db, user, "analytics.reports")
     mails, start, finish = visible_mails(db, user, date_from, date_to)
     responses = Responses(db, mails)
     pairs = list(responses.pairs.values())
@@ -213,7 +213,7 @@ def supplier_report(db: DB, user: Actor, date_from: date | None = None, date_to:
 def supplier_detail(supplier_id: str, db: DB, user: Actor, date_from: date | None = None,
                     date_to: date | None = None):
     """One supplier: answers by brand and every position asked from it in the period."""
-    require_permission(db, user, "analytics.read")
+    require_permission(db, user, "analytics.reports")
     supplier = db.get(Counterparty, supplier_id)
     if not supplier:
         raise DomainError("NOT_FOUND", "Поставщик не найден", 404)

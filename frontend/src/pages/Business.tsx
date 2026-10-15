@@ -9,10 +9,12 @@ import {
   DataTable,
   DetailPairs,
   ErrorBox,
+  Loading,
   Modal,
   PageHeading,
   Section,
 } from '../components/ui';
+import { BarChart } from '../components/BarChart';
 import { download } from '../lib/api';
 import { useApi, useCommand } from '../lib/hooks';
 import { date, decimal, today } from '../lib/format';
@@ -469,46 +471,63 @@ export function EmployeeAbsences() {
   );
 }
 
-export function SalesManagerReport() {
-  const [from, setFrom] = useState(today().slice(0, 8) + '01');
-  const [to, setTo] = useState(today());
+export function SalesManagerReport({
+  from,
+  to,
+  charts = false,
+}: {
+  from: string;
+  to: string;
+  charts?: boolean;
+}) {
   const list = useApi<Page & { basis: string }>(
     `/analytics/sales-managers?from_date=${from}&to_date=${to}`,
   );
+  const rows = list.data?.items || [];
   return (
-    <Section title="Продажи по менеджерам">
-      <div className="form-grid">
-        <label>
-          С даты
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </label>
-        <label>
-          По дату
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </label>
-      </div>
-      <ErrorBox error={list.error} />
-      <p>{list.data?.basis}</p>
-      <DataTable
-        rows={list.data?.items || []}
-        columns={[
-          { key: 'manager', label: 'Менеджер' },
-          { key: 'currency', label: 'Валюта' },
-          { key: 'sales', label: 'Продажи с НДС', render: (r) => decimal(r.sales) },
-          { key: 'sale_net', label: 'Продажи без НДС', render: (r) => decimal(r.sale_net) },
-          { key: 'gross_profit', label: 'Валовая прибыль', render: (r) => decimal(r.gross_profit) },
-          {
-            key: 'cost_profitability_percent',
-            label: 'Доходность затрат, %',
-            render: (r) => Number(r.cost_profitability_percent).toFixed(2),
-          },
-          {
-            key: 'profitability_percent',
-            label: 'Рентабельность, %',
-            render: (r) => Number(r.profitability_percent).toFixed(2),
-          },
-        ]}
-      />
+    <Section title="Продажи по менеджерам" description={list.data?.basis}>
+      <ErrorBox error={list.error} retry={list.refresh} />
+      {list.loading ? (
+        <Loading />
+      ) : (
+        <>
+          {charts && rows.length > 0 && (
+            <BarChart
+              title="Продажи без НДС"
+              rows={rows.map((r) => ({
+                id: `${String(r.manager)}-${String(r.currency)}`,
+                label: `${String(r.manager)}${rows.some((x) => x.currency !== r.currency) ? ` · ${String(r.currency)}` : ''}`,
+                value: Number(r.sale_net),
+                display: `${decimal(r.sale_net)} ${String(r.currency)}`,
+              }))}
+            />
+          )}
+          <DataTable
+            rows={rows}
+            columns={[
+              { key: 'manager', label: 'Менеджер' },
+              { key: 'currency', label: 'Валюта' },
+              { key: 'sales', label: 'Продажи с НДС', render: (r) => decimal(r.sales) },
+              { key: 'sale_net', label: 'Продажи без НДС', render: (r) => decimal(r.sale_net) },
+              {
+                key: 'gross_profit',
+                label: 'Валовая прибыль',
+                render: (r) => decimal(r.gross_profit),
+              },
+              {
+                key: 'cost_profitability_percent',
+                label: 'Доходность затрат, %',
+                render: (r) => Number(r.cost_profitability_percent).toFixed(2),
+              },
+              {
+                key: 'profitability_percent',
+                label: 'Рентабельность, %',
+                render: (r) => Number(r.profitability_percent).toFixed(2),
+              },
+            ]}
+          />
+        </>
+      )}
     </Section>
   );
 }
