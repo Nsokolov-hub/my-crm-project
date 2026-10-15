@@ -96,7 +96,7 @@ def test_old_columns_duty_is_charged_as_the_columns_fee():
 
 
 @pytest.mark.parametrize("explicit_fee", [(), [{"product_group_slug": "columns", "amount": "73800"}]])
-def test_old_columns_fee_is_split_between_columns_and_left_out_of_the_scale(explicit_fee):
+def test_old_columns_fee_is_split_between_columns_and_cancels_the_scale(explicit_fee):
     result = calculate_itemized(columns_duty_profile(explicit_fee), [
         quote_selection("columns-a", "columns", "2", "1000", "1"),
         quote_selection("columns-b", "columns", "1", "1000", "1"),
@@ -108,10 +108,10 @@ def test_old_columns_fee_is_split_between_columns_and_left_out_of_the_scale(expl
     assert first["detail"]["customs_fee_2"] == "49200.00"
     assert second["detail"]["customs_fee_2"] == "24600.00"
     assert sample["detail"]["duty"] == "1000.00"
-    # 300 000 ₽ of columns would move the scale to 2 462 ₽; only 20 000 ₽ of standards count.
-    assert sample["detail"]["customs_fee_1"] == "1231.00"
+    # The columns fee replaces the scale: the standards carry no fee at all.
+    assert Decimal(sample["detail"]["customs_fee"]) == Decimal(sample["detail"]["customs_fee_1"]) == 0
     assert result["wave_distribution"]["progressive_customs_value"] == "20000.00"
-    assert result["wave_distribution"]["customs_fee"] == "75031.00"
+    assert result["wave_distribution"]["customs_fee"] == "73800.00"
 
 
 def test_old_columns_fee_needs_the_groups_of_earlier_wave_positions():

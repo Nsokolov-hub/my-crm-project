@@ -460,6 +460,18 @@ def quote_plan(db, request_id, columns, rows, mapping):
     return plan
 
 
+def uncovered_positions(db, request_id, plan):
+    """Request positions (by their number) that no row of the quote file refers to."""
+    items = db.scalars(
+        select(RequestItem.id)
+        .where(RequestItem.request_id == request_id, RequestItem.archived.is_(False), RequestItem.quote_only.is_(False))
+        .order_by(RequestItem.created_at, RequestItem.id)
+    ).all()
+    covered = {row["data"].get("source_request_item_id") for row in plan}
+    return {"request_positions": len(items),
+            "missing_positions": [number for number, item_id in enumerate(items, 1) if item_id not in covered]}
+
+
 def summarize(plan):
     return {
         "total": len(plan),
@@ -521,7 +533,7 @@ def preview(
         rows=rows,
         mapping=chosen,
         plan=plan,
-        summary=summarize(plan),
+        summary={**summarize(plan), **(uncovered_positions(db, request_id, plan) if kind == "quotes" else {})},
     )
     if kind == 'items' and Path(file.filename or '').suffix.lower() == '.xlsx':
         # Retain row references to the immutable original instead of duplicating style XML per item.

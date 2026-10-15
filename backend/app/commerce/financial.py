@@ -108,7 +108,7 @@ LINE_FIELDS = frozenset({
     "unit", "unit_price",
 })
 PURCHASE_LINE_FIELDS = frozenset({"purchase_currency", "quote", "quote_item", "supplier_id", "supplier_name"})
-WAVE_FIELDS = frozenset({"existing_quantity", "financial_digest", "id", "number", "revision_digest"})
+WAVE_FIELDS = frozenset({"divided", "existing_quantity", "financial_digest", "id", "number", "revision_digest"})
 
 
 def filter_calculation_snapshot(db, user, request_id: str | None, snapshot: dict,
@@ -701,8 +701,8 @@ def itemized_selection(db, request_id: str, selection, index: int) -> dict:
     if not group:
         error("PRODUCT_GROUP_REQUIRED", f"У позиции {nomenclature.name} {packing.display_name} не определена товарная группа", field=f"selections.{index}.quote_item_id")
     quote_data = serialize(quote)
-    if selection.quantity is not None:
-        quote_data["quantity"] = str(selection.quantity)
+    # A calculation prices one piece unless the user enters another quantity; the request's demand is not used.
+    quote_data["quantity"] = str(selection.quantity) if selection.quantity is not None else "1"
     return {
         "quote_item": quote_data,
         "nomenclature": serialize(nomenclature),
@@ -761,6 +761,10 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         wave = None
         peer_selections, existing_quantity, existing_components = [], dec('0'), {}
         wave_expenses, wave_expense_source = None, None
+        if not data.divide_wave_expenses:
+            if not importing:
+                error("WAVE_NOT_USED", "Расходы волны делятся только в импортном расчёте", field="divide_wave_expenses")
+            require_permission(db, user, "waves.write", request_id)
         if importing:
             if not req.wave_id:
                 error('WAVE_REQUIRED', 'Руководитель должен назначить волну поставки до расчёта', field='wave_id')
@@ -772,12 +776,14 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             wave = usable(lock(db, Wave, wave.id), field='wave_id')
             if wave.status not in OPEN_WAVES:
                 error('WAVE_CLOSED', 'Для расчёта выберите открытую волну', field='wave_id')
-            peer_selections, existing_quantity, existing_components = wave_selections(
-                db, wave.id, exclude_request_id=request_id,
-                replacement_quantities={row["quote_item"]["id"]: dec(row["quote_item"]["quantity"]) for row in selections})
-            if existing_quantity and db.scalar(select(WaveForecast.id).where(WaveForecast.wave_id == wave.id, WaveForecast.active.is_(True))):
-                error("WAVE_BASIS_REQUIRED", "Для прогноза необходимо восстановить группы ранее принятых позиций")
-            peer_selections += forecast_selections(db, wave, [*selections, *peer_selections])
+            # Undivided: the wave's other orders and planned volume take no share of its expenses.
+            if data.divide_wave_expenses:
+                peer_selections, existing_quantity, existing_components = wave_selections(
+                    db, wave.id, exclude_request_id=request_id,
+                    replacement_quantities={row["quote_item"]["id"]: dec(row["quote_item"]["quantity"]) for row in selections})
+                if existing_quantity and db.scalar(select(WaveForecast.id).where(WaveForecast.wave_id == wave.id, WaveForecast.active.is_(True))):
+                    error("WAVE_BASIS_REQUIRED", "Для прогноза необходимо восстановить группы ранее принятых позиций")
+                peer_selections += forecast_selections(db, wave, [*selections, *peer_selections])
             wave_expenses, wave_expense_source = latest_wave_expenses(db, wave.id)
         missing_basis = existing_quantity
         if data.expenses is not None:
@@ -821,6 +827,7 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         if wave:
             snapshot["wave"] = {"id": wave.id, "number": wave.number, "supplier_id": wave.supplier_id,
                                 "existing_quantity": str(existing_quantity),
+                                "divided": data.divide_wave_expenses,
                                 "expense_source_calculation_id": wave_expense_source,
                                 "revision_digest": wave_revision_digest(db, wave)}
             digest_rows = [selection_from_saved_line(line, request_id) for line in snapshot["lines"]]
@@ -835,8 +842,8 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         else:
             snapshot['wave_distribution']['digest'] = digest({'selections': selections, 'expenses': effective_expenses, 'profile': effective_profile})
         snapshot["vat_deductible"] = data.vat_deductible
-        snapshot["delivery_days"] = data.delivery_days if data.delivery_days is not None else max(
-            (line.get("delivery_days") or 0 for line in snapshot["lines"]), default=0)
+        # The person checks and enters the total delivery term; quotes no longer fill it in.
+        snapshot["delivery_days"] = data.delivery_days
         snapshot["resolved_expenses"] = effective_expenses
         snapshot["request_number"] = req.number
         snapshot["source_type"] = "QUOTE" if len({row["quote_item"]["quote_id"] for row in selections}) == 1 else "REQUEST"
@@ -1065,6 +1072,8 @@ def save_calculation(request_id: str, data: CalculationIn, db: DB, user: Actor):
 
     def operation():
         snapshot = build_calculation(db, user, request_id, data)
+        if snapshot.get("algorithm_version") == "itemized-v2" and data.delivery_days is None:
+            error("DELIVERY_DAYS_REQUIRED", "Проверьте и укажите общий срок поставки", field="delivery_days")
         if data.expected_wave_digest is not None and data.expected_wave_digest != (snapshot.get("wave_distribution") or {}).get("digest"):
             error("WAVE_CHANGED", "Состав или расходы волны изменились. Выполните расчёт заново перед сохранением", 409)
         previous = latest_calculation(db, request_id)

@@ -29,6 +29,7 @@ PERMISSIONS = {
     'payments.write': 'Заявление об оплате', 'payments.confirm': 'Подтверждение и распределение оплат',
     'approvals.submit': 'Передача на согласование', 'approvals.decide': 'Решения руководителя', 'waves.write': 'Изменение волн',
     'exports.download': 'Экспорт и скачивание', 'imports.write': 'Импорт клиентской базы', 'analytics.read': 'Аналитика',
+    'analytics.reports': 'Все отчёты аналитики',
     'chats.use': 'Внутреннее общение', 'files.upload': 'Загрузка вложений',
     'admin.users': 'Управление пользователями и ролями', 'admin.settings': 'Настройки системы', 'audit.read': 'Просмотр аудита',
     'settings.dictionaries.write': 'Настройка рабочих справочников',

@@ -260,7 +260,7 @@ def test_api_wave_reprices_zero_two_three_orders_and_delivery_documents(commerce
     wave = command(env, "/waves", wave_payload(env))
     now = datetime.now(timezone.utc)
     requests = []
-    quotes = []
+    quotes, quote_quantities = [], []
     with env["sessions"].begin() as db:
         group = ProductGroup(name="Стандарты", slug="reference_standards")
         country = Country(name="Индия", iso2="IN")
@@ -324,6 +324,7 @@ def test_api_wave_reprices_zero_two_three_orders_and_delivery_documents(commerce
             db.flush()
             requests.append(request.id)
             quotes.append(quote.id)
+            quote_quantities.append(quantity)
     empty = env["client"].get("/api/v1/waves").json()["items"][0]["financial_summary"]
     assert empty["provisional"] is True
     assert empty["customs_fee"] == "50.00"
@@ -338,7 +339,7 @@ def test_api_wave_reprices_zero_two_three_orders_and_delivery_documents(commerce
             {
                 "request_version": 1,
                 "profile_id": profile.id,
-                "selections": [{"quote_item_id": quotes[index]}],
+                "selections": [{"quote_item_id": quotes[index], "quantity": quote_quantities[index]}],
                 "delivery_days": 45,
                 "vat_deductible": index == 2,
             },
@@ -384,7 +385,7 @@ def test_api_wave_reprices_zero_two_three_orders_and_delivery_documents(commerce
     preview_payload = {
         "request_version": request_version,
         "profile_id": profile.id,
-        "selections": [{"quote_item_id": quotes[0]}],
+        "selections": [{"quote_item_id": quotes[0], "quantity": quote_quantities[0]}],
         "delivery_days": 45,
     }
     preview = command(env, f"/requests/{requests[0]}/calculations/preview", preview_payload)
@@ -410,12 +411,12 @@ def test_api_wave_reprices_zero_two_three_orders_and_delivery_documents(commerce
         f"/requests/{requests[2]}/calculations",
         {
             "request_version": 1,
-            "profile_id": profile.id,
+            "profile_id": profile.id, "delivery_days": 14,
             "previous_id": saved[2]["id"],
             "selections": [{"quote_item_id": replacement.id}],
         },
     )
-    assert revised["snapshot"]["delivery_days"] == 21
+    assert revised["snapshot"]["delivery_days"] == 14
     assert revised["wave_stale"] is False
     stale_save = command(
         env,
@@ -496,8 +497,8 @@ def test_api_wave_reprices_zero_two_three_orders_and_delivery_documents(commerce
         f"/requests/{requests[1]}/calculations",
         {
             "request_version": 1,
-            "profile_id": profile.id,
-            "selections": [{"quote_item_id": quotes[1]}],
+            "profile_id": profile.id, "delivery_days": 14,
+            "selections": [{"quote_item_id": quotes[1], "quantity": quote_quantities[1]}],
             "rates": fx("100"),
         },
     )

@@ -123,8 +123,8 @@ def test_profile_rates_wave_quantity_and_proposal(commerce):  # noqa: F811
                               approval_id=recorded_approval(db, env, other_request.id),
                               quantity=Decimal("4"), active=True))
 
-    payload = {"request_version": 2, "profile_id": saved_profile.id,
-               "selections": [{"quote_item_id": quote.id, "markup_coefficient": "1.5"}]}
+    payload = {"request_version": 2, "profile_id": saved_profile.id, "delivery_days": 14,
+               "selections": [{"quote_item_id": quote.id, "quantity": "2.000000", "markup_coefficient": "1.5"}]}
     unavailable = command(env, f"/requests/{env['request_id']}/calculations/preview", {
         **payload, "expenses": [{"name": "Комиссия", "amount": "0.29", "currency": "RUB",
                                 "method": "BY_QUANTITY", "scope": "WAVE", "stage": "GENERAL",

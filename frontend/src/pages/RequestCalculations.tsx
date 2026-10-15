@@ -1,4 +1,4 @@
-import { Plus, Save, Trash2 } from 'lucide-react';
+import { Flag, Plus, Save, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
@@ -125,6 +125,9 @@ function CalculationEditor({
         : previousSnapshot.delivery_days) ?? '',
     ),
   );
+  const [divideWaveExpenses, setDivideWaveExpenses] = useState(
+    previousInput.divide_wave_expenses !== false,
+  );
   const [deliveryRequired, setDeliveryRequired] = useState(
     Boolean(previousInput.delivery_required ?? true),
   );
@@ -133,6 +136,7 @@ function CalculationEditor({
   const [preview, setPreview] = useState<Entity>();
   const [showDetails, setShowDetails] = useState(false);
   const [attempted, setAttempted] = useState(false);
+  const [saveAttempted, setSaveAttempted] = useState(false);
   const autoCalculate = useRef<() => void>(() => {});
   const currentSignature = useRef('');
   const dirty = Boolean(
@@ -160,7 +164,7 @@ function CalculationEditor({
         if (next[row.id] && next[row.id].quantity === undefined) {
           next[row.id] = {
             ...next[row.id],
-            quantity: plainQuantity(row.request_quantity || row.quantity || '1'),
+            quantity: '1',
           };
           changed = true;
         }
@@ -282,7 +286,7 @@ function CalculationEditor({
       if (checked)
         next[row.id] = {
           quote_item_id: row.id,
-          quantity: plainQuantity(row.request_quantity || row.quantity || '1'),
+          quantity: '1',
           markup_coefficient: current[row.id]?.markup_coefficient || '1.5',
         };
       else delete next[row.id];
@@ -292,7 +296,8 @@ function CalculationEditor({
   }
   async function calculate(save = false, quiet = false) {
     if (!quiet) setAttempted(true);
-    if (errors.length || (save && !preview)) return;
+    if (save) setSaveAttempted(true);
+    if (errors.length || (save && !preview) || (save && deliveryDays === '')) return;
     const submittedSignature = inputSignature;
     try {
       const result = await command.run<Entity>(
@@ -306,6 +311,7 @@ function CalculationEditor({
           vat_deductible: vatDeductible,
           delivery_required: deliveryRequired,
           delivery_city: deliveryCity || null,
+          ...(divideWaveExpenses ? {} : { divide_wave_expenses: false }),
           ...(deliveryDays !== '' ? { delivery_days: Number(deliveryDays) } : {}),
           ...(save && preview && ((preview.snapshot || preview) as Entity).wave_distribution
             ? {
@@ -366,6 +372,7 @@ function CalculationEditor({
     deliveryDays,
     deliveryRequired,
     deliveryCity,
+    divideWaveExpenses,
     requestVersion: request.version,
     waveId: request.wave_id,
     selectedRows: selectedRows.map((row) => row.id),
@@ -501,22 +508,30 @@ function CalculationEditor({
                 max="3650"
                 step="1"
                 aria-label="Общий срок поставки, дней"
-                value={
-                  deliveryDays ||
-                  (selectedRows.length
-                    ? String(Math.max(...selectedRows.map((row) => Number(row.delivery_days || 0))))
-                    : '')
+                required
+                aria-invalid={
+                  (saveAttempted && deliveryDays === '') || serverError?.field === 'delivery_days'
                 }
-                placeholder="По срокам выбранных квот"
+                value={deliveryDays}
+                placeholder="Укажите срок"
                 onChange={(event) => {
                   setDeliveryDays(event.target.value);
                   invalidate();
                 }}
               />
-              <small>
-                Этот срок попадёт в КП. Если поле пустое, используется максимальный срок выбранных
-                квот.
-              </small>
+              {saveAttempted && deliveryDays === '' ? (
+                <small className="field-error">Проверьте и укажите общий срок поставки.</small>
+              ) : (
+                <small>
+                  Этот срок попадёт в КП. Проверьте его сами: сроки квот сюда не подставляются
+                  {selectedRows.length
+                    ? ` (самый долгий срок выбранных квот — ${Math.max(
+                        ...selectedRows.map((row) => Number(row.delivery_days || 0)),
+                      )} дн.)`
+                    : ''}
+                  .
+                </small>
+              )}
             </label>
             <label className="calculation-internal-toggle">
               <input
@@ -604,9 +619,7 @@ function CalculationEditor({
                               if (checked)
                                 next[row.id] = {
                                   quote_item_id: row.id,
-                                  quantity:
-                                    current[row.id]?.quantity ??
-                                    plainQuantity(row.request_quantity || row.quantity || '1'),
+                                  quantity: current[row.id]?.quantity ?? '1',
                                   markup_coefficient: current[row.id]?.markup_coefficient || '1.5',
                                 };
                               else delete next[row.id];
@@ -633,7 +646,23 @@ function CalculationEditor({
                   label: 'Товар',
                   render: (row) => (
                     <span className="calculation-product">
-                      <strong>{nameOf(row)}</strong>
+                      <strong>
+                        {nameOf(row)}
+                        {Boolean(row.last_calculation) && (
+                          <Flag
+                            className="calculated-flag"
+                            size={12}
+                            aria-label="Расчёт уже записан"
+                            role="img"
+                          >
+                            <title>
+                              {`Уже записан расчёт ${String(
+                                (row.last_calculation as Entity).number || '',
+                              )} от ${date((row.last_calculation as Entity).created_at)}`}
+                            </title>
+                          </Flag>
+                        )}
+                      </strong>
                       <span className="calculation-manufacturer">
                         {String(row.manufacturer || '—')}
                       </span>
@@ -682,7 +711,7 @@ function CalculationEditor({
                         }}
                       />
                     ) : (
-                      decimal(row.request_quantity || row.quantity)
+                      '1'
                     ),
                 },
                 {
@@ -1312,6 +1341,25 @@ function CalculationEditor({
               )}
             </section>
           )}
+          {Boolean(request.wave_id) && auth.can('waves.write') && hasImportSelections && (
+            <section className="calculation-section">
+              <label className="calculation-internal-toggle">
+                <input
+                  type="checkbox"
+                  checked={!divideWaveExpenses}
+                  onChange={(event) => {
+                    setDivideWaveExpenses(!event.target.checked);
+                    invalidate();
+                  }}
+                />{' '}
+                Не делить расходы
+              </label>
+              <p className="muted">
+                Расчёт остаётся привязан к волне, но все её общие расходы и таможенный сбор ложатся
+                только на этот расчёт: другие заказы и плановый объём волны их не делят.
+              </p>
+            </section>
+          )}
           {Boolean(request.wave_id) && auth.can('waves.write') && Boolean(profileId) && (
             <div className="inline-actions">
               <Button
@@ -1352,6 +1400,9 @@ function CalculationEditor({
               {decimal(waveDistribution.selected_quantity || 0)} шт. · Прогноз:{' '}
               {decimal(waveDistribution.forecast_quantity || 0)} шт. · База:{' '}
               {decimal(waveDistribution.total_quantity || 0)} шт.
+              {!divideWaveExpenses && ' · Расходы волны не делятся: все на этом расчёте.'}
+              {Boolean(waveDistribution.customs_fee_scale_waived) &&
+                ' · В волне есть колонки: платится только сбор 73 800 ₽ на колонки, сбор по шкале не начисляется.'}
             </p>
           )}
           {preview && (
@@ -1375,7 +1426,7 @@ function CalculationEditor({
                     'Пошлина, ₽':
                       'Импорт: таможенная стоимость × ставка группы. Колонки: 0%. DAP: закупка × 5%. РФ: 0.',
                     'Таможенный сбор, ₽':
-                      'Сбор 1 по шкале от таможенной стоимости обычных товаров + сбор 2: 73 800 ₽ только на колонки.',
+                      'Сбор 1 по шкале от таможенной стоимости обычных товаров. Если в волне есть колонки, платится только сбор 2: 73 800 ₽ делится между колонками, другие группы сбором не облагаются.',
                     'Ввозной НДС, ₽':
                       '(Таможенная стоимость + пошлина) × ставка НДС; сбор в базу НДС не входит.',
                     'НДС продажи, ₽':

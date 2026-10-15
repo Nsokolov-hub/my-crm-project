@@ -7,7 +7,7 @@ import {
   LoaderCircle,
   X,
 } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiError, errorMessage } from '../lib/api';
 import { display } from '../lib/format';
@@ -191,6 +191,7 @@ export function DataTable<T extends Entity>({
   filterKeys,
   onFilter,
   className = '',
+  group,
 }: {
   rows: T[];
   columns: Column<NoInfer<T>>[];
@@ -203,6 +204,8 @@ export function DataTable<T extends Entity>({
   filterKeys?: string[];
   onFilter?: (key: string, value: string) => void;
   className?: string;
+  /** Rows sorted by group get a heading row whenever the group changes. */
+  group?: (row: T) => { key: string; label: ReactNode };
 }) {
   if (rows.length === 0 && !filterKeys?.length) return empty || <Empty />;
   const linkIndex = columns.findIndex((column) => column.key !== '__selection');
@@ -247,43 +250,51 @@ export function DataTable<T extends Entity>({
               <td colSpan={columns.length}>{empty || <Empty />}</td>
             </tr>
           )}
-          {rows.map((row) => (
-            <tr
-              key={row.id}
-              className={[rowClassName?.(row), onRow ? 'clickable-row' : '']
-                .filter(Boolean)
-                .join(' ')}
-              onClick={
-                onRow
-                  ? (event) => {
-                      if (
-                        !(event.target as HTMLElement).closest(
-                          'button, a, input, select, textarea, [role="button"]',
+          {rows.map((row, rowIndex) => (
+            <Fragment key={row.id}>
+              {group && (rowIndex === 0 || group(rows[rowIndex - 1]).key !== group(row).key) && (
+                <tr className="table-group-row">
+                  <th colSpan={columns.length} scope="colgroup">
+                    {group(row).label}
+                  </th>
+                </tr>
+              )}
+              <tr
+                className={[rowClassName?.(row), onRow ? 'clickable-row' : '']
+                  .filter(Boolean)
+                  .join(' ')}
+                onClick={
+                  onRow
+                    ? (event) => {
+                        if (
+                          !(event.target as HTMLElement).closest(
+                            'button, a, input, select, textarea, [role="button"]',
+                          )
                         )
-                      )
-                        onRow(row);
-                    }
-                  : undefined
-              }
-            >
-              {columns.map((col, index) => (
-                <td
-                  key={col.key}
-                  data-label={typeof col.label === 'string' ? col.label : undefined}
-                >
-                  {index === linkIndex && onRow ? (
-                    <button className="row-link" onClick={() => onRow(row)}>
-                      {col.render ? col.render(row) : display(row[col.key])}
-                      <ArrowUpRight size={14} />
-                    </button>
-                  ) : col.render ? (
-                    col.render(row)
-                  ) : (
-                    display(row[col.key])
-                  )}
-                </td>
-              ))}
-            </tr>
+                          onRow(row);
+                      }
+                    : undefined
+                }
+              >
+                {columns.map((col, index) => (
+                  <td
+                    key={col.key}
+                    data-label={typeof col.label === 'string' ? col.label : undefined}
+                  >
+                    {index === linkIndex && onRow ? (
+                      <button className="row-link" onClick={() => onRow(row)}>
+                        {col.render ? col.render(row) : display(row[col.key])}
+                        <ArrowUpRight size={14} />
+                      </button>
+                    ) : col.render ? (
+                      col.render(row)
+                    ) : (
+                      display(row[col.key])
+                    )}
+                  </td>
+                ))}
+              </tr>
+            </Fragment>
           ))}
         </tbody>
       </table>

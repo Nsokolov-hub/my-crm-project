@@ -170,9 +170,8 @@ def base_snapshot(
     return {
         "title": title,
         "kind": kind,
-        "signature": (PROPOSAL_SIGNATURE.copy() if kind == "proposal" else
-                      {"name": (seller.details or {}).get("Подписант", ""),
-                       "position": (seller.details or {}).get("Должность подписанта", "")}),
+        # Proposals and invoices are signed alike.
+        "signature": PROPOSAL_SIGNATURE.copy(),
         "price_includes_vat": calculation.snapshot.get("algorithm_version") == "itemized-v2",
         "number": number,
         "display_number": f"{request.number}-{calculation_version}" if kind == "proposal" else number,

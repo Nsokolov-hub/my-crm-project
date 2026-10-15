@@ -90,6 +90,7 @@ def test_two_clients_inherit_only_airport_pickup_and_keep_their_own_delivery(crm
             "currency_id": quote.currency_id, "quantity": "10", "unit_price": "1000",
             "delivery_days": 7,
         }
+    data["selections"][0]["quantity"] = "2"
     data.update(delivery_required=True, delivery_city="Москва", expenses=[
         {"name": "Логистика РФ", "amount": "1200", "scope": "REQUEST", "method": "BY_QUANTITY"},
         {"name": "Доставка клиенту в Москве", "amount": "500", "scope": "WAVE", "method": "BY_QUANTITY"},
@@ -116,8 +117,8 @@ def test_two_clients_inherit_only_airport_pickup_and_keep_their_own_delivery(crm
         "request_version": peer["version"], "wave_id": req["wave_id"],
     }, method="put")
     second = cmd(crm, f"/requests/{peer['id']}/calculations", {
-        "request_version": assigned["version"], "profile_id": data["profile_id"],
-        "selections": [{"quote_item_id": quote["items"][0]["id"], "markup_coefficient": "1.5"}],
+        "request_version": assigned["version"], "profile_id": data["profile_id"], "delivery_days": 14,
+        "selections": [{"quote_item_id": quote["items"][0]["id"], "quantity": "10", "markup_coefficient": "1.5"}],
         "delivery_required": True, "delivery_city": "Новосибирск",
     })["snapshot"]
     assert Decimal(second["wave_distribution"]["total_quantity"]) == 12

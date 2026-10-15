@@ -88,7 +88,9 @@ it('shows the bonus in rubles under its coefficient once the bonus is switched o
     target: { value: 'profile' },
   });
   const quantity = screen.getByLabelText('Количество Буфер');
-  expect(quantity).toHaveValue('4');
+  // The calculation prices one piece; the request's demand is not copied.
+  expect(quantity).toHaveValue('1');
+  fireEvent.change(quantity, { target: { value: '4' } });
   const coefficient = screen.getByLabelText('Бонус Буфер');
   await waitFor(() =>
     expect(api).toHaveBeenCalledWith(expect.stringMatching(/preview$/), expect.anything()),

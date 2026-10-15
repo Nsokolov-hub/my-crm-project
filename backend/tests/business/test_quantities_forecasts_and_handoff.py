@@ -46,6 +46,7 @@ def test_quantity_is_independent_of_quote_and_initial_demand(crm, quantity):  # 
         "terms": "Отсрочка", "lines": [{"execution_id": execution["id"], "quantity": quantity}],
     })
     assert Decimal(invoice["snapshot"]["lines"][0]["quantity"]) == Decimal(quantity)
+    assert invoice["snapshot"]["signature"] == proposal["snapshot"]["signature"]
     assert invoice["snapshot"]["bank_details"]["Банк"] == "Банк A"
     with crm["sessions"]() as db:
         quote = db.get(QuoteItem, quote_id)
@@ -58,7 +59,10 @@ def test_quantity_is_independent_of_quote_and_initial_demand(crm, quantity):  # 
         assert "Банк A" not in proposal_values
         assert "Банк A" in invoice_values
         assert "Генеральный директор" in proposal_values and "Гильмутдинов Т.Ф" in proposal_values
-        assert "Директор" in invoice_values
+        # Business remark of 15 October 2026: the invoice is laid out and signed like the proposal.
+        assert "Генеральный директор" in invoice_values and "Гильмутдинов Т.Ф" in invoice_values
+        assert "Директор" not in invoice_values and "Иван Иванов" not in invoice_values
+        assert "Заявка" not in invoice_values and "Цена за единицу с НДС" in invoice_values
         assert "Наименование" in proposal_values and "Цена за единицу с НДС" in proposal_values
         assert "Без налога" not in proposal_values
     assert crm["client"].get("/api/v1/supplier-orders/positions").json()["items"] == []
@@ -123,7 +127,7 @@ def test_planned_wave_calculates_on_its_volume_and_confirmed_orders_go_to_its_wo
     assert crm["client"].get(f"/api/v1/requests/{req['id']}").json()["wave_id"] == plan["id"]
     # Another client's calculation on the plan still divides the costs by the planned volume...
     peer, peer_quote = peer_request(crm, seller, supplier, item_data, plan["id"])
-    peer_payload = {"request_version": peer["version"], "profile_id": data["profile_id"],
+    peer_payload = {"request_version": peer["version"], "profile_id": data["profile_id"], "delivery_days": 14,
         "selections": [{"quote_item_id": peer_quote["id"], "quantity": "2"}], "delivery_required": False}
     previewed = cmd(crm, f"/requests/{peer['id']}/calculations/preview", peer_payload)["snapshot"]
     distribution = previewed["wave_distribution"]

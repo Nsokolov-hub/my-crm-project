@@ -203,6 +203,24 @@ def request_quote_items(
         rows = [db.get(QuoteItem, item['id']) for item in result['items']]
     show_purchase = has_request_permission(db, user, entity_id, 'finance.purchase.read')
     result['items'] = quote_item_views(db, rows, show_purchase)
+    calculated = calculated_quote_items(db, entity_id)
+    for item in result['items']:
+        item['last_calculation'] = calculated.get(item['id'])
+    return result
+
+
+def calculated_quote_items(db, request_id: str) -> dict[str, dict]:
+    """The latest saved calculation of each quote position of a request, for the mark in the calculation form."""
+    from app.commerce.models import Calculation
+
+    result: dict[str, dict] = {}
+    for calculation in db.scalars(select(Calculation).where(Calculation.request_id == request_id)
+                                  .order_by(Calculation.created_at, Calculation.id)):
+        mark = {'id': calculation.id, 'number': calculation.snapshot.get('calculation_number'),
+                'created_at': calculation.created_at.isoformat()}
+        for line in calculation.snapshot.get('lines') or []:
+            if line.get('quote_item_id'):
+                result[line['quote_item_id']] = mark
     return result
 
 
