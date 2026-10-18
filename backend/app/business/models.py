@@ -10,10 +10,12 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -94,18 +96,27 @@ class SupplierOrder(Entity):
     snapshot: Mapped[dict] = mapped_column(JSON)
 
 
+ACTIVE_ORDER_LINE = "status <> 'cancelled'"
+
+
 class SupplierOrderLine(Entity):
     __tablename__ = "supplier_order_lines"
     __table_args__ = (
-        UniqueConstraint("execution_id"),
+        # A cancelled line frees its position for a new order: one live line per position.
+        Index("uq_supplier_order_lines_active_execution", "execution_id", unique=True,
+              postgresql_where=text(ACTIVE_ORDER_LINE), sqlite_where=text(ACTIVE_ORDER_LINE)),
         CheckConstraint("quantity > 0 AND unit_price >= 0"),
     )
     order_id: Mapped[str] = mapped_column(ForeignKey("supplier_orders.id"), index=True)
     execution_id: Mapped[str] = mapped_column(ForeignKey("executions.id"))
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 6))
     unit_price: Mapped[Decimal] = mapped_column(Numeric(24, 8))
+    # waiting → delivery → arrived_ru → delivered, or cancelled with a reason.
     status: Mapped[str] = mapped_column(String(20), default="waiting")
     snapshot: Mapped[dict] = mapped_column(JSON)
+    cancel_reason: Mapped[str | None] = mapped_column(Text)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
 
 
 class SupplierMail(Entity):

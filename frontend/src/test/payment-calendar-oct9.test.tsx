@@ -97,7 +97,7 @@ it('shows invoice attachment and confirms payment with the actual date, exceptio
   fireEvent.click(await screen.findByText(pending.purpose));
   await screen.findByText('Счёт и документы платежа');
   expect(api).toHaveBeenCalledWith(
-    '/files?entity_type=calendar_entry&entity_id=payment',
+    '/files?entity_type=calendar_entry&entity_id=payment&page_size=100',
     expect.anything(),
   );
   fireEvent.click(screen.getByRole('button', { name: 'Согласовать или отклонить' }));

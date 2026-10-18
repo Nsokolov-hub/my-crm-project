@@ -262,8 +262,13 @@ export function TableImportDialog({
                       {
                         key: 'product_group_name',
                         label: 'Товарная группа',
-                        render: (row: Entity) =>
-                          String((row.data as Record<string, unknown>).product_group_name || '—'),
+                        render: (row: Entity) => {
+                          const data = row.data as Record<string, unknown>;
+                          const name = String(data.product_group_name || '—');
+                          return data.product_group_changed
+                            ? `${name} (в номенклатуре было: ${String(data.product_group_previous || 'без группы')})`
+                            : name;
+                        },
                       },
                     ]
                   : []),

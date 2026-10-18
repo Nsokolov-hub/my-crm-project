@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
 import { Badge, Button, DataTable, DetailPairs, ErrorBox, Modal } from '../components/ui';
-import { ApiError } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { displayCalculationMetrics } from '../lib/calculations';
 import { normalizeLogisticsExpense } from '../lib/logistics';
 import { date, decimal, display, label, metric } from '../lib/format';
@@ -1379,13 +1379,17 @@ function CalculationEditor({
                         reason: 'Сохранение общих расходов из формы расчёта',
                       },
                       'PUT',
+                      true,
                     )
                     .then(() => {
                       waveExpenses.refresh();
                       setHydratedProfileId('');
                       invalidate();
                     })
-                    .catch(() => {});
+                    .catch((cause) => {
+                      // Someone saved the wave meanwhile: reload its version for the next attempt.
+                      if (cause instanceof ApiError && cause.status === 409) waveExpenses.refresh();
+                    });
                 }}
               >
                 Сохранить общие расходы в волну
@@ -1556,6 +1560,47 @@ export function RequestCalculations({
   const [waveId, setWaveId] = useState(String(request.wave_id || ''));
   const [assignedWaveId, setAssignedWaveId] = useState(String(request.wave_id || ''));
   const [requestVersion, setRequestVersion] = useState(Number(request.version));
+  const seenVersion = useRef(Number(request.version));
+  // The tab may first receive the cached request while it reloads; a newer copy replaces the stale
+  // version, otherwise «Сохранить волну» fails with «Данные изменились» until the page is reopened.
+  useEffect(() => {
+    const version = Number(request.version);
+    if (!(version > seenVersion.current)) return;
+    seenVersion.current = version;
+    setRequestVersion((current) => Math.max(current, version));
+    setAssignedWaveId(String(request.wave_id || ''));
+    setWaveId(String(request.wave_id || ''));
+  }, [request.version, request.wave_id]);
+  async function saveWave() {
+    const path = '/requests/' + request.id + '/wave';
+    const save = (version: number) =>
+      waveCommand.run<Entity>(
+        path,
+        { request_version: version, wave_id: waveId || null },
+        'PUT',
+        true,
+      );
+    let result: Entity | undefined;
+    try {
+      result = await save(requestVersion);
+    } catch (cause) {
+      if (!(cause instanceof ApiError && cause.code === 'VERSION_CONFLICT')) return;
+      // Quotes, items or stages also change the request version. If the wave itself was not
+      // reassigned by someone else, repeat the assignment on the current version.
+      const fresh = await api<Entity>('/requests/' + request.id).catch(() => undefined);
+      if (!fresh) return;
+      setRequestVersion(Number(fresh.version));
+      if (String(fresh.wave_id || '') !== assignedWaveId) {
+        setAssignedWaveId(String(fresh.wave_id || ''));
+        return;
+      }
+      result = await save(Number(fresh.version)).catch(() => undefined);
+    }
+    if (result) {
+      setRequestVersion(Number(result.version));
+      setAssignedWaveId(String(result.wave_id || ''));
+    }
+  }
   const openWaves = waves.data?.items || [];
   // A closed or archived wave is no longer offered, but the request may still name it.
   const missingWave = useApi<Entity>(
@@ -1627,21 +1672,7 @@ export function RequestCalculations({
               variant="secondary"
               busy={waveCommand.busy}
               disabled={waveId === assignedWaveId || editing}
-              onClick={() =>
-                void waveCommand
-                  .run<Entity>(
-                    '/requests/' + request.id + '/wave',
-                    { request_version: requestVersion, wave_id: waveId || null },
-                    'PUT',
-                    true,
-                  )
-                  .then((result) => {
-                    if (result) {
-                      setRequestVersion(Number(result.version));
-                      setAssignedWaveId(String(result.wave_id || ''));
-                    }
-                  })
-              }
+              onClick={() => void saveWave()}
             >
               Сохранить волну
             </Button>

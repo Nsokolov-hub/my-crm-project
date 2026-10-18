@@ -25,7 +25,7 @@ from app.core.db import get_db
 from app.core.errors import DomainError
 from app.core.models import User
 from app.core.schemas import Input
-from app.core.security import check_request, current_user, require_permission
+from app.core.security import can, check_request, current_user, require_permission
 from app.core.service import advisory, audit, idem, lock, serialize
 from app.crm.catalogue import packing_name
 from app.crm.imports import string_value, xlsx
@@ -274,7 +274,12 @@ def request_plan(columns, rows, mapping):
     return plan
 
 
-def quote_plan(db, request_id, columns, rows, mapping):
+def quote_plan(db, request_id, columns, rows, mapping, catalog_write=True):
+    """Checks every quote row; a group named in the file reclassifies the nomenclature it names.
+
+    Without the right to change the catalogue, a file may only classify a nomenclature that is still
+    without a group or in «Другое»; moving it from another group needs that right.
+    """
     items = list(
         db.scalars(
             select(RequestItem)
@@ -319,6 +324,7 @@ def quote_plan(db, request_id, columns, rows, mapping):
 
     seen = set()
     new_definitions = {}
+    regrouped = {}
     plan = []
     for i, raw in enumerate(rows, 2):
         values = values_for(columns, raw, mapping)
@@ -375,6 +381,19 @@ def quote_plan(db, request_id, columns, rows, mapping):
             selected_group = resolve_group(data["product_group"]) if data.get("product_group") else None
             if n:
                 group = product_groups.get(n.product_group_id)
+                # The group stated in the quote wins over the catalogue: «Стандартные образцы» chosen in
+                # the file must not stay «Другое» because the article was once imported without a group.
+                if selected_group and selected_group.id != n.product_group_id:
+                    if group and group.slug != "other" and not catalog_write:
+                        raise ValueError(
+                            f"Номенклатура в группе «{group.name}». Изменить группу может сотрудник "
+                            "с правом «Изменение каталога»"
+                        )
+                    data["product_group_changed"] = True
+                    data["product_group_previous"] = group.name if group else None
+                    group = selected_group
+                if selected_group and regrouped.setdefault(n.id, selected_group.id) != selected_group.id:
+                    raise ValueError("Для одного артикула в файле указаны разные товарные группы")
             elif selected_group:
                 group = selected_group
             elif source.product_group_id:
@@ -460,6 +479,22 @@ def quote_plan(db, request_id, columns, rows, mapping):
     return plan
 
 
+def regroup_nomenclatures(db, user, batch):
+    """Moves existing nomenclatures to the group their quote rows name (checked by quote_plan)."""
+    for entry in batch.plan:
+        data = entry["data"]
+        if not data.get("product_group_changed"):
+            continue
+        n = lock(db, Nomenclature, data["nomenclature_id"])
+        if n.product_group_id == data["product_group_id"]:
+            continue
+        before = serialize(n)
+        n.product_group_id = data["product_group_id"]
+        n.version += 1
+        audit(db, user, "nomenclature", n.id, "product_group", before, serialize(n),
+              reason=f"Товарная группа из файла квот {batch.source_name}")
+
+
 def uncovered_positions(db, request_id, plan):
     """Request positions (by their number) that no row of the quote file refers to."""
     items = db.scalars(
@@ -519,7 +554,7 @@ def preview(
         ) from None
     chosen = infer_mapping(columns, chosen, kind)
     plan = (
-        quote_plan(db, request_id, columns, rows, chosen)
+        quote_plan(db, request_id, columns, rows, chosen, can(db, user, "catalog.write"))
         if kind == "quotes"
         else request_plan(columns, rows, chosen)
     )
@@ -715,6 +750,9 @@ def confirm(
             None,
         )
         if duplicate:
+            # The same file loaded again still corrects the groups it names; quotes are not duplicated.
+            if batch.kind == "quotes":
+                regroup_nomenclatures(db, user, batch)
             batch.status = "completed"
             batch.result = {**duplicate.result, "already_imported": True}
             audit(db, user, "table_import", batch.id, "duplicate_skipped", after=batch.result)
@@ -737,11 +775,13 @@ def confirm(
                 )
         else:
             advisory(db, "catalog.article-import")
-            fresh = quote_plan(db, request_id, batch.columns, batch.rows, batch.mapping)
+            fresh = quote_plan(db, request_id, batch.columns, batch.rows, batch.mapping,
+                               can(db, user, "catalog.write"))
             if fresh != batch.plan:
                 raise DomainError(
                     "IMPORT_STALE", "Данные изменились после проверки. Загрузите файл ещё раз", 409
                 )
+            regroup_nomenclatures(db, user, batch)
             if any(not row["data"]["nomenclature_id"] or not row["data"]["packing_id"] for row in fresh):
                 require_permission(db, user, "catalog.write")
             groups = defaultdict(list)

@@ -66,7 +66,7 @@ export function Registry({ kind }: { kind: keyof typeof names }) {
                     onClick={() =>
                       void download(
                         `/documents/${selected.id}/file?format=${format}`,
-                        `${selected.number}.${format}`,
+                        `${String(selected.file_name || selected.number)}.${format}`,
                       ).catch(setError)
                     }
                   >

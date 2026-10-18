@@ -140,8 +140,13 @@ def test_domestic_calculation_order_export_and_calendar_source(crm):  # noqa: F8
     sheet = load_workbook(
         io.BytesIO(crm["client"].get(f"/api/v1/supplier-orders/{order['id']}/po.xlsx").content)
     ).active
-    assert sheet["D1"].value == order["number"]
-    assert sheet["F13"].value == 990
+    # The purchase order is laid out like the proposal: a titled header, the parties, then the lines.
+    assert sheet["A2"].value.startswith(f"Purchase order №{order['number']} dated ")
+    header = next(row[0].row for row in sheet.iter_rows() if row[0].value == "№")
+    assert [cell.value for cell in sheet[header]][6:8] == ["Price (RUB)", "Total (RUB)"]
+    assert sheet.cell(header + 1, 7).value == 990
+    pdf = crm["client"].get(f"/api/v1/supplier-orders/{order['id']}/po.pdf")
+    assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF")
     expense = cmd(
         crm,
         "/payment-calendar",

@@ -64,7 +64,7 @@ export function RequestDocuments({
               onClick={() =>
                 void download(
                   `/documents/${r.id}/file?format=${format}`,
-                  `${r.number}.${format}`,
+                  `${String(r.file_name || r.number)}.${format}`,
                 ).catch(setError)
               }
             >

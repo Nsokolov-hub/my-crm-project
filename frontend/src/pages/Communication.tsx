@@ -43,8 +43,11 @@ export function FilesPanel({
 }) {
   const [error, setError] = useState<unknown>();
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ current: number; total: number }>();
   const [autoAttachId, setAutoAttachId] = useState<string>();
-  const files = useApi<Page>(`/files?entity_type=${entityType}&entity_id=${entityId}`);
+  const files = useApi<Page>(
+    `/files?entity_type=${entityType}&entity_id=${entityId}&page_size=100`,
+  );
   const refreshFiles = files.refresh;
   const [classification, setClassification] = useState('general');
   const pendingUpload = useRef<{ signature: string; key: string } | undefined>(undefined);
@@ -57,41 +60,64 @@ export function FilesPanel({
   useLiveEvents((event) => {
     if (event.kind === 'file' || event.kind === 'resync') refreshFiles();
   });
-  const upload = useCallback(
+  const send = useCallback(
     async (file: File) => {
+      const signature = [
+        file.name,
+        file.size,
+        file.lastModified,
+        classification,
+        entityType,
+        entityId,
+      ].join(':');
+      if (pendingUpload.current?.signature !== signature)
+        pendingUpload.current = { signature, key: createRequestKey() };
+      const form = new FormData();
+      form.set('file', file);
+      form.set('entity_type', entityType);
+      form.set('entity_id', entityId);
+      form.set('classification', classification);
+      const result = await api<Entity>('/files', {
+        method: 'POST',
+        body: form,
+        key: pendingUpload.current.key,
+      });
+      pendingUpload.current = undefined;
+      if (onAttach && file === initialFile) setAutoAttachId(result.id);
+    },
+    [classification, entityType, entityId, initialFile, onAttach],
+  );
+  // Several chosen files go one after another; a failed file does not stop the rest.
+  const upload = useCallback(
+    async (...chosen: File[]) => {
       setBusy(true);
       setError(undefined);
+      const failed: string[] = [];
+      let lastError: unknown;
       try {
-        const signature = [
-          file.name,
-          file.size,
-          file.lastModified,
-          classification,
-          entityType,
-          entityId,
-        ].join(':');
-        if (pendingUpload.current?.signature !== signature)
-          pendingUpload.current = { signature, key: createRequestKey() };
-        const form = new FormData();
-        form.set('file', file);
-        form.set('entity_type', entityType);
-        form.set('entity_id', entityId);
-        form.set('classification', classification);
-        const result = await api<Entity>('/files', {
-          method: 'POST',
-          body: form,
-          key: pendingUpload.current.key,
-        });
-        pendingUpload.current = undefined;
-        if (onAttach && file === initialFile) setAutoAttachId(result.id);
-        refreshFiles();
-      } catch (e) {
-        setError(e);
+        for (const [index, file] of chosen.entries()) {
+          if (chosen.length > 1) setProgress({ current: index + 1, total: chosen.length });
+          try {
+            await send(file);
+          } catch (e) {
+            failed.push(file.name);
+            lastError = e;
+          }
+        }
       } finally {
         setBusy(false);
+        setProgress(undefined);
+        refreshFiles();
       }
+      if (failed.length && chosen.length > 1)
+        setError(
+          new Error(
+            `Не загружены файлы: ${failed.join(', ')}. ${lastError instanceof Error ? lastError.message : ''}`.trim(),
+          ),
+        );
+      else if (failed.length) setError(lastError);
     },
-    [classification, entityType, entityId, refreshFiles, initialFile, onAttach],
+    [send, refreshFiles],
   );
   useEffect(() => {
     const ready = files.data?.items.find(
@@ -127,7 +153,7 @@ export function FilesPanel({
       description={
         entityType === 'calendar_entry'
           ? 'Загрузите счёт в PDF, Excel или изображение. Файл станет доступен после проверки.'
-          : 'Прикрепите PNG или вставьте снимок через Ctrl+V / ⌘V. Файл станет доступен после проверки.'
+          : 'Прикрепите один или несколько файлов или вставьте снимок через Ctrl+V / ⌘V. Файлы станут доступны после проверки.'
       }
     >
       <ErrorBox error={error || files.error} />
@@ -140,18 +166,24 @@ export function FilesPanel({
           onClick={() => fileInput.current?.click()}
         >
           <Paperclip size={16} />
-          {busy ? 'Загружается…' : 'Прикрепить файл'}
+          {busy
+            ? progress
+              ? `Загружается ${progress.current} из ${progress.total}…`
+              : 'Загружается…'
+            : 'Прикрепить файлы'}
         </Button>
         <input
           ref={fileInput}
           hidden
           type="file"
+          multiple
+          aria-label="Файлы для загрузки"
           accept=".pdf,.png,.jpg,.jpeg,.gif,.txt,.csv,.xlsx,.docx"
           disabled={busy}
           onChange={(e) => {
-            const file = e.target.files?.[0];
+            const chosen = Array.from(e.target.files || []);
             e.currentTarget.value = '';
-            if (file) void upload(file);
+            if (chosen.length) void upload(...chosen);
           }}
         />
         <select

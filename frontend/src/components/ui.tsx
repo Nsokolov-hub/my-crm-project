@@ -125,6 +125,16 @@ export function ErrorBox({ error, retry }: { error: unknown; retry?: () => void 
             : 'Не удалось выполнить действие'}
         </strong>
         <p>{errorMessage(error)}</p>
+        {error instanceof ApiError && Boolean(error.fields?.length) && (
+          <ul className="error-fields">
+            {error.fields!.slice(0, 5).map((item) => (
+              <li key={item.field + item.message}>
+                {item.field ? `${item.field}: ` : ''}
+                {item.message}
+              </li>
+            ))}
+          </ul>
+        )}
         {error instanceof ApiError && error.requestId && (
           <small>Код обращения: {error.requestId}</small>
         )}

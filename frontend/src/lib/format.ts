@@ -47,6 +47,7 @@ export const stageLabels: Record<string, string> = {
   closed: 'Закрыта',
   shipped: 'Отправлена',
   arrived: 'Прибыла',
+  arrived_ru: 'Прибыло в РФ',
   delivered: 'Доставлено',
   verified: 'Проверен',
   needs_review: 'Требует проверки',

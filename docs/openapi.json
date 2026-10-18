@@ -11032,6 +11032,53 @@
         }
       }
     },
+    "/api/v1/supplier-orders/logistics": {
+      "get": {
+        "tags": [
+          "Платёжный календарь и заказы поставщикам"
+        ],
+        "summary": "Order Logistics",
+        "operationId": "order_logistics_api_v1_supplier_orders_logistics_get",
+        "parameters": [
+          {
+            "name": "execution_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 500,
+              "default": [],
+              "title": "Execution Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/supplier-orders": {
       "post": {
         "tags": [
@@ -11188,6 +11235,90 @@
         }
       }
     },
+    "/api/v1/supplier-order-lines/status": {
+      "post": {
+        "tags": [
+          "Платёжный календарь и заказы поставщикам"
+        ],
+        "summary": "Order Lines Status",
+        "description": "Moves the selected ordered positions to one delivery status, for instance «Прибыло в РФ».",
+        "operationId": "order_lines_status_api_v1_supplier_order_lines_status_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderLinesStatusIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/supplier-order-lines/cancel": {
+      "post": {
+        "tags": [
+          "Платёжный календарь и заказы поставщикам"
+        ],
+        "summary": "Order Lines Cancel",
+        "description": "Cancels ordered positions with a reason; each returns to «Позиции к заказу» for a new order.",
+        "operationId": "order_lines_cancel_api_v1_supplier_order_lines_cancel_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderLinesCancelIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/supplier-orders/positions/export.xlsx": {
       "get": {
         "tags": [
@@ -11260,6 +11391,48 @@
         ],
         "summary": "Order Po",
         "operationId": "order_po_api_v1_supplier_orders__order_id__po_xlsx_get",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/supplier-orders/{order_id}/po.pdf": {
+      "get": {
+        "tags": [
+          "Платёжный календарь и заказы поставщикам"
+        ],
+        "summary": "Order Po Pdf",
+        "operationId": "order_po_pdf_api_v1_supplier_orders__order_id__po_pdf_get",
         "parameters": [
           {
             "name": "order_id",
@@ -14611,6 +14784,26 @@
         ],
         "title": "ItemPatch"
       },
+      "LineRef": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "version"
+        ],
+        "title": "LineRef"
+      },
       "LoginInput": {
         "properties": {
           "email": {
@@ -15275,6 +15468,22 @@
             },
             "type": "object",
             "title": "Prices"
+          },
+          "logistics_amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,16}|(?=[\\d.]{1,25}0*$)\\d{0,16}\\.\\d{0,8}0*$)"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logistics Amount"
           }
         },
         "additionalProperties": false,
@@ -15305,6 +15514,7 @@
             "enum": [
               "waiting",
               "delivery",
+              "arrived_ru",
               "delivered"
             ],
             "title": "Status"
@@ -15318,6 +15528,75 @@
           "status"
         ],
         "title": "OrderLineStatus"
+      },
+      "OrderLinesCancelIn": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/LineRef"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Lines"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "lines",
+          "reason"
+        ],
+        "title": "OrderLinesCancelIn"
+      },
+      "OrderLinesStatusIn": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/LineRef"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Lines"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "waiting",
+              "delivery",
+              "arrived_ru",
+              "delivered"
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "lines",
+          "status"
+        ],
+        "title": "OrderLinesStatusIn"
       },
       "PackingInput": {
         "properties": {

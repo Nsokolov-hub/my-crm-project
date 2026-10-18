@@ -433,6 +433,13 @@ def document_files(snapshot: dict) -> dict:
     branded = io.BytesIO()
     book.save(branded)
     xlsx = branded.getvalue()
+    font_name, bold_font = pdf_fonts()
+    pdf = proposal_pdf(snapshot, font_name, bold_font, invoice=not is_proposal)
+    return {"pdf": put_file(pdf, "pdf"), "xlsx": put_file(xlsx, "xlsx")}
+
+
+def pdf_fonts() -> tuple[str, str]:
+    """Regular and bold Unicode fonts of the printed forms, registered once per process."""
     font_name = "CRMUnicode"
     if font_name not in pdfmetrics.getRegisteredFontNames():
         candidates = [
@@ -455,5 +462,4 @@ def document_files(snapshot: dict) -> dict:
             pdfmetrics.registerFont(TTFont(bold_font, bold_path))
         else:
             bold_font = font_name
-    pdf = proposal_pdf(snapshot, font_name, bold_font, invoice=not is_proposal)
-    return {"pdf": put_file(pdf, "pdf"), "xlsx": put_file(xlsx, "xlsx")}
+    return font_name, bold_font

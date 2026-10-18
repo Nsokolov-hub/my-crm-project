@@ -1,3 +1,4 @@
+import { Download } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../app/Auth';
@@ -15,7 +16,7 @@ import {
   Section,
 } from '../components/ui';
 import { BarChart } from '../components/BarChart';
-import { download } from '../lib/api';
+import { api, download } from '../lib/api';
 import { useApi, useCommand } from '../lib/hooks';
 import { date, decimal, today } from '../lib/format';
 import { FilesPanel } from './Communication';
@@ -24,12 +25,42 @@ import type { Entity, Field, Page } from '../lib/types';
 export { PaymentCalendar } from './PaymentCalendar';
 import { paymentDecisionFields } from './PaymentCalendar';
 
+// Delivery of an ordered position: the logistician moves it on, procurement may also cancel it.
+const lineStatuses = [
+  { value: 'waiting', label: 'Ожидаем', tone: 'gray' },
+  { value: 'delivery', label: 'В пути', tone: 'purple' },
+  { value: 'arrived_ru', label: 'Прибыло в РФ', tone: 'amber' },
+  { value: 'delivered', label: 'Доставлено клиенту', tone: 'green' },
+  { value: 'cancelled', label: 'Отменено', tone: 'red' },
+];
+function OrderStatus({ value }: { value: unknown }) {
+  const status = lineStatuses.find((row) => row.value === value);
+  return <Badge value={status?.label || value} tone={status?.tone} />;
+}
+const plainAmount = (value: unknown) => {
+  const raw = String(value ?? '0');
+  return raw.includes('.') ? raw.replace(/\.?0+$/, '') : raw;
+};
+
 export function SupplierOrders() {
-  const [tab, setTab] = useState('positions');
+  const auth = useAuth();
+  const canOrder = auth.can('procurement.write');
+  const tabs = (
+    [
+      ['positions', 'Позиции к заказу'],
+      ['ordered', 'Заказанные позиции'],
+      ['orders', 'Статус заказов'],
+    ] as const
+  ).filter(([key]) => canOrder || key === 'ordered');
+  const [tab, setTab] = useState<string>(tabs[0][0]);
   const [supplier, setSupplier] = useState('');
   const [status, setStatus] = useState('');
   const [selection, setSelection] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
+  const [logistics, setLogistics] = useState<Entity>();
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [notice, setNotice] = useState('');
   const [selected, setSelected] = useState<Entity>();
   const [error, setError] = useState<unknown>();
   const command = useCommand();
@@ -40,6 +71,12 @@ export function SupplierOrders() {
   const list = useApi<Page>(
     (tab === 'orders' ? '/supplier-orders' : '/supplier-orders/positions') + '?' + query,
   );
+  const rows = list.data?.items || [];
+  const chosen = rows.filter((r) => selection.includes(r.id));
+  const [prices, setPrices] = useState<Record<string, string>>({});
+  const oneSupplier = new Set(chosen.map((r) => `${r.supplier_id}:${r.currency}`)).size === 1;
+  const selectable = (row: Entity) => tab === 'positions' || row.status !== 'cancelled';
+  const selectableIds = rows.filter(selectable).map((row) => row.id);
   const orderFields: Field[] = [
     {
       name: 'seller_id',
@@ -52,16 +89,86 @@ export function SupplierOrders() {
     { name: 'contract', label: 'Контракт' },
     { name: 'payment_terms', label: 'Условия оплаты' },
     { name: 'delivery_terms', label: 'Условия доставки' },
+    {
+      name: 'logistics_amount',
+      label: `Международная логистика, ${String(chosen[0]?.currency || '')}`,
+      type: 'decimal',
+      required: true,
+      help:
+        [
+          logistics?.basis
+            ? `Подставлено: ${String(logistics.basis)}.`
+            : 'Сумма не найдена в волне, расчёте и карточке поставщика.',
+          ...((logistics?.notes as string[] | undefined) || []),
+        ].join(' ') + ' Сумма входит в итог заказа и в PO.',
+    },
   ];
-  const chosen = (list.data?.items || []).filter((r) => selection.includes(r.id));
-  const [prices, setPrices] = useState<Record<string, string>>({});
-  const oneSupplier = new Set(chosen.map((r) => `${r.supplier_id}:${r.currency}`)).size === 1;
+  function switchTab(key: string) {
+    setTab(key);
+    setSelection([]);
+    setStatus('');
+    setNotice('');
+  }
+  async function startOrder() {
+    setError(undefined);
+    try {
+      const ids = new URLSearchParams();
+      selection.forEach((id) => ids.append('execution_ids', id));
+      setLogistics(await api<Entity>('/supplier-orders/logistics?' + ids));
+      setCreating(true);
+    } catch (cause) {
+      setError(cause);
+    }
+  }
+  async function moveLines(next: string) {
+    const result = await command
+      .run<{ count: number }>(
+        '/supplier-order-lines/status',
+        { lines: chosen.map((row) => ({ id: row.id, version: row.version })), status: next },
+        'POST',
+        true,
+      )
+      .catch(() => undefined);
+    if (!result) return;
+    setNotice(`${lineStatuses.find((row) => row.value === next)?.label}: позиций ${result.count}.`);
+    setSelection([]);
+    list.refresh();
+  }
+  async function cancelLines(event: React.FormEvent) {
+    event.preventDefault();
+    const result = await command
+      .run<{ count: number }>(
+        '/supplier-order-lines/cancel',
+        {
+          lines: chosen.map((row) => ({ id: row.id, version: row.version })),
+          reason: cancelReason,
+        },
+        'POST',
+        true,
+      )
+      .catch(() => undefined);
+    if (!result) return;
+    setNotice(`Отменено позиций: ${result.count}. Они вернулись во вкладку «Позиции к заказу».`);
+    setCancelling(false);
+    setCancelReason('');
+    setSelection([]);
+    list.refresh();
+  }
   async function copy() {
     try {
       await navigator.clipboard.writeText(
-        (list.data?.items || [])
+        rows
           .map((r) =>
-            [r.order_number, r.name, r.article, r.packaging, r.quantity, r.status].join('\t'),
+            [
+              r.order_number,
+              r.request_number,
+              r.client_name,
+              r.name,
+              r.article,
+              r.packaging,
+              r.quantity,
+              lineStatuses.find((row) => row.value === r.status)?.label || r.status,
+            ].join('\t'),
           )
           .join('\n'),
       );
@@ -69,26 +176,44 @@ export function SupplierOrders() {
       setError(cause);
     }
   }
+  const selectionColumn = {
+    key: 'select',
+    label: (
+      <input
+        aria-label="Выбрать все позиции"
+        type="checkbox"
+        checked={selectableIds.length > 0 && selectableIds.every((id) => selection.includes(id))}
+        onChange={(e) => setSelection(e.target.checked ? selectableIds : [])}
+      />
+    ),
+    sortable: false,
+    render: (r: Entity) =>
+      selectable(r) ? (
+        <input
+          aria-label={`Выбрать ${r.name}`}
+          type="checkbox"
+          checked={selection.includes(r.id)}
+          onChange={(e) =>
+            setSelection((ids) =>
+              e.target.checked ? [...ids, r.id] : ids.filter((id) => id !== r.id),
+            )
+          }
+        />
+      ) : null,
+  };
   return (
     <>
       <PageHeading
         title="Заказы поставщикам"
-        description="Выберите принятые в работу позиции одного поставщика, проверьте цены и выпустите Purchase Order."
+        description={
+          canOrder
+            ? 'Выберите принятые в работу позиции одного поставщика, проверьте цены и логистику и выпустите Purchase Order.'
+            : 'Отмечайте заказанные позиции: «В пути», «Прибыло в РФ» и «Доставлено клиенту».'
+        }
       />
       <div className="tabs">
-        {[
-          ['positions', 'Позиции к заказу'],
-          ['ordered', 'Заказанные позиции'],
-          ['orders', 'Статус заказов'],
-        ].map(([key, title]) => (
-          <button
-            key={key}
-            className={tab === key ? 'active' : ''}
-            onClick={() => {
-              setTab(key);
-              setSelection([]);
-            }}
-          >
+        {tabs.map(([key, title]) => (
+          <button key={key} className={tab === key ? 'active' : ''} onClick={() => switchTab(key)}>
             {title}
           </button>
         ))}
@@ -114,14 +239,16 @@ export function SupplierOrders() {
             Статус
             <select value={status} onChange={(e) => setStatus(e.target.value)}>
               <option value="">Все</option>
-              <option value="waiting">Ожидаем</option>
-              <option value="delivery">Доставка</option>
-              <option value="delivered">Доставлено</option>
+              {lineStatuses.map((row) => (
+                <option key={row.value} value={row.value}>
+                  {row.label}
+                </option>
+              ))}
             </select>
           </label>
         )}
         {tab === 'positions' && (
-          <Button disabled={!chosen.length || !oneSupplier} onClick={() => setCreating(true)}>
+          <Button disabled={!chosen.length || !oneSupplier} onClick={() => void startOrder()}>
             Создать заказ ({chosen.length})
           </Button>
         )}
@@ -144,13 +271,48 @@ export function SupplierOrders() {
           </>
         )}
       </div>
-      <ErrorBox error={error || list.error || command.error} />
-      {chosen.length > 0 && !oneSupplier && (
+      {tab === 'ordered' && (
+        <div className="tab-actions order-line-actions">
+          <span className="selection-count">Выбрано позиций: {chosen.length}</span>
+          {lineStatuses
+            .filter((row) => row.value !== 'cancelled')
+            .map((row) => (
+              <Button
+                key={row.value}
+                variant={row.value === 'arrived_ru' ? 'primary' : 'secondary'}
+                busy={command.busy}
+                disabled={!chosen.length}
+                onClick={() => void moveLines(row.value)}
+              >
+                {row.label}
+              </Button>
+            ))}
+          {canOrder && (
+            <Button
+              variant="danger"
+              disabled={!chosen.length || command.busy}
+              onClick={() => {
+                command.setError(undefined);
+                setCancelling(true);
+              }}
+            >
+              Отменить…
+            </Button>
+          )}
+        </div>
+      )}
+      <ErrorBox error={error || list.error || (!cancelling && command.error)} />
+      {notice && (
+        <p role="status" className="info-note">
+          {notice}
+        </p>
+      )}
+      {chosen.length > 0 && tab === 'positions' && !oneSupplier && (
         <p className="field-error">Выберите позиции одного поставщика в одной валюте.</p>
       )}
       <DataTable
-        rows={list.data?.items || []}
-        onRow={tab === 'positions' ? undefined : setSelected}
+        rows={rows}
+        onRow={tab === 'orders' ? setSelected : undefined}
         columns={
           tab === 'orders'
             ? [
@@ -161,28 +323,39 @@ export function SupplierOrders() {
                   label: 'Сумма',
                   render: (r) => `${decimal(r.total)} ${r.currency}`,
                 },
+                {
+                  key: 'logistics_amount',
+                  label: 'В т. ч. логистика',
+                  render: (r) =>
+                    Number(r.logistics_amount)
+                      ? `${decimal(r.logistics_amount)} ${r.currency}`
+                      : '—',
+                },
                 { key: 'expected_date', label: 'Срок', render: (r) => date(r.expected_date) },
-                { key: 'status', label: 'Состояние', render: (r) => <Badge value={r.status} /> },
+                {
+                  key: 'status',
+                  label: 'Состояние',
+                  render: (r) => <OrderStatus value={r.status} />,
+                },
               ]
             : [
-                ...(tab === 'positions'
+                selectionColumn,
+                ...(tab === 'ordered'
                   ? [
+                      { key: 'order_number', label: 'Заказ' },
                       {
-                        key: 'select',
-                        label: 'Выбор',
-                        render: (r: Entity) => (
-                          <input
-                            aria-label={`Выбрать ${r.name}`}
-                            type="checkbox"
-                            checked={selection.includes(r.id)}
-                            onChange={(e) =>
-                              setSelection((ids) =>
-                                e.target.checked ? [...ids, r.id] : ids.filter((id) => id !== r.id),
-                              )
-                            }
-                          />
-                        ),
+                        key: 'request_number',
+                        label: 'Заявка',
+                        render: (r: Entity) =>
+                          r.request_id ? (
+                            <Link to={`/requests/${r.request_id}?tab=fulfillment`}>
+                              {String(r.request_number || '—')}
+                            </Link>
+                          ) : (
+                            '—'
+                          ),
                       },
+                      { key: 'client_name', label: 'Клиент' },
                     ]
                   : []),
                 { key: 'name', label: 'Наименование' },
@@ -191,24 +364,69 @@ export function SupplierOrders() {
                 { key: 'article', label: 'Артикул' },
                 { key: 'packaging', label: 'Фасовка' },
                 { key: 'quantity', label: 'Кол-во', render: (r) => decimal(r.quantity) },
-                {
-                  key: 'unit_price',
-                  label: 'Цена',
-                  render: (r) => `${decimal(r.unit_price)} ${r.currency}`,
-                },
+                ...(rows.some((r) => r.unit_price !== undefined)
+                  ? [
+                      {
+                        key: 'unit_price',
+                        label: 'Цена',
+                        render: (r: Entity) =>
+                          r.unit_price === undefined
+                            ? '—'
+                            : `${decimal(r.unit_price)} ${r.currency}`,
+                      },
+                    ]
+                  : []),
                 { key: 'delivery_days', label: 'Срок, дней' },
                 ...(tab === 'ordered'
                   ? [
                       {
                         key: 'status',
                         label: 'Состояние',
-                        render: (r: Entity) => <Badge value={r.status} />,
+                        render: (r: Entity) => <OrderStatus value={r.status} />,
+                      },
+                      {
+                        key: 'cancel_reason',
+                        label: 'Причина отмены',
+                        render: (r: Entity) => String(r.cancel_reason || ''),
                       },
                     ]
                   : []),
               ]
         }
       />
+      {cancelling && (
+        <Modal title="Отмена заказанных позиций" onClose={() => setCancelling(false)}>
+          <form className="form-body" onSubmit={(event) => void cancelLines(event)}>
+            <p>
+              Позиций: {chosen.length}. Отменённые позиции вернутся во вкладку «Позиции к заказу» —
+              их можно заказать снова, в том числе у другого поставщика.
+            </p>
+            <label className="field">
+              Причина отмены
+              <textarea
+                required
+                minLength={3}
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+              />
+            </label>
+            <ErrorBox error={command.error} />
+            <div className="inline-actions">
+              <Button
+                type="submit"
+                variant="danger"
+                busy={command.busy}
+                disabled={cancelReason.trim().length < 3}
+              >
+                Отменить позиции
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => setCancelling(false)}>
+                Не отменять
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
       {creating && (
         <RecordForm
           title="Заказ поставщику"
@@ -218,6 +436,7 @@ export function SupplierOrders() {
             contract: chosen[0]?.contract,
             payment_terms: chosen[0]?.payment_terms,
             delivery_terms: chosen[0]?.delivery_terms,
+            logistics_amount: plainAmount(logistics?.amount),
           }}
           command
           extra={{ execution_ids: selection, prices }}
@@ -248,34 +467,6 @@ export function SupplierOrders() {
           }}
         />
       )}
-      {selected && tab === 'ordered' && (
-        <RecordForm
-          title="Статус позиции"
-          endpoint={`/supplier-order-lines/${selected.id}`}
-          method="PATCH"
-          command
-          initial={selected}
-          extra={{ version: selected.version }}
-          fields={[
-            {
-              name: 'status',
-              label: 'Статус',
-              type: 'select',
-              options: [
-                { value: 'waiting', label: 'Ожидаем' },
-                { value: 'delivery', label: 'Доставка' },
-                { value: 'delivered', label: 'Доставлено' },
-              ],
-              required: true,
-            },
-          ]}
-          onClose={() => setSelected(undefined)}
-          onSuccess={() => {
-            setSelected(undefined);
-            list.refresh();
-          }}
-        />
-      )}
       {selected && tab === 'orders' && (
         <Modal title={String(selected.number)} onClose={() => setSelected(undefined)}>
           <div className="form-body">
@@ -285,6 +476,11 @@ export function SupplierOrders() {
                   selected.supplier_name ||
                   ((selected.snapshot as Entity)?.supplier as Entity)?.name,
                 Сумма: `${decimal(selected.total)} ${selected.currency}`,
+                'В т. ч. логистика': Number(selected.logistics_amount)
+                  ? `${decimal(selected.logistics_amount)} ${selected.currency}${
+                      selected.logistics_basis ? ` (${String(selected.logistics_basis)})` : ''
+                    }`
+                  : 'Не включена',
                 Срок: date(selected.expected_date),
                 Контракт: selected.contract,
                 'Условия оплаты': selected.payment_terms,
@@ -294,12 +490,24 @@ export function SupplierOrders() {
               <Button
                 onClick={() =>
                   void download(
+                    `/supplier-orders/${selected.id}/po.pdf`,
+                    `PO_${selected.number}.pdf`,
+                  ).catch(setError)
+                }
+              >
+                <Download size={16} />
+                Скачать PO (PDF)
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() =>
+                  void download(
                     `/supplier-orders/${selected.id}/po.xlsx`,
                     `PO_${selected.number}.xlsx`,
                   ).catch(setError)
                 }
               >
-                Скачать PO
+                Excel
               </Button>
               <Link
                 className="button secondary"
@@ -320,6 +528,7 @@ export function SupplierOrders() {
                 Создать расход
               </Link>
             </div>
+            <ErrorBox error={error} />
           </div>
         </Modal>
       )}

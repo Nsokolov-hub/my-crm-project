@@ -1,6 +1,8 @@
 import copy
+import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
@@ -18,7 +20,14 @@ from app.crm.models import Request as CRMRequest
 from app.crm.stages import advance_stage
 
 from .calculator import ROUNDING, convert, dec
-from .files import PROPOSAL_NOTICE, PROPOSAL_SIGNATURE, document_files, read_file
+from .files import (
+    PROPOSAL_NOTICE,
+    PROPOSAL_SIGNATURE,
+    document_date_label,
+    document_files,
+    proposal_number,
+    read_file,
+)
 from .models import (
     Calculation,
     CommercialDocument,
@@ -51,7 +60,22 @@ def document_view(document: CommercialDocument) -> dict:
         name: {"sha256": data["sha256"], "size": data["size"]} for name, data in document.files.items()
     }
     value["display_number"] = document.snapshot.get("display_number", document.number)
+    value["file_name"] = document_file_name(document)
     return value
+
+
+def document_file_name(document: CommercialDocument) -> str:
+    """«Покупатель, КП №12, 15.10.2026»: buyer, number and issue date, as the files are sent to clients."""
+    snapshot = document.snapshot or {}
+    buyer = (snapshot.get("client") or {}).get("name") or "Покупатель"
+    if document.kind == "proposal":
+        number = f"КП №{proposal_number({'number': document.number, **snapshot})}"
+    else:
+        number = f"Счёт №{snapshot.get('number') or document.number}"
+    issued = snapshot.get("date") or document.created_at.date().isoformat()
+    name = f"{buyer}, {number}, {document_date_label(issued)}"
+    # Characters that Windows and macOS refuse in file names become spaces.
+    return re.sub(r"\s+", " ", re.sub(r'[\\/:*?"<>|\x00-\x1f]', " ", name)).strip()[:180]
 
 
 def next_number(db, seller_id: str, kind: str) -> str:
@@ -592,10 +616,14 @@ def download_document(
         if format == "pdf"
         else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+    file_name = f"{document_file_name(obj)}.{format}"
     return Response(
         read_file(obj.files[format]),
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{obj.number}.{format}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{obj.number}.{format}"; '
+            f"filename*=UTF-8''{quote(file_name)}"
+        },
     )
 
 

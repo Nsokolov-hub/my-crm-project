@@ -19,6 +19,7 @@ MFA_PRIVILEGED_PERMISSIONS = ('admin.users', 'profiles.write', 'payments.confirm
 
 PERMISSIONS = {
     'procurement.write': 'Заказы поставщикам',
+    'supplier_orders.delivery': 'Статусы доставки заказанных позиций',
     'requests.read': 'Просмотр заявок', 'requests.write': 'Изменение заявок', 'requests.assign': 'Переназначение заявок',
     'clients.read': 'Просмотр контрагентов', 'clients.write': 'Изменение контрагентов', 'calls.write': 'Обзвон',
     'tasks.read': 'Просмотр задач', 'tasks.write': 'Изменение задач', 'catalog.read': 'Просмотр каталога', 'catalog.write': 'Изменение каталога',

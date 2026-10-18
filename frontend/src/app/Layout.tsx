@@ -44,7 +44,8 @@ const operations = [
     label: 'Заказы поставщикам',
     path: '/supplier-orders',
     icon: Truck,
-    permission: 'procurement.write',
+    // A logistician sees the ordered positions to move them along the delivery.
+    permission: ['procurement.write', 'supplier_orders.delivery'],
   },
   { label: 'Платёжный календарь', path: '/payment-calendar', icon: Wallet, permission: undefined },
   {
@@ -72,10 +73,10 @@ export function Layout() {
     return () => window.removeEventListener('crm:notifications-read', refreshNotifications);
   }, [refreshNotifications]);
   const name = auth.session?.user.name || 'Сотрудник';
-  const availableLinks = links.filter((link) => !link.permission || auth.can(link.permission));
-  const availableOperations = operations.filter(
-    (link) => !link.permission || auth.can(link.permission),
-  );
+  const allowed = (permission?: string | string[]) =>
+    !permission || [permission].flat().some((code) => auth.can(code));
+  const availableLinks = links.filter((link) => allowed(link.permission));
+  const availableOperations = operations.filter((link) => allowed(link.permission));
   const canSeeAnalytics = auth.can('analytics.read');
   const canUseChats = auth.can('chats.use');
   const [unreadChats, setUnreadChats] = useState(0);

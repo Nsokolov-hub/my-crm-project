@@ -1,4 +1,4 @@
-"""Quote imports resolve existing product groups without changing existing catalogue entries."""
+"""Quote imports resolve product groups; a group named in the file reclassifies the existing nomenclature."""
 
 import io
 
@@ -6,8 +6,17 @@ import pytest
 from openpyxl import load_workbook
 from sqlalchemy import func, select
 
+from app.core.models import AuditEvent, PermissionGrant
 from app.crm.imports import xlsx
-from app.crm.models import Nomenclature, ProductGroup, QuoteItem, QuoteSheet, RequestItem, TableImport
+from app.crm.models import (
+    Nomenclature,
+    ProductGroup,
+    QuoteItem,
+    QuoteSheet,
+    Request,
+    RequestItem,
+    TableImport,
+)
 from app.crm.table_imports import QUOTE_COLUMNS
 from tests.support.business import confirm, preview, quote_file, request
 from tests.support.crm import login, post
@@ -183,29 +192,103 @@ def test_invalid_explicit_quote_group_blocks_whole_import_without_creating_group
         assert db.scalar(select(func.count()).select_from(ProductGroup)) == initial_groups
 
 
-def test_existing_nomenclature_keeps_group_when_quote_specifies_different_valid_group(crm):
-    req, supplier = demand(crm)
-    original = group(crm)
-    different = group(crm, "Колонки", "columns")
-    known = post(
+def known_nomenclature(crm, group_id=None):
+    return post(
         crm,
         "/nomenclatures",
         {
             "name": "Известный товар",
             "article": "0341",
-            "product_group_id": original["id"],
+            **({"product_group_id": group_id} if group_id else {}),
             "packings": [{"value": "1", "unit": "pcs"}],
         },
     )
+
+
+def test_group_named_in_quote_moves_existing_nomenclature_to_it(crm):
+    # Business remark of 18 October 2026: «Стандартные образцы» chosen in the file stayed «Другое».
+    req, supplier = demand(crm)
+    original = group(crm)
+    different = group(crm, "Колонки", "columns")
+    known = known_nomenclature(crm, original["id"])
     batch = quote_preview(crm, req, supplier, different["name"])
     assert batch["summary"] == {"total": 1, "checked": 1, "create_nomenclature": 0, "new_manufacturers": 0, "errors": 0,
                                 "request_positions": 1, "missing_positions": []}
-    assert batch["rows"][0]["data"]["product_group_name"] == original["name"]
+    row = batch["rows"][0]["data"]
+    assert row["product_group_name"] == different["name"]
+    assert row["product_group_changed"] is True and row["product_group_previous"] == original["name"]
     confirm(crm, req["id"], batch["id"])
     with crm["sessions"]() as db:
-        assert db.get(Nomenclature, known["id"]).product_group_id == original["id"]
-        assert db.scalar(select(RequestItem)).product_group_id == original["id"]
+        assert db.get(Nomenclature, known["id"]).product_group_id == different["id"]
         assert db.scalar(select(func.count()).select_from(Nomenclature)) == 1
+        audit = db.scalar(select(AuditEvent).where(AuditEvent.entity_id == known["id"],
+                                                   AuditEvent.action == "product_group"))
+        assert audit.before["product_group_id"] == original["id"]
+        assert audit.after["product_group_id"] == different["id"]
+
+
+def grant_quotes_without_catalogue(crm):
+    with crm["sessions"].begin() as db:
+        for code in ("quotes.write", "finance.purchase.read"):
+            db.add(PermissionGrant(user_id=crm["manager"].id, code=code, scope="own"))
+        db.scalar(select(Request)).owner_id = crm["manager"].id
+    login(crm, "manager@example.com")
+
+
+def test_quote_file_classifies_nomenclature_from_other_without_catalogue_right(crm):
+    req, supplier = demand(crm)
+    standards = group(crm, "Стандартные образцы", "reference_standards")
+    known = known_nomenclature(crm)
+    with crm["sessions"]() as db:
+        other = db.scalar(select(ProductGroup).where(ProductGroup.slug == "other"))
+        assert db.get(Nomenclature, known["id"]).product_group_id in (None, other.id)
+    grant_quotes_without_catalogue(crm)
+    batch = quote_preview(crm, req, supplier, "Стандартные образцы")
+    assert batch["summary"]["errors"] == 0, batch["rows"]
+    confirm(crm, req["id"], batch["id"])
+    with crm["sessions"]() as db:
+        assert db.get(Nomenclature, known["id"]).product_group_id == standards["id"]
+
+
+def test_moving_nomenclature_out_of_a_real_group_needs_the_catalogue_right(crm):
+    req, supplier = demand(crm)
+    columns = group(crm, "Колонки", "columns")
+    group(crm)
+    known = known_nomenclature(crm, columns["id"])
+    grant_quotes_without_catalogue(crm)
+    batch = quote_preview(crm, req, supplier, "Стандарты")
+    assert batch["summary"]["errors"] == 1
+    assert "Изменение каталога" in batch["rows"][0]["errors"][0]
+    with crm["sessions"]() as db:
+        assert db.get(Nomenclature, known["id"]).product_group_id == columns["id"]
+
+
+def test_same_file_loaded_again_corrects_the_group_without_new_quotes(crm):
+    req, supplier = demand(crm)
+    standards = group(crm, "Стандартные образцы", "reference_standards")
+    known = known_nomenclature(crm)
+    content = xlsx([list(QUOTE_COLUMNS.values()),
+                    quote_file(supplier["internal_code"], {"product_group": "Стандартные образцы"})])
+
+    def upload():
+        response = crm["client"].post(
+            f"/api/v1/requests/{req['id']}/table-imports/preview",
+            files={"file": ("Шаблон_квот.xlsx", content,
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            data={"kind": "quotes"},
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    confirm(crm, req["id"], upload()["id"])
+    with crm["sessions"].begin() as db:
+        # As an import before 18 October left it: the file named the group, the catalogue kept «Другое».
+        db.get(Nomenclature, known["id"]).product_group_id = None
+    result = confirm(crm, req["id"], upload()["id"])["result"]
+    assert result["already_imported"] is True
+    with crm["sessions"]() as db:
+        assert db.get(Nomenclature, known["id"]).product_group_id == standards["id"]
+        assert db.scalar(select(func.count()).select_from(QuoteItem)) == 1
 
 
 def test_existing_nomenclature_does_not_hide_invalid_explicit_group(crm):

@@ -1,4 +1,4 @@
-import { ArrowLeft, Pencil, Plus, Upload } from 'lucide-react';
+import { ArrowLeft, Paperclip, Pencil, Plus, Upload } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useApi, useCommand } from '../lib/hooks';
@@ -13,6 +13,7 @@ import {
   DetailPairs,
   ErrorBox,
   Loading,
+  Modal,
   PageHeading,
   Section,
 } from '../components/ui';
@@ -55,6 +56,9 @@ export function RequestDetail() {
   const [rfqItemIds, setRfqItemIds] = useState<string[]>([]);
   const [quoteItemIds, setQuoteItemIds] = useState<string[]>([]);
   const counts = useApi<Page>(`/requests/${id}/items?ui_revision=${revision}`);
+  // The same list the attachments panel loads, so the count costs no extra request.
+  const files = useApi<Page>(`/files?entity_type=request&entity_id=${id}&page_size=100`);
+  const [filesOpen, setFilesOpen] = useState(false);
   const refresh = () => {
     request.refresh();
     counts.refresh();
@@ -78,6 +82,10 @@ export function RequestDetail() {
         actions={
           <>
             <Badge value={row.commercial_stage} />
+            <Button variant="secondary" onClick={() => setFilesOpen(true)}>
+              <Paperclip size={16} />
+              Вложения{files.data ? ` (${files.data.total})` : ''}
+            </Button>
             <Button variant="secondary" onClick={() => setEdit(true)}>
               <Pencil size={16} />
               Изменить
@@ -150,8 +158,13 @@ export function RequestDetail() {
               ))}
             </div>
           </Section>
-          <FilesPanel entityType="request" entityId={id} />
+          {!filesOpen && <FilesPanel entityType="request" entityId={id} />}
         </>
+      )}
+      {filesOpen && (
+        <Modal title="Вложения заявки" wide onClose={() => setFilesOpen(false)}>
+          <FilesPanel entityType="request" entityId={id} />
+        </Modal>
       )}
       {tab === 'items' && (
         <>

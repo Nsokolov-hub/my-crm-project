@@ -2668,6 +2668,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/supplier-orders/logistics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Order Logistics */
+        get: operations["order_logistics_api_v1_supplier_orders_logistics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/supplier-orders": {
         parameters: {
             query?: never;
@@ -2703,6 +2720,46 @@ export interface paths {
         patch: operations["order_line_status_api_v1_supplier_order_lines__line_id__patch"];
         trace?: never;
     };
+    "/api/v1/supplier-order-lines/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Order Lines Status
+         * @description Moves the selected ordered positions to one delivery status, for instance «Прибыло в РФ».
+         */
+        post: operations["order_lines_status_api_v1_supplier_order_lines_status_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/supplier-order-lines/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Order Lines Cancel
+         * @description Cancels ordered positions with a reason; each returns to «Позиции к заказу» for a new order.
+         */
+        post: operations["order_lines_cancel_api_v1_supplier_order_lines_cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/supplier-orders/positions/export.xlsx": {
         parameters: {
             query?: never;
@@ -2729,6 +2786,23 @@ export interface paths {
         };
         /** Order Po */
         get: operations["order_po_api_v1_supplier_orders__order_id__po_xlsx_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/supplier-orders/{order_id}/po.pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Order Po Pdf */
+        get: operations["order_po_pdf_api_v1_supplier_orders__order_id__po_pdf_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3811,6 +3885,13 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** LineRef */
+        LineRef: {
+            /** Id */
+            id: string;
+            /** Version */
+            version: number;
+        };
         /** LoginInput */
         LoginInput: {
             /**
@@ -4014,6 +4095,8 @@ export interface components {
             prices?: {
                 [key: string]: string;
             };
+            /** Logistics Amount */
+            logistics_amount?: number | string | null;
         };
         /** OrderLineStatus */
         OrderLineStatus: {
@@ -4025,7 +4108,28 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "waiting" | "delivery" | "delivered";
+            status: "waiting" | "delivery" | "arrived_ru" | "delivered";
+        };
+        /** OrderLinesCancelIn */
+        OrderLinesCancelIn: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Lines */
+            lines: components["schemas"]["LineRef"][];
+            /** Reason */
+            reason: string;
+        };
+        /** OrderLinesStatusIn */
+        OrderLinesStatusIn: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Lines */
+            lines: components["schemas"]["LineRef"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "waiting" | "delivery" | "arrived_ru" | "delivered";
         };
         /** PackingInput */
         PackingInput: {
@@ -15514,6 +15618,56 @@ export interface operations {
             };
         };
     };
+    order_logistics_api_v1_supplier_orders_logistics_get: {
+        parameters: {
+            query?: {
+                execution_ids?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     order_list_api_v1_supplier_orders_get: {
         parameters: {
             query?: {
@@ -15671,6 +15825,110 @@ export interface operations {
             };
         };
     };
+    order_lines_status_api_v1_supplier_order_lines_status_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderLinesStatusIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    order_lines_cancel_api_v1_supplier_order_lines_cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderLinesCancelIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     positions_export_api_v1_supplier_orders_positions_export_xlsx_get: {
         parameters: {
             query?: {
@@ -15723,6 +15981,56 @@ export interface operations {
         };
     };
     order_po_api_v1_supplier_orders__order_id__po_xlsx_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    order_po_pdf_api_v1_supplier_orders__order_id__po_pdf_get: {
         parameters: {
             query?: never;
             header?: never;

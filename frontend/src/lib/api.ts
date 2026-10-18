@@ -6,6 +6,7 @@ export class ApiError extends Error {
     message: string,
     public field?: string,
     public requestId?: string,
+    public fields?: { field: string; message: string }[],
   ) {
     super(message);
     this.name = 'ApiError';
@@ -45,7 +46,9 @@ export async function api<T = unknown>(path: string, options: ApiOptions = {}): 
     );
   }
   if (!response.ok) {
-    const data = (await response.json().catch(() => ({}))) as Record<string, string>;
+    const data = (await response.json().catch(() => ({}))) as Record<string, string> & {
+      fields?: { field: string; message: string }[];
+    };
     if (response.status === 401 && path !== '/auth/login' && path !== '/auth/me')
       window.dispatchEvent(new Event('session-expired'));
     throw new ApiError(
@@ -57,6 +60,7 @@ export async function api<T = unknown>(path: string, options: ApiOptions = {}): 
           : `Операция не выполнена (${response.status}). Повторите или обратитесь к администратору.`),
       data.field,
       data.requestId,
+      Array.isArray(data.fields) ? data.fields : undefined,
     );
   }
   if (response.status === 204) return undefined as T;

@@ -40,7 +40,7 @@ it('opens the file picker and uploads a selected PNG', async () => {
   const view = render(<FilesPanel entityType="request" entityId="request-1" />);
   const input = view.container.querySelector('input[type="file"]') as HTMLInputElement;
   const click = vi.spyOn(input, 'click');
-  fireEvent.click(screen.getByRole('button', { name: 'Прикрепить файл' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Прикрепить файлы' }));
   expect(click).toHaveBeenCalledOnce();
 
   const screenshot = new File(['png content'], 'screenshot.png', { type: 'image/png' });
@@ -52,4 +52,28 @@ it('opens the file picker and uploads a selected PNG', async () => {
     .mocked(api)
     .mock.calls.find(([path, options]) => path === '/files' && options?.method === 'POST');
   expect(((upload?.[1]?.body as FormData).get('file') as File).name).toBe('screenshot.png');
+});
+
+it('uploads several chosen files one after another and names those that failed', async () => {
+  vi.mocked(api).mockImplementation(async (_path, options) => {
+    if (options?.method !== 'POST') return { items: [], total: 0 };
+    const file = (options.body as FormData).get('file') as File;
+    if (file.name === 'broken.pdf') throw new Error('Файл не прошёл проверку');
+    return { id: file.name };
+  });
+  const view = render(<FilesPanel entityType="request" entityId="request-1" />);
+  const input = view.container.querySelector('input[type="file"]') as HTMLInputElement;
+  expect(input.multiple).toBe(true);
+  const files = ['invoice.pdf', 'broken.pdf', 'photo.png'].map(
+    (name) => new File(['content'], name, { type: 'application/octet-stream' }),
+  );
+  fireEvent.change(input, { target: { files } });
+
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('broken.pdf'));
+  const sent = vi
+    .mocked(api)
+    .mock.calls.filter(([path, options]) => path === '/files' && options?.method === 'POST')
+    .map(([, options]) => ((options?.body as FormData).get('file') as File).name);
+  expect(sent).toEqual(['invoice.pdf', 'broken.pdf', 'photo.png']);
+  expect(screen.getByRole('alert')).not.toHaveTextContent('invoice.pdf');
 });
