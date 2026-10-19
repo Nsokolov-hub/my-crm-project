@@ -370,6 +370,10 @@ class WaveArchiveIn(VersionCommand):
     reason: str = Field(min_length=3)
 
 
+class WaveCompleteIn(VersionCommand):
+    reason: str = Field(default="Поставка выполнена", min_length=3, max_length=2000)
+
+
 class WaveForecastIn(VersionCommand):
     product_group_id: str
     target_quantity: Annotated[Decimal, Field(gt=0, max_digits=24, decimal_places=0)]

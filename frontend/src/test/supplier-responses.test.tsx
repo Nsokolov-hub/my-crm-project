@@ -51,7 +51,17 @@ const matrix = {
       description: 'Atropine',
       manufacturer_name: 'Merck',
       cells: {
-        alpha: { status: 'priced', requested_at: '', answered_at: '', hours: 30 },
+        alpha: {
+          status: 'priced',
+          requested_at: '',
+          answered_at: '',
+          hours: 30,
+          unit_price: '25000.00000000',
+          currency: 'INR',
+          unit_price_rub: '27500.00',
+          delivery_days: 21,
+          packing_name: '50 mg',
+        },
         beta: { status: 'waiting', requested_at: '', answered_at: null, hours: null },
       },
     },
@@ -73,9 +83,13 @@ it('shows per position who priced it, who left it without a price and who has no
   const table = (await screen.findByText('1. Atropine')).closest('table')!;
   const rows = within(table).getAllByRole('row');
   expect(within(rows[1]).getByText('Цена')).toBeVisible();
-  expect(within(rows[1]).getByText('через 1,3 дн.')).toBeVisible();
+  expect(within(rows[1]).getByText('ответ через 1,3 дн.')).toBeVisible();
+  // Business remark of 19 October 2026: the price in rubles and the delivery term of each quote.
+  expect(within(rows[1]).getByText('27 500 ₽')).toBeVisible();
+  expect(within(rows[1]).getByText('25 000 INR за 50 mg')).toBeVisible();
+  expect(within(rows[1]).getByText('Срок: 21 дн.')).toBeVisible();
   expect(within(rows[1]).getByText('Ждём ответа')).toBeVisible();
-  expect(within(rows[2]).getByText('Без цены')).toBeVisible();
+  expect(within(rows[2]).getByText('Отказ')).toBeVisible();
   expect(within(rows[2]).getByText('не запрашивали')).toBeVisible();
   expect(within(rows[0]).getByText('Ответ через 1,3 дн.')).toBeVisible();
 
@@ -161,7 +175,7 @@ it('ranks suppliers by answers and opens the brands one leaves without prices', 
   fireEvent.click(screen.getByText('Beta Labs'));
   const dialog = await screen.findByRole('dialog');
   expect(await within(dialog).findByRole('heading', { name: 'По брендам' })).toBeVisible();
-  expect(within(dialog).getByText('Без цены', { selector: '.badge' })).toBeVisible();
+  expect(within(dialog).getByText('Отказ', { selector: '.badge' })).toBeVisible();
 });
 
 it('says durations the way people do', () => {

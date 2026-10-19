@@ -47,11 +47,12 @@ from .schemas import (
     TransferIn,
     WaveArchiveIn,
     WaveBudgetIn,
+    WaveCompleteIn,
     WaveForecastIn,
     WaveIn,
     WaveUpdate,
 )
-from .waves import OPEN_WAVES, active_plan, usable, working_wave
+from .waves import OPEN_WAVES, active_plan, finish_wave, usable, working_wave
 
 router = APIRouter(tags=["Согласования и поставки"])
 WAVE_TRANSITIONS = {
@@ -640,6 +641,19 @@ def wave_schedule(data, current: Wave | None = None) -> dict:
     return result
 
 
+def wave_order_lines(db, wave: Wave) -> dict[str, int]:
+    """Positions ordered from the supplier for the wave (a plan: its working waves), counted by status."""
+    from app.business.models import SupplierOrderLine
+
+    waves = [wave.id] + (list(db.scalars(select(Wave.id).where(Wave.plan_id == wave.id))) if wave.kind == "plan" else [])
+    counts: dict[str, int] = {}
+    for status in db.scalars(select(SupplierOrderLine.status)
+                             .join(WaveAllocation, WaveAllocation.execution_id == SupplierOrderLine.execution_id)
+                             .where(WaveAllocation.wave_id.in_(waves), WaveAllocation.active.is_(True))):
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
 def wave_view(db, user, wave: Wave) -> dict:
     accessible = select(CRMRequest.id).where(request_predicate(db, user))
     allocations = db.scalars(
@@ -713,6 +727,7 @@ def wave_view(db, user, wave: Wave) -> dict:
             for row in db.scalars(select(Wave).where(Wave.plan_id == wave.id).order_by(Wave.created_at, Wave.id))
         ]
     plan = db.get(Wave, wave.plan_id) if wave.plan_id else None
+    value["order_lines"] = wave_order_lines(db, wave)
     return {**value, "supplier_name": supplier.name if supplier else None,
             "plan_number": plan.number if plan else None,
             "allocations": [allocation_view(db, row) for row in allocations]}
@@ -794,6 +809,9 @@ def update_wave(wave_id: str, data: WaveUpdate, db: DB, user: Actor):
             check_request(db, user, db.get(Execution, allocation.execution_id).request_id, "waves.write")
         before = serialize(wave)
         if data.status and data.status != wave.status:
+            # A wave in work keeps its state until its orders move on or a leader moves it.
+            if not can(db, user, "approvals.decide"):
+                error("WAVE_STATUS_LEADER", "Состояние волны меняет руководитель", 403, field="status")
             if wave.kind == "plan":
                 error("WAVE_PLAN_STATUS", "Плановая волна не отправляется: этапы поставки ведутся в рабочих волнах. "
                       "Ненужную плановую волну уберите в архив", field="status")
@@ -888,6 +906,31 @@ def archive_wave(wave_id: str, data: WaveArchiveIn, db: DB, user: Actor):
     return idem(
         db, user, data.idempotency_key, f"archive-wave:{wave_id}", data.model_dump(mode="json"), operation
     )
+
+
+@router.post("/waves/{wave_id}/complete")
+def complete_wave(wave_id: str, data: WaveCompleteIn, db: DB, user: Actor):
+    """«Поставка выполнена»: the leader closes the delivery; the wave and, for a plan, its working waves
+    are completed and go to the archive."""
+    require_permission(db, user, "waves.write")
+    require_permission(db, user, "approvals.decide")
+
+    def operation():
+        initial = db.get(Wave, wave_id)
+        if not initial:
+            error("NOT_FOUND", "Волна не найдена", 404)
+        advisory(db, f"wave-supplier:{initial.supplier_id}")
+        advisory(db, f"wave:{wave_id}")
+        wave = lock(db, Wave, wave_id)
+        check_version(wave, data.version)
+        if wave.archived:
+            error("WAVE_ARCHIVE_STATE", "Волна уже в архиве", 409)
+        if wave.status == "cancelled":
+            error("WAVE_TRANSITION", "Отменённую волну нельзя отметить выполненной", 409)
+        finish_wave(db, user, wave, data.reason)
+        return wave_view(db, user, wave)
+
+    return idem(db, user, data.idempotency_key, f"complete-wave:{wave_id}", data.model_dump(mode="json"), operation)
 
 
 @router.post("/waves/{wave_id}/allocations")

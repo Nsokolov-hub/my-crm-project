@@ -174,7 +174,8 @@ def dispatch(db: Session, event: OutboxEvent) -> None:
         row.scanned_at = utcnow()
         row.version += 1
         audit(db, None, 'file', row.id, 'scan_completed', after={'status': row.status, 'sha256': row.sha256})
-        notify(db, row.author_id, f'file-verdict:{row.id}',
+        # A clean file is a system notice; a blocked one asks for work (file-blocked is not a system kind).
+        notify(db, row.author_id, f'file-verdict:{row.id}' if clean else f'file-blocked:{row.id}',
                'Файл проверен и доступен' if clean else 'Вложение заблокировано антивирусом', 'file', row.id)
         publish(db, 'file', [row.author_id], file=row.id)
         return

@@ -11,6 +11,11 @@ type Cell = {
   requested_at: string;
   answered_at: string | null;
   hours: number | null;
+  unit_price?: string;
+  currency?: string;
+  unit_price_rub?: string | null;
+  delivery_days?: number | null;
+  packing_name?: string;
 };
 type SupplierColumn = {
   supplier_id: string;
@@ -22,9 +27,12 @@ type SupplierColumn = {
   mail_version: number;
   replied_at: string | null;
   reply_note: string;
+  priced?: number;
+  declined?: number;
 };
 type Matrix = {
   suppliers: SupplierColumn[];
+  rates_profile?: string | null;
   items: (Entity & {
     number: number;
     description: string;
@@ -57,7 +65,7 @@ type SupplierRow = Entity & {
 
 const STATUS: Record<Status, { title: string; tone: string }> = {
   priced: { title: 'Цена', tone: 'green' },
-  declined: { title: 'Без цены', tone: 'red' },
+  declined: { title: 'Отказ', tone: 'red' },
   waiting: { title: 'Ждём ответа', tone: 'amber' },
 };
 
@@ -86,7 +94,7 @@ export function RequestSupplierResponses({
   return (
     <Section
       title="Ответы поставщиков"
-      description="Кому ушёл запрос по каждой позиции и что ответил поставщик. Цена — позиция есть в его квоте. Без цены — поставщик ответил по заявке, но эту позицию не оценил. Если поставщик ответил письмом без цен, отметьте это кнопкой «Ответил без цен»."
+      description="Кому ушёл запрос по каждой позиции и что ответил поставщик. Цена — позиция есть в его квоте: показаны цена, она же в рублях по курсам профиля расчёта и срок поставки. Отказ — поставщик ответил по заявке, но эту позицию поставить не может. Сначала идут поставщики, давшие больше цен. Если поставщик ответил письмом без цен, отметьте это кнопкой «Ответил без цен»."
     >
       <ErrorBox error={matrix.error} retry={matrix.refresh} />
       {matrix.loading && !matrix.data ? (
@@ -104,6 +112,10 @@ export function RequestSupplierResponses({
                 {suppliers.map((column) => (
                   <th key={column.supplier_id}>
                     <strong>{column.name}</strong>
+                    <small>
+                      Цен: {column.priced || 0} из {(matrix.data?.items || []).length}
+                      {column.declined ? ` · отказ: ${column.declined}` : ''}
+                    </small>
                     <small>Запрос {date(column.asked_at, true)}</small>
                     <small>
                       {column.answered_at
@@ -141,8 +153,28 @@ export function RequestSupplierResponses({
                               value={STATUS[cell.status].title}
                               tone={STATUS[cell.status].tone}
                             />
+                            {cell.status === 'priced' && cell.unit_price !== undefined && (
+                              <strong className="supplier-price">
+                                {cell.unit_price_rub
+                                  ? `${decimal(cell.unit_price_rub)} ₽`
+                                  : `${decimal(cell.unit_price)} ${cell.currency}`}
+                              </strong>
+                            )}
+                            {cell.status === 'priced' &&
+                              cell.unit_price !== undefined &&
+                              cell.currency !== 'RUB' && (
+                                <small>
+                                  {decimal(cell.unit_price)} {cell.currency}
+                                  {cell.packing_name ? ` за ${cell.packing_name}` : ''}
+                                </small>
+                              )}
+                            {cell.status === 'priced' &&
+                              cell.delivery_days !== undefined &&
+                              cell.delivery_days !== null && (
+                                <small>Срок: {cell.delivery_days} дн.</small>
+                              )}
                             {cell.status === 'priced' && cell.hours !== null && (
-                              <small>через {duration(cell.hours)}</small>
+                              <small>ответ через {duration(cell.hours)}</small>
                             )}
                           </span>
                         ) : (
@@ -155,6 +187,11 @@ export function RequestSupplierResponses({
               ))}
             </tbody>
           </table>
+          {matrix.data?.rates_profile && (
+            <p className="muted">
+              Цены в рублях — по курсам профиля расчёта «{matrix.data.rates_profile}».
+            </p>
+          )}
         </div>
       )}
       {replying && (
@@ -180,7 +217,7 @@ export function RequestSupplierResponses({
               placeholder: 'Например: не работаем с брендом Merck',
             },
           ]}
-          note="Позиции без квоты этого поставщика будут считаться оценёнными «без цены», а время ответа — до этой даты."
+          note="Позиции без квоты этого поставщика будут считаться отказом, а время ответа — до этой даты."
           onClose={() => setReplying(undefined)}
           onSuccess={() => {
             setReplying(undefined);
@@ -221,7 +258,7 @@ function SupplierDetail({
                 { key: 'name', label: 'Производитель' },
                 { key: 'positions', label: 'Запрошено позиций' },
                 { key: 'priced', label: 'С ценой' },
-                { key: 'declined', label: 'Без цены' },
+                { key: 'declined', label: 'Отказ' },
                 { key: 'waiting', label: 'Ждём ответа' },
               ]}
             />
@@ -303,7 +340,7 @@ export function SupplierReport({ from, to }: { from: string; to: string }) {
             },
             { key: 'positions', label: 'Позиций' },
             { key: 'priced', label: 'С ценой' },
-            { key: 'declined', label: 'Без цены' },
+            { key: 'declined', label: 'Отказ' },
             { key: 'waiting', label: 'Ждём' },
             {
               key: 'declined_brands',

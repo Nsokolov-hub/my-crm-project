@@ -1,14 +1,93 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
-import { Badge, Button, DetailPairs, ErrorBox, Modal, PageHeading } from '../components/ui';
+import {
+  Badge,
+  Button,
+  DataTable,
+  DetailPairs,
+  ErrorBox,
+  Modal,
+  PageHeading,
+  Section,
+} from '../components/ui';
 import { download } from '../lib/api';
 import { date, decimal } from '../lib/format';
-import type { Entity } from '../lib/types';
+import { useApi, useCommand } from '../lib/hooks';
+import type { Entity, Page } from '../lib/types';
 import { WorkflowApprovals } from './Business';
 import { ApprovalDecision } from './Fulfillment';
 const names = { documents: 'Документы', payments: 'Оплаты', approvals: 'Согласования' };
+
+/** Client payments declared in requests and waiting for someone to confirm the receipt. */
+export function PaymentConfirmations() {
+  const list = useApi<Page>('/payments?status=declared&page_size=100');
+  const operation = useCommand();
+  const [selected, setSelected] = useState<Entity>();
+  const rows = list.data?.items || [];
+  async function confirm() {
+    if (!selected) return;
+    const result = await operation
+      .run(`/payments/${selected.id}/confirm`, { version: selected.version }, 'POST', true)
+      .catch(() => undefined);
+    if (!result) return;
+    setSelected(undefined);
+    list.refresh();
+    window.dispatchEvent(new Event('crm:notifications-read'));
+  }
+  return (
+    <Section
+      title={`Оплаты на подтверждение${rows.length ? ` (${rows.length})` : ''}`}
+      description="Платежи, которые менеджеры заявили в заявках. Подтвердите поступление здесь или в заявке; распределение по счетам — во вкладке «Оплаты» заявки."
+    >
+      <ErrorBox error={list.error} retry={list.refresh} />
+      <DataTable
+        rows={rows}
+        onRow={setSelected}
+        empty={<p className="muted form-body">Неподтверждённых оплат нет.</p>}
+        columns={[
+          { key: 'request_number', label: 'Заявка', render: (r) => `№${String(r.request_number)}` },
+          { key: 'client_name', label: 'Клиент' },
+          { key: 'number', label: 'Платёжный документ' },
+          { key: 'payment_date', label: 'Дата', render: (r) => date(r.payment_date) },
+          { key: 'amount', label: 'Сумма', render: (r) => `${decimal(r.amount)} ${r.currency}` },
+          { key: 'declared_by_name', label: 'Заявил' },
+        ]}
+      />
+      {selected && (
+        <Modal title={`Платёж ${String(selected.number)}`} onClose={() => setSelected(undefined)}>
+          <div className="form-body">
+            <ErrorBox error={operation.error} />
+            <DetailPairs
+              values={{
+                Заявка: `№${String(selected.request_number)}`,
+                Клиент: selected.client_name,
+                Сумма: `${decimal(selected.amount)} ${selected.currency}`,
+                Дата: date(selected.payment_date),
+                Комментарий: selected.comment,
+                Заявил: selected.declared_by_name,
+              }}
+            />
+            <div className="inline-actions">
+              <Button busy={operation.busy} onClick={() => void confirm()}>
+                Подтвердить поступление
+              </Button>
+              <Link
+                className="button secondary"
+                to={`/requests/${String(selected.request_id)}?tab=payments`}
+              >
+                Открыть заявку
+              </Link>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </Section>
+  );
+}
 export function Registry({ kind }: { kind: keyof typeof names }) {
+  const auth = useAuth();
   const [selected, setSelected] = useState<Entity>();
   const [decision, setDecision] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -17,6 +96,7 @@ export function Registry({ kind }: { kind: keyof typeof names }) {
     <>
       <PageHeading title={names[kind]} description="Общий реестр доступных вам заявок." />
       <ErrorBox error={error} />
+      {kind === 'approvals' && auth.can('payments.confirm') && <PaymentConfirmations />}
       {kind === 'approvals' && <WorkflowApprovals />}
       <Collection
         title={names[kind]}

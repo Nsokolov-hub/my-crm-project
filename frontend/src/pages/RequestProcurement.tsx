@@ -712,7 +712,7 @@ export function RequestQuotes({
       </div>
       <Collection
         title="Позиции квот"
-        description="Отметьте нужные строки разных поставщиков и валют. Выбор сохраняется при перелистывании страниц."
+        description="Отметьте нужные строки разных поставщиков и валют. «Цена, ₽» — пересчёт по курсам опубликованного профиля расчёта, чтобы сравнить поставщиков. Выбор сохраняется при перелистывании страниц."
         endpoint={`/requests/${requestId}/quote-items`}
         refreshKey={revision}
         pageSize={100}
@@ -746,6 +746,19 @@ export function RequestQuotes({
           { key: 'supplier_name', label: 'Поставщик' },
           { key: 'unit_price', label: 'Цена', render: (row) => decimal(row.unit_price) },
           { key: 'currency_code', label: 'Валюта' },
+          {
+            key: 'unit_price_rub',
+            label: 'Цена, ₽',
+            sortable: false,
+            render: (row) =>
+              row.unit_price_rub === null || row.unit_price_rub === undefined ? (
+                <span title="Нет курса этой валюты в опубликованном профиле расчёта">—</span>
+              ) : (
+                <strong title="Пересчёт по курсам опубликованного профиля расчёта">
+                  {decimal(row.unit_price_rub)}
+                </strong>
+              ),
+          },
           { key: 'delivery_days', label: 'Срок, дней' },
         ]}
       />

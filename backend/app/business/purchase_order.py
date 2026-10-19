@@ -47,8 +47,21 @@ def po_lines(order) -> list[dict]:
     return rows
 
 
-def po_logistics(order) -> Decimal:
+def po_logistics(order, with_logistics: bool = True) -> Decimal:
+    if not with_logistics:
+        return Decimal("0")
     return Decimal(str((order.snapshot.get("logistics") or {}).get("amount") or "0"))
+
+
+def po_total(order, with_logistics: bool = True) -> Decimal:
+    return sum((row["total"] for row in po_lines(order)), Decimal("0")) + po_logistics(order, with_logistics)
+
+
+def logistics_note(order, with_logistics: bool = True) -> str:
+    """How the PO speaks of freight it does not carry: paid separately, or simply not included."""
+    separately = not with_logistics or (order.snapshot.get("logistics") or {}).get("separately")
+    return ("International logistics: paid separately for the consolidated shipment" if separately
+            else "International logistics: not included")
 
 
 def po_terms(order) -> list[tuple[str, str]]:
@@ -60,7 +73,7 @@ def po_terms(order) -> list[tuple[str, str]]:
     ]
 
 
-def purchase_order_pdf(order) -> bytes:
+def purchase_order_pdf(order, with_logistics: bool = True) -> bytes:
     font_name, bold_font = pdf_fonts()
     ink = colors.HexColor(f"#{PROPOSAL_INK}")
     muted = colors.HexColor("#63716B")
@@ -87,7 +100,7 @@ def purchase_order_pdf(order) -> bytes:
     header_right = ParagraphStyle("po-column-right", parent=header, alignment=TA_RIGHT)
     counter = ParagraphStyle("po-counter", parent=small, splitLongWords=0)
     white_label = ParagraphStyle("po-total-label", parent=label, textColor=colors.HexColor("#D3E5CB"))
-    amount_text = f"{pdf_decimal(order.total, money=True)} {currency}"
+    amount_text = f"{pdf_decimal(po_total(order, with_logistics), money=True)} {currency}"
     amount_size = min(21, 21 * (width * .44 - 30) / max(pdfmetrics.stringWidth(amount_text, bold_font, 21), 1))
     amount = ParagraphStyle("po-total", parent=body, fontName=bold_font, fontSize=amount_size,
                             leading=amount_size + 6, textColor=colors.white)
@@ -148,7 +161,7 @@ def purchase_order_pdf(order) -> bytes:
         item = [p(row["name"], strong)] + ([Spacer(1, 2), p(facts, small)] if facts else [])
         rows.append([p(index, counter), item, p(pdf_decimal(row["quantity"])),
                      money(row["unit_price"], widths[3]), money(row["total"], widths[4])])
-    logistics = po_logistics(order)
+    logistics = po_logistics(order, with_logistics)
     if logistics:
         rows.append([p(len(lines) + 1, counter), [p("International logistics", strong)], p("1"),
                      money(logistics, widths[3]), money(logistics, widths[4])])
@@ -166,7 +179,7 @@ def purchase_order_pdf(order) -> bytes:
     summary = [p("ORDER SUMMARY", label), Spacer(1, 6),
                p(f"Goods: {pdf_decimal(goods, money=True)} {currency}"), Spacer(1, 4),
                p(f"International logistics: {pdf_decimal(logistics, money=True)} {currency}" if logistics
-                 else "International logistics: not included"), Spacer(1, 4),
+                 else logistics_note(order, with_logistics)), Spacer(1, 4),
                p(f"Delivery terms: {order.delivery_terms or '—'}", small)]
     total = [p("ORDER TOTAL", white_label), Spacer(1, 5), p(amount_text, amount), Spacer(1, 4),
              p(f"Payment: {order.payment_terms or 'as per contract'}", white_label)]
@@ -216,7 +229,7 @@ def purchase_order_pdf(order) -> bytes:
     return buffer.getvalue()
 
 
-def purchase_order(order) -> bytes:
+def purchase_order(order, with_logistics: bool = True) -> bytes:
     """The same order as an editable workbook, laid out like the proposal workbook."""
     book = Workbook()
     sheet = book.active
@@ -260,15 +273,16 @@ def purchase_order(order) -> bytes:
     for index, row in enumerate(lines, 1):
         sheet.append([index, *(safe_cell(row.get(key)) for key in ("name", "manufacturer", "article", "packaging")),
                       row["quantity"], row["unit_price"], row["total"]])
-    logistics = po_logistics(order)
+    logistics = po_logistics(order, with_logistics)
     if logistics:
         sheet.append([len(lines) + 1, "International logistics", None, None, None, Decimal("1"), logistics,
                       logistics])
     last_line = sheet.max_row
     goods = sum((row["total"] for row in lines), Decimal("0"))
     sheet.append([])
-    summary = [("Goods", goods), *([("International logistics", logistics)] if logistics else []),
-               (f"Total ({currency})", order.total)]
+    summary = [("Goods", goods),
+               ("International logistics", logistics) if logistics else (logistics_note(order, with_logistics), None),
+               (f"Total ({currency})", po_total(order, with_logistics))]
     for key, value in summary:
         sheet.append([key, None, None, None, None, None, None, value])
         row = sheet.max_row

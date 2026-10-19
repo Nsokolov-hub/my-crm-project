@@ -6,13 +6,14 @@ the first such order arrives. Archived waves are kept for history and take no ne
 """
 
 from copy import deepcopy
+from datetime import date
 
 from sqlalchemy import select
 
 from app.core.errors import error
 from app.core.service import advisory, audit, lock, notify, serialize
 
-from .models import Wave
+from .models import Execution, Wave, WaveAllocation
 
 OPEN_WAVES = {"planned", "assembling"}
 # What a working wave takes over from its plan: route, dates, owner and budget, but not the planned volume.
@@ -66,3 +67,73 @@ def working_wave(db, user, wave: Wave, reason: str) -> Wave:
     notify(db, copy.owner_id, f"wave-working:{copy.id}", f"Создана рабочая волна {copy.number}"[:250],
            "wave", copy.id)
     return copy
+
+
+def wave_requests(db, wave: Wave) -> set[str]:
+    """Requests with orders in the wave or, for a plan, in its working waves."""
+    waves = [wave.id] + (list(db.scalars(select(Wave.id).where(Wave.plan_id == wave.id))) if wave.kind == "plan" else [])
+    return set(db.scalars(select(Execution.request_id).join(WaveAllocation, WaveAllocation.execution_id == Execution.id)
+                          .where(WaveAllocation.wave_id.in_(waves), WaveAllocation.active.is_(True))))
+
+
+def finish_wave(db, user, wave: Wave, reason: str) -> None:
+    """«Поставка выполнена»: a working wave is completed and archived; a plan takes its working waves along.
+
+    The caller holds the lock of `wave`. The delivery events of the allocations are not required: the delivery
+    is confirmed by the leader or by every order of the wave delivered to its client.
+    """
+    from app.crm.models import Request as CRMRequest
+
+    owners = {db.get(CRMRequest, request_id).owner_id: request_id for request_id in wave_requests(db, wave)}
+    targets = [wave]
+    if wave.kind == "plan":
+        for row_id in db.scalars(select(Wave.id).where(Wave.plan_id == wave.id, Wave.archived.is_(False))
+                                 .order_by(Wave.id)):
+            advisory(db, f"wave:{row_id}")
+            targets.append(lock(db, Wave, row_id))
+    for row in targets:
+        before = serialize(row)
+        if row.kind == "work" and row.status != "cancelled":
+            row.status = "completed"
+        row.archived = True
+        row.version += 1
+        audit(db, user, "wave", row.id, "completed", before=before, after=serialize(row), reason=reason)
+    for owner_id, request_id in owners.items():
+        notify(db, owner_id, f"wave-completed:{wave.id}", f"Поставка по волне {wave.number} выполнена"[:250],
+               "request", request_id)
+
+
+def finish_delivered_waves(db, user, execution_ids: list[str]) -> list[str]:
+    """Working waves whose every live order is delivered to its client go to the archive as delivered.
+
+    The plan follows once its intake week is over and none of its working waves is left open.
+    """
+    from app.business.models import SupplierOrderLine
+
+    finished = []
+    wave_ids = set(db.scalars(select(WaveAllocation.wave_id).where(
+        WaveAllocation.execution_id.in_(execution_ids), WaveAllocation.active.is_(True)))) if execution_ids else set()
+    for wave_id in sorted(wave_ids):
+        advisory(db, f"wave:{wave_id}")
+        wave = lock(db, Wave, wave_id)
+        if wave.archived or wave.kind != "work" or wave.status == "cancelled":
+            continue
+        live = [execution for execution in db.scalars(
+            select(Execution).join(WaveAllocation, WaveAllocation.execution_id == Execution.id)
+            .where(WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True)))
+            if execution.quantity > execution.cancelled_quantity]
+        delivered = set(db.scalars(select(SupplierOrderLine.execution_id).where(
+            SupplierOrderLine.execution_id.in_([execution.id for execution in live]),
+            SupplierOrderLine.status == "delivered"))) if live else set()
+        if not live or any(execution.id not in delivered for execution in live):
+            continue
+        finish_wave(db, user, wave, "Все заказы волны доставлены клиентам")
+        finished.append(wave.id)
+        plan = db.get(Wave, wave.plan_id) if wave.plan_id else None
+        if plan and not plan.archived and plan.close_date < date.today() and not db.scalar(
+                select(Wave.id).where(Wave.plan_id == plan.id, Wave.archived.is_(False)).limit(1)):
+            advisory(db, f"wave:{plan.id}")
+            finish_wave(db, user, lock(db, Wave, plan.id), "Приём заказов закрыт, все заказы доставлены клиентам")
+            finished.append(plan.id)
+    return finished
+

@@ -6,7 +6,13 @@ from sqlalchemy import select
 from app.commerce.recalculate import recalculate_funding
 from app.core.db import DB, utcnow
 from app.core.errors import error
-from app.core.security import Actor, check_request, has_request_permission, require_permission
+from app.core.security import (
+    Actor,
+    check_request,
+    has_request_permission,
+    require_permission,
+    users_with_permission,
+)
 from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
 from app.crm.common import party_ids, party_root
 from app.crm.models import Currency
@@ -205,6 +211,12 @@ def declare_payment(request_id: str, data: PaymentIn, db: DB, user: Actor):
         db.add(obj)
         db.flush()
         audit(db, user, "payment", obj.id, "declare", after=serialize(obj))
+        # The payment waits in «Согласования» for those who confirm receipts.
+        for target in users_with_permission(db, "payments.confirm"):
+            if target.id != user.id and has_request_permission(db, target, request_id, "payments.confirm"):
+                notify(db, target.id, f"payment-declared:{obj.id}",
+                       f"Подтвердите оплату {data.amount} {data.currency} по заявке №{req.number}"[:250],
+                       "payment", obj.id)
         return {**payment_view(db, user, obj), "possible_duplicate_ids": [row.id for row in candidates]}
 
     return idem(

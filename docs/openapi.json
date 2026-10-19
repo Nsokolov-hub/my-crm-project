@@ -8720,6 +8720,59 @@
         }
       }
     },
+    "/api/v1/waves/{wave_id}/complete": {
+      "post": {
+        "tags": [
+          "Согласования и поставки"
+        ],
+        "summary": "Complete Wave",
+        "description": "«Поставка выполнена»: the leader closes the delivery; the wave and, for a plan, its working waves\nare completed and go to the archive.",
+        "operationId": "complete_wave_api_v1_waves__wave_id__complete_post",
+        "parameters": [
+          {
+            "name": "wave_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Wave Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaveCompleteIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/waves/{wave_id}/allocations": {
       "post": {
         "tags": [
@@ -9058,6 +9111,7 @@
           "Реестры"
         ],
         "summary": "Payment Registry",
+        "description": "Payments of readable requests; `status=declared` lists those waiting for confirmation.",
         "operationId": "payment_registry_api_v1_payments_get",
         "parameters": [
           {
@@ -9081,6 +9135,22 @@
               "minimum": 1,
               "default": 50,
               "title": "Page Size"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
             }
           }
         ],
@@ -9828,6 +9898,7 @@
           "Общение и файлы"
         ],
         "summary": "Notifications",
+        "description": "Notices of the user. `unread` counts only «Рабочие»: system notices do not ring the bell.",
         "operationId": "notifications_api_v1_notifications_get",
         "parameters": [
           {
@@ -9865,6 +9936,26 @@
               "default": 25,
               "title": "Page Size"
             }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "work",
+                    "system"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
           }
         ],
         "responses": {
@@ -9876,6 +9967,52 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Notifications Api V1 Notifications Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/read-all": {
+      "post": {
+        "tags": [
+          "Общение и файлы"
+        ],
+        "summary": "Read All Notifications",
+        "description": "Marks every unread notice of the user (of one category, if given) as read.",
+        "operationId": "read_all_notifications_api_v1_notifications_read_all_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadAllIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Read All Notifications Api V1 Notifications Read All Post"
                 }
               }
             }
@@ -11400,6 +11537,16 @@
               "type": "string",
               "title": "Order Id"
             }
+          },
+          {
+            "name": "without_logistics",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Without Logistics"
+            }
           }
         ],
         "responses": {
@@ -11432,6 +11579,7 @@
           "Платёжный календарь и заказы поставщикам"
         ],
         "summary": "Order Po Pdf",
+        "description": "The PO to send; `without_logistics` leaves the freight out for an order paid in a consolidation.",
         "operationId": "order_po_pdf_api_v1_supplier_orders__order_id__po_pdf_get",
         "parameters": [
           {
@@ -11441,6 +11589,16 @@
             "schema": {
               "type": "string",
               "title": "Order Id"
+            }
+          },
+          {
+            "name": "without_logistics",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Without Logistics"
             }
           }
         ],
@@ -11860,7 +12018,7 @@
           "Платёжный календарь и заказы поставщикам"
         ],
         "summary": "Request Responses",
-        "description": "Which suppliers were asked for each position of the request and what each of them answered.",
+        "description": "Which suppliers were asked for each position of the request and what each of them answered.\n\nA priced cell carries the quoted price, its value in rubles by the published profile and the delivery\nterm, so the suppliers can be compared before the proposal. Suppliers with more prices come first.",
         "operationId": "request_responses_api_v1_requests__request_id__supplier_responses_get",
         "parameters": [
           {
@@ -15484,6 +15642,11 @@
               }
             ],
             "title": "Logistics Amount"
+          },
+          "logistics_separately": {
+            "type": "boolean",
+            "title": "Logistics Separately",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -16844,6 +17007,28 @@
           "source"
         ],
         "title": "Rate"
+      },
+      "ReadAllIn": {
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "work",
+                  "system"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ReadAllIn"
       },
       "ReadInput": {
         "properties": {
@@ -18226,6 +18411,35 @@
           "reason"
         ],
         "title": "WaveBudgetIn"
+      },
+      "WaveCompleteIn": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 3,
+            "title": "Reason",
+            "default": "Поставка выполнена"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "version"
+        ],
+        "title": "WaveCompleteIn"
       },
       "WaveForecastIn": {
         "properties": {

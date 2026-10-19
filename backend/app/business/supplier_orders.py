@@ -18,6 +18,7 @@ from app.commerce.files import pdf_decimal, workbook
 from app.commerce.models import Calculation, CommercialDocument, Execution, Wave
 from app.commerce.procurement import product_view, supplier
 from app.commerce.schemas import Command, Input, Nonnegative, VersionCommand
+from app.commerce.waves import finish_delivered_waves
 from app.core.db import DB, utcnow
 from app.core.errors import error
 from app.core.security import (
@@ -140,6 +141,11 @@ STATUS_LABELS = {
 }
 
 
+def statuses(value: str | None) -> set[str]:
+    """«waiting,delivery» → {"waiting", "delivery"}: several statuses can be shown at once."""
+    return {part.strip() for part in (value or "").split(",") if part.strip()}
+
+
 def require_ordered_access(db, user):
     """Ordering is procurement; a logistician only moves ordered positions along the delivery."""
     if not (can(db, user, "procurement.write") or can(db, user, "supplier_orders.delivery")):
@@ -170,6 +176,7 @@ def order_positions(
                 items.append(item)
         return {"items": items, "total": len(items), "page": 1, "page_size": len(items)}
     prices = can(db, user, "procurement.write") or can(db, user, "finance.purchase.read")
+    wanted = statuses(status)
     query = (
         select(SupplierOrderLine, SupplierOrder.number, CRMRequest.number, Counterparty.name)
         .join(SupplierOrder, SupplierOrder.id == SupplierOrderLine.order_id)
@@ -194,7 +201,7 @@ def order_positions(
         }
         if not prices:
             item.pop("unit_price", None)
-        if (not supplier_id or item["supplier_id"] == supplier_id) and (not status or line.status == status):
+        if (not supplier_id or item["supplier_id"] == supplier_id) and (not wanted or line.status in wanted):
             items.append(item)
     return {"items": items, "total": len(items), "page": 1, "page_size": len(items)}
 
@@ -311,6 +318,8 @@ class OrderIn(Command):
     prices: dict[str, str] = Field(default_factory=dict)
     # None: the logistics the order carries is taken from the wave, the calculation or the supplier card.
     logistics_amount: Nonnegative | None = None
+    # Small orders are consolidated and their logistics paid once later: the order and its PO carry none.
+    logistics_separately: bool = False
 
 
 @router.post("/supplier-orders")
@@ -343,11 +352,15 @@ def order_create(data: OrderIn, db: DB, user: Actor):
         party = supplier(db, rows[0]["supplier_id"])
         hint = logistics_hint(db, executions, rows[0]["currency"], party.id)
         logistics_amount = hint["amount"] if data.logistics_amount is None else str(data.logistics_amount)
+        if data.logistics_separately:
+            logistics_amount = "0"
         logistics = {
             "amount": logistics_amount,
             "currency": rows[0]["currency"],
-            "basis": hint["basis"] if dec(logistics_amount) == dec(hint["amount"]) else "Указано вручную",
+            "basis": "Оплачивается отдельно" if data.logistics_separately
+            else hint["basis"] if dec(logistics_amount) == dec(hint["amount"]) else "Указано вручную",
             "wave_ids": hint["wave_ids"] if dec(logistics_amount) > 0 else [],
+            "separately": data.logistics_separately,
         }
         from app.crm.models import NumberCounter
 
@@ -417,6 +430,7 @@ def order_view(order, lines=None) -> dict:
         "supplier_name": order.snapshot["supplier"]["name"],
         "logistics_amount": str(logistics.get("amount") or "0"),
         "logistics_basis": logistics.get("basis") or "",
+        "logistics_separately": bool(logistics.get("separately")),
     }
     if lines is not None:
         value["status"] = order_state(lines)
@@ -426,6 +440,7 @@ def order_view(order, lines=None) -> dict:
 @router.get("/supplier-orders")
 def order_list(db: DB, user: Actor, supplier_id: str | None = None, status: str | None = None):
     require_permission(db, user, "procurement.write")
+    wanted = statuses(status)
     rows = db.scalars(select(SupplierOrder).order_by(SupplierOrder.created_at.desc())).all()
     items = []
     for order in rows:
@@ -438,7 +453,7 @@ def order_list(db: DB, user: Actor, supplier_id: str | None = None, status: str 
             continue
         lines = db.scalars(select(SupplierOrderLine).where(SupplierOrderLine.order_id == order.id)).all()
         item = order_view(order, lines)
-        if status and item["status"] != status:
+        if wanted and item["status"] not in wanted:
             continue
         items.append(item)
     return {"items": items, "total": len(items), "page": 1, "page_size": len(items)}
@@ -478,6 +493,7 @@ def order_line_status(line_id: str, data: OrderLineStatus, db: DB, user: Actor):
     def operation():
         row = locked_lines(db, user, [LineRef(id=line_id, version=data.version)])[0]
         set_line_status(db, user, row, data.status)
+        finish_delivered_waves(db, user, [row.execution_id])
         return serialize(row)
 
     return idem(
@@ -505,7 +521,9 @@ def order_lines_status(data: OrderLinesStatusIn, db: DB, user: Actor):
         rows = locked_lines(db, user, data.lines)
         for row in rows:
             set_line_status(db, user, row, data.status)
-        return {"items": [serialize(row) for row in rows], "count": len(rows)}
+        # Every order of a wave delivered to its client: the wave goes to the archive as delivered.
+        finished = finish_delivered_waves(db, user, [row.execution_id for row in rows])
+        return {"items": [serialize(row) for row in rows], "count": len(rows), "finished_waves": finished}
 
     return idem(
         db, user, data.idempotency_key, "order-lines:status", data.model_dump(mode="json"), operation
@@ -588,22 +606,24 @@ def attachment(name: str) -> dict:
 
 
 @router.get("/supplier-orders/{order_id}/po.xlsx")
-def order_po(order_id: str, db: DB, user: Actor):
+def order_po(order_id: str, db: DB, user: Actor, without_logistics: bool = False):
     order = readable_order(db, user, order_id)
     from .purchase_order import purchase_order
 
     return Response(
-        purchase_order(order),
+        purchase_order(order, with_logistics=not without_logistics),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=attachment(f"PO_{order.number}.xlsx"),
     )
 
 
 @router.get("/supplier-orders/{order_id}/po.pdf")
-def order_po_pdf(order_id: str, db: DB, user: Actor):
+def order_po_pdf(order_id: str, db: DB, user: Actor, without_logistics: bool = False):
+    """The PO to send; `without_logistics` leaves the freight out for an order paid in a consolidation."""
     order = readable_order(db, user, order_id)
     from .purchase_order import purchase_order_pdf
 
     return Response(
-        purchase_order_pdf(order), media_type="application/pdf", headers=attachment(f"PO_{order.number}.pdf")
+        purchase_order_pdf(order, with_logistics=not without_logistics), media_type="application/pdf",
+        headers=attachment(f"PO_{order.number}.pdf"),
     )

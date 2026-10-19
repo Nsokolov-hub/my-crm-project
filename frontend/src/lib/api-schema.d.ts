@@ -2099,6 +2099,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/waves/{wave_id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete Wave
+         * @description «Поставка выполнена»: the leader closes the delivery; the wave and, for a plan, its working waves
+         *     are completed and go to the archive.
+         */
+        post: operations["complete_wave_api_v1_waves__wave_id__complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/waves/{wave_id}/allocations": {
         parameters: {
             query?: never;
@@ -2208,7 +2229,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Payment Registry */
+        /**
+         * Payment Registry
+         * @description Payments of readable requests; `status=declared` lists those waiting for confirmation.
+         */
         get: operations["payment_registry_api_v1_payments_get"];
         put?: never;
         post?: never;
@@ -2381,10 +2405,33 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Notifications */
+        /**
+         * Notifications
+         * @description Notices of the user. `unread` counts only «Рабочие»: system notices do not ring the bell.
+         */
         get: operations["notifications_api_v1_notifications_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/read-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read All Notifications
+         * @description Marks every unread notice of the user (of one category, if given) as read.
+         */
+        post: operations["read_all_notifications_api_v1_notifications_read_all_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2801,7 +2848,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Order Po Pdf */
+        /**
+         * Order Po Pdf
+         * @description The PO to send; `without_logistics` leaves the freight out for an order paid in a consolidation.
+         */
         get: operations["order_po_pdf_api_v1_supplier_orders__order_id__po_pdf_get"];
         put?: never;
         post?: never;
@@ -2949,6 +2999,9 @@ export interface paths {
         /**
          * Request Responses
          * @description Which suppliers were asked for each position of the request and what each of them answered.
+         *
+         *     A priced cell carries the quoted price, its value in rubles by the published profile and the delivery
+         *     term, so the suppliers can be compared before the proposal. Suppliers with more prices come first.
          */
         get: operations["request_responses_api_v1_requests__request_id__supplier_responses_get"];
         put?: never;
@@ -4097,6 +4150,11 @@ export interface components {
             };
             /** Logistics Amount */
             logistics_amount?: number | string | null;
+            /**
+             * Logistics Separately
+             * @default false
+             */
+            logistics_separately: boolean;
         };
         /** OrderLineStatus */
         OrderLineStatus: {
@@ -4599,6 +4657,11 @@ export interface components {
              */
             reason: string;
         };
+        /** ReadAllIn */
+        ReadAllIn: {
+            /** Category */
+            category?: ("work" | "system") | null;
+        };
         /** ReadInput */
         ReadInput: {
             /** Through */
@@ -5027,6 +5090,18 @@ export interface components {
             /** Rates */
             rates?: components["schemas"]["Rate"][];
             /** Reason */
+            reason: string;
+        };
+        /** WaveCompleteIn */
+        WaveCompleteIn: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Version */
+            version: number;
+            /**
+             * Reason
+             * @default Поставка выполнена
+             */
             reason: string;
         };
         /** WaveForecastIn */
@@ -13445,6 +13520,60 @@ export interface operations {
             };
         };
     };
+    complete_wave_api_v1_waves__wave_id__complete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wave_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WaveCompleteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     allocate_wave_api_v1_waves__wave_id__allocations_post: {
         parameters: {
             query?: never;
@@ -13772,6 +13901,7 @@ export interface operations {
             query?: {
                 page?: number;
                 page_size?: number;
+                status?: string | null;
             };
             header?: never;
             path?: never;
@@ -14475,12 +14605,67 @@ export interface operations {
                 read?: boolean | null;
                 page?: number;
                 page_size?: number;
+                category?: ("work" | "system") | null;
             };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    read_all_notifications_api_v1_notifications_read_all_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReadAllIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -15982,7 +16167,9 @@ export interface operations {
     };
     order_po_api_v1_supplier_orders__order_id__po_xlsx_get: {
         parameters: {
-            query?: never;
+            query?: {
+                without_logistics?: boolean;
+            };
             header?: never;
             path: {
                 order_id: string;
@@ -16032,7 +16219,9 @@ export interface operations {
     };
     order_po_pdf_api_v1_supplier_orders__order_id__po_pdf_get: {
         parameters: {
-            query?: never;
+            query?: {
+                without_logistics?: boolean;
+            };
             header?: never;
             path: {
                 order_id: string;

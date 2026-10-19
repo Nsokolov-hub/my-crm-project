@@ -311,7 +311,7 @@ def send_message(entity_id: str, body: MessageInput, user: User = Depends(curren
             db.add(MessageFile(message_id=row.id, file_id=file_id))
         for target in members:
             if target.user_id != user.id:
-                db.add(OutboxEvent(event_key=f'message:{row.id}:{target.user_id}', kind='notification',
+                db.add(OutboxEvent(event_key=f"{'mention' if target.user_id in body.mention_ids else 'message'}:{row.id}:{target.user_id}", kind='notification',
                                    payload={'user_id': target.user_id,
                                             'title': 'Вас упомянули в обсуждении' if target.user_id in body.mention_ids else 'Новое сообщение в чате',
                                             'entity_type': 'chat', 'entity_id': chat.id}))
@@ -361,9 +361,23 @@ def read_chat(entity_id: str, body: ReadInput, user: User = Depends(current_user
     return chat_view(db, chat, member)
 
 
+# Notices that only tell what happened (a mail went out, a file was checked, a colleague's call, a chat
+# message with its own counter) are «Системные»; everything that asks for work is «Рабочие».
+SYSTEM_NOTICES = ("supplier-mail-sent", "file-verdict", "message", "call", "wave-working", "wave-change",
+                  "wave-completed", "absence", "job-failed")
+
+
+def system_notice():
+    return or_(*(Notification.event_key.like(f"{kind}:%") for kind in SYSTEM_NOTICES))
+
+
+def notice_category(event_key: str) -> str:
+    return "system" if event_key.split(":", 1)[0] in SYSTEM_NOTICES else "work"
+
+
 def notification_scope(db, user):
     from app.business.models import CalendarEntry, SupplierOrderLine, WorkflowReview
-    from app.commerce.models import Execution
+    from app.commerce.models import Execution, Payment
     from app.crm.models import Counterparty, Request, Task
 
     visible_requests = select(Request.id).where(request_predicate(db, user))
@@ -378,22 +392,49 @@ def notification_scope(db, user):
         or_(WorkflowReview.request_id.is_(None), WorkflowReview.request_id.in_(visible_requests)),
         or_(WorkflowReview.kind != 'task', WorkflowReview.entity_id.in_(visible_tasks)),
         or_(WorkflowReview.kind != 'calendar', WorkflowReview.entity_id.in_(visible_calendar)))
+    visible_payments = select(Payment.id).where(Payment.request_id.in_(visible_requests))
     return [or_(Notification.entity_type != kind, Notification.entity_id.in_(ids)) for kind, ids in (
         ('request', visible_requests), ('task', visible_tasks), ('counterparty', visible_clients),
-        ('calendar_entry', visible_calendar), ('workflow_review', visible_reviews))]
+        ('calendar_entry', visible_calendar), ('workflow_review', visible_reviews), ('payment', visible_payments))]
 
 
 @router.get('/notifications')
 def notifications(read: bool | None = None, page: int = 1, page_size: int = 25,
+                  category: Literal['work', 'system'] | None = None,
                   user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict:
+    """Notices of the user. `unread` counts only «Рабочие»: system notices do not ring the bell."""
     guards = notification_scope(db, user)
     statement = select(Notification).where(Notification.user_id == user.id, *guards)
     if read is not None:
         statement = statement.where(Notification.read.is_(read))
+    if category:
+        statement = statement.where(system_notice() if category == 'system' else ~system_notice())
     result = paginate(db, statement.order_by(Notification.created_at.desc(), Notification.id), page, page_size)
-    result['unread'] = db.scalar(select(func.count()).select_from(Notification).where(
-        Notification.user_id == user.id, Notification.read.is_(False), *guards)) or 0
+    for item in result['items']:
+        item['category'] = notice_category(item['event_key'])
+    unread = select(func.count()).select_from(Notification).where(
+        Notification.user_id == user.id, Notification.read.is_(False), *guards)
+    result['unread_system'] = db.scalar(unread.where(system_notice())) or 0
+    result['unread'] = result['unread_work'] = db.scalar(unread.where(~system_notice())) or 0
     return result
+
+
+class ReadAllIn(Input):
+    category: Literal['work', 'system'] | None = None
+
+
+@router.post('/notifications/read-all')
+def read_all_notifications(body: ReadAllIn, user: User = Depends(current_user),
+                           db: Session = Depends(get_db, scope="function")) -> dict:
+    """Marks every unread notice of the user (of one category, if given) as read."""
+    statement = select(Notification).where(Notification.user_id == user.id, Notification.read.is_(False))
+    if body.category:
+        statement = statement.where(system_notice() if body.category == 'system' else ~system_notice())
+    rows = list(db.scalars(statement.with_for_update()))
+    for row in rows:
+        row.read = True
+    publish(db, 'notification', [user.id])
+    return {'count': len(rows)}
 
 
 @router.post('/notifications/{entity_id}/read')

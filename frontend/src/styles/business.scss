@@ -177,6 +177,65 @@
   min-width: 240px;
 }
 
+.supplier-responses .supplier-price {
+  margin-top: 4px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.order-price-table input {
+  width: 120px;
+}
+
+.order-price-table td,
+.order-price-table th {
+  white-space: nowrap;
+}
+
+.order-price-table .order-price-name {
+  white-space: normal;
+  min-width: 200px;
+}
+
+.status-picker {
+  position: relative;
+}
+
+.business-filters .filter-field {
+  display: grid;
+  gap: 8px;
+}
+
+.status-picker summary {
+  list-style: none;
+  cursor: pointer;
+  min-height: 40px;
+  padding: 10px 12px;
+  background: white;
+  border: 1px solid #dedfe8;
+  border-radius: 8px;
+}
+
+.status-picker[open] .status-picker-menu {
+  position: absolute;
+  z-index: 20;
+  display: grid;
+  gap: 6px;
+  min-width: 100%;
+  margin-top: 4px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #e3e4ec;
+  border-radius: 10px;
+  box-shadow: 0 10px 24px rgb(23 26 46 / 10%);
+}
+
+.status-picker-menu label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .supplier-responses-empty {
   padding: 0 23px 20px;
 }

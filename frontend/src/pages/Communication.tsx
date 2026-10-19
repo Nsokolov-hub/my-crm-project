@@ -676,13 +676,36 @@ export function Chats({
     </>
   );
 }
+const NOTICE_CATEGORIES = [
+  {
+    key: 'work',
+    title: 'Рабочие',
+    description: 'Задачи, квоты, решения и оплаты — то, что ждёт вашего действия.',
+  },
+  {
+    key: 'system',
+    title: 'Системные',
+    description:
+      'Отправленные письма, проверенные файлы, сообщения чатов и события волн — для сведения. Колокольчик их не считает.',
+  },
+] as const;
 export function Notifications() {
   const navigate = useNavigate();
   const [unread, setUnread] = useState(true);
-  const list = useApi<Page>(`/notifications${unread ? '?read=false' : ''}`);
+  const [category, setCategory] = useState<'work' | 'system'>('work');
+  const query = new URLSearchParams({ category });
+  if (unread) query.set('read', 'false');
+  const list = useApi<Page & { unread_work?: number; unread_system?: number }>(
+    `/notifications?${query}`,
+  );
   const command = useCommand();
+  const readAll = useCommand();
+  function changed() {
+    list.refresh();
+    window.dispatchEvent(new Event('crm:notifications-read'));
+  }
   function target(row: Entity) {
-    if (row.entity_type === 'workflow_review') return '/approvals';
+    if (row.entity_type === 'workflow_review' || row.entity_type === 'payment') return '/approvals';
     if (row.entity_type === 'calendar_entry') return '/payment-calendar';
     if (row.entity_type === 'employee_absence') return '/tasks';
     return row.entity_type === 'request'
@@ -699,18 +722,55 @@ export function Notifications() {
     <>
       <PageHeading
         title="Уведомления"
-        description="Назначения, решения и изменения связанных объектов."
+        description="Рабочие — то, что требует действия: задачи, квоты, решения, оплаты. Системные — для сведения."
       />
       <div className="tabs">
-        <button className={unread ? 'active' : ''} onClick={() => setUnread(true)}>
-          Непрочитанные
-        </button>
-        <button className={!unread ? 'active' : ''} onClick={() => setUnread(false)}>
-          Все уведомления
-        </button>
+        {NOTICE_CATEGORIES.map((row) => {
+          const count = row.key === 'work' ? list.data?.unread_work : list.data?.unread_system;
+          return (
+            <button
+              key={row.key}
+              className={category === row.key ? 'active' : ''}
+              onClick={() => setCategory(row.key)}
+            >
+              {row.title}
+              {Boolean(count) && <span>{count}</span>}
+            </button>
+          );
+        })}
       </div>
-      <ErrorBox error={command.error || list.error} />
-      <Section title={unread ? 'Требуют внимания' : 'История уведомлений'}>
+      <div className="tab-actions">
+        <label className="calculation-internal-toggle">
+          <input
+            type="checkbox"
+            checked={unread}
+            onChange={(event) => setUnread(event.target.checked)}
+          />{' '}
+          Только непрочитанные
+        </label>
+        <Button
+          variant="secondary"
+          busy={readAll.busy}
+          disabled={!(category === 'work' ? list.data?.unread_work : list.data?.unread_system)}
+          onClick={() =>
+            void readAll
+              .run('/notifications/read-all', { category })
+              .then(changed)
+              .catch(() => {})
+          }
+        >
+          <Check size={16} />
+          Прочитать все
+        </Button>
+      </div>
+      <ErrorBox error={command.error || readAll.error || list.error} />
+      <Section
+        title={
+          (unread ? 'Непрочитанные · ' : '') +
+          NOTICE_CATEGORIES.find((row) => row.key === category)!.title.toLowerCase()
+        }
+        description={NOTICE_CATEGORIES.find((row) => row.key === category)!.description}
+      >
         {list.loading ? (
           <Loading />
         ) : list.data?.items.length ? (
@@ -727,7 +787,11 @@ export function Notifications() {
                         ? 'Заявка'
                         : row.entity_type === 'chat'
                           ? 'Сообщение'
-                          : 'Рабочее событие'}
+                          : row.entity_type === 'payment'
+                            ? 'Оплата'
+                            : row.category === 'system'
+                              ? 'Системное событие'
+                              : 'Рабочее событие'}
                     </span>
                     {!row.read && <Badge value="Новое" tone="purple" />}
                   </div>
@@ -741,10 +805,7 @@ export function Notifications() {
                     onClick={() =>
                       void command
                         .run(`/notifications/${row.id}/read`, {})
-                        .then(() => {
-                          list.refresh();
-                          window.dispatchEvent(new Event('crm:notifications-read'));
-                        })
+                        .then(changed)
                         .catch(() => {})
                     }
                   >

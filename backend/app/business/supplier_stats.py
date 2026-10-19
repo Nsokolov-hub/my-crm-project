@@ -22,9 +22,24 @@ from app.commerce.procurement import rfq_table
 from app.core.config import settings
 from app.core.db import DB, as_utc
 from app.core.errors import DomainError
-from app.core.security import Actor, check_request, request_predicate, require_permission
+from app.core.security import (
+    Actor,
+    check_request,
+    has_request_permission,
+    request_predicate,
+    require_permission,
+)
 from app.core.service import plain, prefetch
-from app.crm.models import Counterparty, Nomenclature, QuoteItem, QuoteSheet, Request, RequestItem
+from app.crm.models import (
+    Counterparty,
+    Currency,
+    Nomenclature,
+    Packing,
+    QuoteItem,
+    QuoteSheet,
+    Request,
+    RequestItem,
+)
 
 from .models import SupplierMail
 
@@ -203,7 +218,7 @@ def supplier_report(db: DB, user: Actor, date_from: date | None = None, date_to:
         "items": rows, "total": len(rows),
         "period": {"from": start, "to": finish - timedelta(microseconds=1), "timezone": settings.company_timezone},
         "basis": "Письма с запросом цен, отправленные за период. Цена есть — поставщик дал квоту на позицию. "
-                 "Без цены — поставщик ответил по заявке (квотой на другие позиции или ответом без цен), "
+                 "Отказ — поставщик ответил по заявке (квотой на другие позиции или ответом без цен), "
                  "а на позицию цены нет. Ждём — ответа по заявке ещё нет. Время ответа — от первого письма по "
                  "заявке до первой квоты после него или отмеченного ответа.",
     })
@@ -249,11 +264,41 @@ def supplier_detail(supplier_id: str, db: DB, user: Actor, date_from: date | Non
                   "brands": brand_rows, "positions": positions})
 
 
+def latest_quotes(db, request_id: str) -> dict[tuple[str, str], QuoteItem]:
+    """The latest live quote of each supplier for each position of the request."""
+    rows = db.scalars(select(QuoteItem).join(QuoteSheet, QuoteSheet.id == QuoteItem.quote_id).where(
+        QuoteSheet.request_id == request_id, QuoteSheet.archived.is_(False), QuoteItem.archived.is_(False))
+        .order_by(QuoteItem.quoted_at, QuoteItem.created_at, QuoteItem.id))
+    return {(row.supplier_id, row.source_request_item_id): row for row in rows}
+
+
+def quote_cell(db, quote: QuoteItem, show_price: bool, rates: dict) -> dict[str, Any]:
+    """Price, its ruble value by the profile rates and the delivery term of a supplier's quote."""
+    from app.commerce.rates import in_rubles
+
+    cell: dict[str, Any] = {"delivery_days": quote.delivery_days,
+                            "packing_name": db.get(Packing, quote.packing_id).display_name}
+    if show_price:
+        currency = db.get(Currency, quote.currency_id).code
+        cell.update(unit_price=str(quote.unit_price), currency=currency,
+                    unit_price_rub=in_rubles(quote.unit_price, currency, rates))
+    return cell
+
+
 @router.get("/requests/{request_id}/supplier-responses")
 def request_responses(request_id: str, db: DB, user: Actor):
-    """Which suppliers were asked for each position of the request and what each of them answered."""
+    """Which suppliers were asked for each position of the request and what each of them answered.
+
+    A priced cell carries the quoted price, its value in rubles by the published profile and the delivery
+    term, so the suppliers can be compared before the proposal. Suppliers with more prices come first.
+    """
+    from app.commerce.rates import profile_rates
+
     check_request(db, user, request_id)
     require_permission(db, user, "quotes.write")
+    show_price = has_request_permission(db, user, request_id, "finance.purchase.read")
+    rates = profile_rates(db)
+    quotes = latest_quotes(db, request_id)
     mails = list(db.scalars(select(SupplierMail).where(SupplierMail.request_id == request_id)))
     responses = Responses(db, mails)
     suppliers = prefetch(db, Counterparty, (mail.supplier_id for mail in mails))
@@ -282,11 +327,19 @@ def request_responses(request_id: str, db: DB, user: Actor):
         for column in columns:
             pair = responses.pairs.get((column["supplier_id"], item.id))
             if pair:
+                status = responses.status(pair)
                 cells[column["supplier_id"]] = {
-                    "status": responses.status(pair), "requested_at": pair.requested_at,
+                    "status": status, "requested_at": pair.requested_at,
                     "answered_at": pair.priced_at, "hours": hours(pair.requested_at, pair.priced_at)}
+                quote = quotes.get((column["supplier_id"], item.id))
+                if status == "priced" and quote:
+                    cells[column["supplier_id"]].update(quote_cell(db, quote, show_price, rates["rates"]))
+                column["priced"] = column.get("priced", 0) + (status == "priced")
+                column["declined"] = column.get("declined", 0) + (status == "declined")
         maker_id = makers.get(item.id)
         rows.append({"id": item.id, "number": number,
                      "description": nomenclature.name if nomenclature else item.description,
                      "manufacturer_name": entries[maker_id].name if maker_id else None, "cells": cells})
-    return plain({"suppliers": columns, "items": rows})
+    # Suppliers who priced more positions first; then those who answered; then by the time they were asked.
+    columns.sort(key=lambda column: (-column.get("priced", 0), column["answered_at"] is None, column["asked_at"]))
+    return plain({"suppliers": columns, "items": rows, "rates_profile": rates["profile"] if show_price else None})

@@ -204,8 +204,15 @@ def request_quote_items(
     show_purchase = has_request_permission(db, user, entity_id, 'finance.purchase.read')
     result['items'] = quote_item_views(db, rows, show_purchase)
     calculated = calculated_quote_items(db, entity_id)
+    from app.commerce.rates import in_rubles, profile_rates
+
+    # Prices of different suppliers compared in rubles, by the rates of the published profile.
+    rates = profile_rates(db) if show_purchase else {"rates": {}, "profile": None}
     for item in result['items']:
         item['last_calculation'] = calculated.get(item['id'])
+        if show_purchase:
+            item['unit_price_rub'] = in_rubles(item['unit_price'], item['currency_code'], rates['rates'])
+    result['rates_profile'] = rates['profile']
     return result
 
 
@@ -379,9 +386,11 @@ def record_quote_sheet(db: Session, user: User, request_id: str, body: QuoteShee
             parent.version += 1
             audit(db, user, 'request', parent.id, 'quote_given', before={'commercial_stage': before_stage}, after={'commercial_stage': parent.commercial_stage})
         batch_id = db.info.get("quote_import_batch")
-        notify(db, parent.owner_id, f"quote-import:{batch_id}" if batch_id else f"quote-sheet:{sheet.id}",
-               (f"Загружены квоты по заявке №{parent.number}" if batch_id else f"По заявке №{parent.number} добавлена квота {sheet.number}"),
-               "request", parent.id)
+        # The owner hears of quotes that someone else brought, not of the ones they loaded themselves.
+        if parent.owner_id != user.id:
+            notify(db, parent.owner_id, f"quote-import:{batch_id}" if batch_id else f"quote-sheet:{sheet.id}",
+                   (f"Загружены квоты по заявке №{parent.number}" if batch_id else f"По заявке №{parent.number} добавлена квота {sheet.number}"),
+                   "request", parent.id)
         result = quote_sheet_view(db, sheet)
         audit(db, user, 'quote_sheet', sheet.id, 'created', after=result)
         return result

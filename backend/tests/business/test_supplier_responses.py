@@ -1,11 +1,14 @@
 """Who was asked for prices and who answered, down to request positions and brands."""
 
-from datetime import timedelta
+from datetime import date, timedelta
 from uuid import uuid4
 
 from app.business.models import SupplierMail
+from app.commerce.itemized import itemized_profile
+from app.commerce.models import CalculationProfile
 from app.core.config import settings
 from app.core.db import utcnow
+from app.crm.models import Currency
 from app.crm.table_imports import QUOTE_COLUMNS
 from tests.support.business import cmd, confirm, preview, quote_file, request
 from tests.support.crm import login, post
@@ -113,3 +116,36 @@ def test_supplier_responses_need_the_request_and_the_quote_right(crm, monkeypatc
     login(crm, "manager@example.com")
     assert get(crm, f"/requests/{req['id']}/supplier-responses", status=404)["code"] == "NOT_FOUND"
     assert get(crm, "/analytics/suppliers", status=403)["code"] == "FORBIDDEN"
+
+
+def test_priced_cells_show_rubles_and_term_and_suppliers_with_more_prices_come_first(crm, monkeypatch):
+    """Business remark of 19 October 2026: compare suppliers in rubles, with the delivery term."""
+    req, items, alpha, beta, mails = setup(crm, monkeypatch)
+    with crm["sessions"].begin() as db:
+        db.add(Currency(name="Доллар США", code="USD"))
+        profile = itemized_profile()
+        profile["exchange_rates"] = [{"currency": "USD", "management_per_unit": "90", "quoted_units": "1",
+                                      "date": "2026-10-01", "source": "ЦБ РФ", "reason": "Тест"}]
+        db.add(CalculationProfile(name="Профиль 2026", status="published", effective_from=date(2026, 1, 1),
+                                  definition=profile, reason="Тест", author_id=crm["admin"].id))
+    quote(crm, req, alpha, [3])
+    batch = preview(crm, req["id"], list(QUOTE_COLUMNS.values()), [
+        quote_file(beta["internal_code"], {"source_row": str(number), "article": f"B-{number}",
+                                          "currency": "usd", "unit_price": "10", "delivery_days": "21"})
+        for number in (1, 2)], "quotes")
+    confirm(crm, req["id"], batch["id"])
+
+    matrix = get(crm, f"/requests/{req['id']}/supplier-responses")
+    assert [(row["name"], row["priced"]) for row in matrix["suppliers"]] == [("Beta Labs", 2), ("Alpha Chem", 1)]
+    assert matrix["rates_profile"] == "Профиль 2026"
+    cell = matrix["items"][0]["cells"][beta["id"]]
+    assert (cell["status"], cell["currency"], cell["unit_price_rub"], cell["delivery_days"]) == (
+        "priced", "USD", "900.00", 21)
+    rubles = matrix["items"][2]["cells"][alpha["id"]]
+    assert (rubles["currency"], rubles["unit_price_rub"], rubles["delivery_days"]) == ("RUB", "100.25", 14)
+    assert matrix["items"][2]["cells"][beta["id"]]["status"] == "declined"
+    quoted = get(crm, f"/requests/{req['id']}/quote-items?all=true")
+    assert {row["currency_code"]: row["unit_price_rub"] for row in quoted["items"]} == {"USD": "900.00",
+                                                                                        "RUB": "100.25"}
+    assert quoted["rates_profile"] == "Профиль 2026"
+

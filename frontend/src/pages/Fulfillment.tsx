@@ -454,6 +454,7 @@ export function Waves() {
   const [selected, setSelected] = useState<Entity>();
   const [editing, setEditing] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [completing, setCompleting] = useState(false);
   const [allocation, setAllocation] = useState<Entity>();
   const [allocationAction, setAllocationAction] = useState<'event' | 'transfer'>();
   const [openError, setOpenError] = useState<unknown>();
@@ -464,6 +465,7 @@ export function Waves() {
     setAddingForecast(false);
     setEditing(false);
     setArchiving(false);
+    setCompleting(false);
     setAllocation(undefined);
     setAllocationAction(undefined);
     setRevision((v) => v + 1);
@@ -482,6 +484,16 @@ export function Waves() {
   }
   const plan = selected?.kind === 'plan';
   const writable = auth.can('waves.write') && !selected?.archived;
+  // A wave in work keeps its state until its orders move on or a leader moves it.
+  const leader = auth.can('approvals.decide');
+  const orderLines = (selected?.order_lines || {}) as Record<string, number>;
+  const orderLineLabels: [string, string][] = [
+    ['waiting', 'ожидаем'],
+    ['delivery', 'в пути'],
+    ['arrived_ru', 'прибыло в РФ'],
+    ['delivered', 'доставлено клиенту'],
+    ['cancelled', 'отменено'],
+  ];
   const forecasts = (selected?.forecasts || []) as Entity[];
   const working = (selected?.working_waves || []) as Entity[];
   return (
@@ -574,182 +586,226 @@ export function Waves() {
         />
       )}
       <ErrorBox error={openError} />
-      {selected && !editing && !archiving && !allocationAction && !addingForecast && (
-        <Modal title={`Волна ${selected.number}`} wide onClose={() => setSelected(undefined)}>
-          <div className="form-body">
-            {Boolean(selected.archived) && (
-              <p className="info-note">
-                Волна в архиве: её не предлагают в заявках и расчётах, изменить её нельзя. Верните
-                её из архива, если она снова нужна.
-              </p>
-            )}
-            <DetailPairs
-              values={{
-                Вид: waveKindLabel(selected),
-                ...(selected.plan_number ? { 'Плановая волна': selected.plan_number } : {}),
-                Поставщик: selected.supplier_name,
-                Маршрут: selected.route,
-                Статус: selected.status,
-                'Приём до': waveWeekLabel(selected, 'close'),
-                Отправка: waveWeekLabel(selected, 'departure'),
-                Прибытие: waveWeekLabel(selected, 'arrival'),
-              }}
-            />
-            <div className="inline-actions">
-              {writable && (
-                <Button variant="secondary" onClick={() => setEditing(true)}>
-                  {plan ? 'Изменить сроки' : 'Изменить сроки и состояние'}
-                </Button>
+      {selected &&
+        !editing &&
+        !archiving &&
+        !completing &&
+        !allocationAction &&
+        !addingForecast && (
+          <Modal title={`Волна ${selected.number}`} wide onClose={() => setSelected(undefined)}>
+            <div className="form-body">
+              {Boolean(selected.archived) && (
+                <p className="info-note">
+                  Волна в архиве: её не предлагают в заявках и расчётах, изменить её нельзя. Верните
+                  её из архива, если она снова нужна.
+                </p>
               )}
-              {writable &&
-                plan &&
-                auth.can('finance.purchase.read') &&
-                ['planned', 'assembling'].includes(String(selected.status)) && (
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setForecast(undefined);
-                      setAddingForecast(true);
-                    }}
-                  >
-                    Добавить плановый объём
+              <DetailPairs
+                values={{
+                  Вид: waveKindLabel(selected),
+                  ...(selected.plan_number ? { 'Плановая волна': selected.plan_number } : {}),
+                  Поставщик: selected.supplier_name,
+                  Маршрут: selected.route,
+                  Статус: selected.status,
+                  'Приём до': waveWeekLabel(selected, 'close'),
+                  Отправка: waveWeekLabel(selected, 'departure'),
+                  Прибытие: waveWeekLabel(selected, 'arrival'),
+                  'Заказы поставщику': Object.keys(orderLines).length
+                    ? orderLineLabels
+                        .filter(([key]) => orderLines[key])
+                        .map(([key, label]) => `${label}: ${orderLines[key]}`)
+                        .join(' · ')
+                    : 'Пока нет',
+                }}
+              />
+              <div className="inline-actions">
+                {writable && (
+                  <Button variant="secondary" onClick={() => setEditing(true)}>
+                    {plan || !leader ? 'Изменить сроки' : 'Изменить сроки и состояние'}
                   </Button>
                 )}
-              {auth.can('waves.write') && (
-                <Button variant="secondary" onClick={() => setArchiving(true)}>
-                  {selected.archived ? 'Вернуть из архива' : 'В архив'}
-                </Button>
+                {writable && leader && selected.status !== 'cancelled' && (
+                  <Button onClick={() => setCompleting(true)}>Поставка выполнена</Button>
+                )}
+                {writable &&
+                  plan &&
+                  auth.can('finance.purchase.read') &&
+                  ['planned', 'assembling'].includes(String(selected.status)) && (
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setForecast(undefined);
+                        setAddingForecast(true);
+                      }}
+                    >
+                      Добавить плановый объём
+                    </Button>
+                  )}
+                {auth.can('waves.write') && (
+                  <Button variant="secondary" onClick={() => setArchiving(true)}>
+                    {selected.archived ? 'Вернуть из архива' : 'В архив'}
+                  </Button>
+                )}
+              </div>
+              {plan && (
+                <>
+                  <h3>Рабочие волны</h3>
+                  <p className="muted">
+                    Подтверждённые заказы по заявкам с этой плановой волной попадают в её открытую
+                    рабочую волну. Если открытой нет, при подтверждении заказа создаётся новая —
+                    копия плановой со сроками, маршрутом и бюджетом, но без планового объёма.
+                  </p>
+                  {working.length ? (
+                    <DataTable<Entity>
+                      rows={working}
+                      onRow={(row) => openWave(row.id)}
+                      columns={[
+                        { key: 'number', label: 'Волна' },
+                        {
+                          key: 'status',
+                          label: 'Состояние',
+                          render: (r) => <Badge value={r.status} />,
+                        },
+                        {
+                          key: 'archived',
+                          label: 'Архив',
+                          render: (r) => (r.archived ? 'В архиве' : '—'),
+                        },
+                      ]}
+                    />
+                  ) : (
+                    <p className="muted">Пока нет: появится при первом подтверждённом заказе.</p>
+                  )}
+                </>
               )}
-            </div>
-            {plan && (
-              <>
-                <h3>Рабочие волны</h3>
-                <p className="muted">
-                  Подтверждённые заказы по заявкам с этой плановой волной попадают в её открытую
-                  рабочую волну. Если открытой нет, при подтверждении заказа создаётся новая — копия
-                  плановой со сроками, маршрутом и бюджетом, но без планового объёма.
-                </p>
-                {working.length ? (
+              {(plan || forecasts.length > 0) && (
+                <>
+                  <h3>Плановые позиции</h3>
+                  <p className="muted">
+                    {plan
+                      ? 'Ожидаемый объём поставки по группам. Расчёты по плановой волне делят на него общие расходы. «План» — остаток после заказов, уже собранных в открытой рабочей волне.'
+                      : 'Прогноз остался со времени, когда плановый объём вели в самой волне. Рабочая волна учитывает только реальные заказы: отключите прогноз.'}
+                  </p>
                   <DataTable<Entity>
-                    rows={working}
-                    onRow={(row) => openWave(row.id)}
+                    rows={forecasts}
+                    onRow={
+                      writable && auth.can('finance.purchase.read')
+                        ? (row) => {
+                            setForecast(row);
+                            setAddingForecast(true);
+                          }
+                        : undefined
+                    }
                     columns={[
-                      { key: 'number', label: 'Волна' },
+                      { key: 'product_group_name', label: 'Товарная группа' },
                       {
-                        key: 'status',
-                        label: 'Состояние',
-                        render: (r) => <Badge value={r.status} />,
+                        key: 'remaining_quantity',
+                        label: 'План, шт.',
+                        render: (row) =>
+                          decimal(
+                            row.remaining_quantity === undefined
+                              ? row.target_quantity
+                              : row.remaining_quantity,
+                          ),
                       },
                       {
-                        key: 'archived',
-                        label: 'Архив',
-                        render: (r) => (r.archived ? 'В архиве' : '—'),
+                        key: 'target_quantity',
+                        label: 'Первоначальный план, шт.',
+                        render: (row) => decimal(row.target_quantity),
+                      },
+                      {
+                        key: 'filled_quantity',
+                        label: plan ? 'В рабочей волне, шт.' : 'В закупках, шт.',
+                        render: (row) =>
+                          decimal(row.filled_quantity === undefined ? 0 : row.filled_quantity),
+                      },
+                      {
+                        key: 'unit_price_rub',
+                        label: 'Ожидаемая цена за шт., ₽',
+                        render: (row) => metric(row.unit_price_rub),
+                      },
+                      {
+                        key: 'weight_per_unit',
+                        label: 'Вес за шт., кг',
+                        render: (row) => decimal(row.weight_per_unit),
+                      },
+                      {
+                        key: 'active',
+                        label: 'Прогноз',
+                        render: (row) => (row.active ? 'Включён' : 'Отключён'),
                       },
                     ]}
                   />
-                ) : (
-                  <p className="muted">Пока нет: появится при первом подтверждённом заказе.</p>
-                )}
-              </>
-            )}
-            {(plan || forecasts.length > 0) && (
-              <>
-                <h3>Плановые позиции</h3>
-                <p className="muted">
-                  {plan
-                    ? 'Ожидаемый объём поставки по группам. Расчёты по плановой волне делят на него общие расходы. «План» — остаток после заказов, уже собранных в открытой рабочей волне.'
-                    : 'Прогноз остался со времени, когда плановый объём вели в самой волне. Рабочая волна учитывает только реальные заказы: отключите прогноз.'}
-                </p>
-                <DataTable<Entity>
-                  rows={forecasts}
-                  onRow={
-                    writable && auth.can('finance.purchase.read')
-                      ? (row) => {
-                          setForecast(row);
-                          setAddingForecast(true);
-                        }
-                      : undefined
-                  }
-                  columns={[
-                    { key: 'product_group_name', label: 'Товарная группа' },
-                    {
-                      key: 'remaining_quantity',
-                      label: 'План, шт.',
-                      render: (row) =>
-                        decimal(
-                          row.remaining_quantity === undefined
-                            ? row.target_quantity
-                            : row.remaining_quantity,
+                </>
+              )}
+              {Boolean(selected.financial_summary) && (
+                <WaveFinancialSummary summary={selected.financial_summary as Entity} />
+              )}
+              {!plan && (
+                <>
+                  <h3>Распределённые позиции</h3>
+                  <DataTable
+                    rows={(selected.allocations || []) as Entity[]}
+                    onRow={(row) => {
+                      setAllocation(row);
+                      setAllocationAction('event');
+                    }}
+                    columns={[
+                      { key: 'execution_id', label: 'Позиция' },
+                      { key: 'quantity', label: 'Количество', render: (r) => decimal(r.quantity) },
+                      { key: 'shipped', label: 'Отправлено', render: (r) => decimal(r.shipped) },
+                      {
+                        key: 'delivered',
+                        label: 'Доставлено',
+                        render: (r) => decimal(r.delivered),
+                      },
+                      {
+                        key: 'actions',
+                        label: 'Действие',
+                        render: (r) => (
+                          <Button
+                            variant="ghost"
+                            onClick={() => {
+                              setAllocation(r);
+                              setAllocationAction('transfer');
+                            }}
+                          >
+                            Перенести
+                          </Button>
                         ),
-                    },
-                    {
-                      key: 'target_quantity',
-                      label: 'Первоначальный план, шт.',
-                      render: (row) => decimal(row.target_quantity),
-                    },
-                    {
-                      key: 'filled_quantity',
-                      label: plan ? 'В рабочей волне, шт.' : 'В закупках, шт.',
-                      render: (row) =>
-                        decimal(row.filled_quantity === undefined ? 0 : row.filled_quantity),
-                    },
-                    {
-                      key: 'unit_price_rub',
-                      label: 'Ожидаемая цена за шт., ₽',
-                      render: (row) => metric(row.unit_price_rub),
-                    },
-                    {
-                      key: 'weight_per_unit',
-                      label: 'Вес за шт., кг',
-                      render: (row) => decimal(row.weight_per_unit),
-                    },
-                    {
-                      key: 'active',
-                      label: 'Прогноз',
-                      render: (row) => (row.active ? 'Включён' : 'Отключён'),
-                    },
-                  ]}
-                />
-              </>
-            )}
-            {Boolean(selected.financial_summary) && (
-              <WaveFinancialSummary summary={selected.financial_summary as Entity} />
-            )}
-            {!plan && (
-              <>
-                <h3>Распределённые позиции</h3>
-                <DataTable
-                  rows={(selected.allocations || []) as Entity[]}
-                  onRow={(row) => {
-                    setAllocation(row);
-                    setAllocationAction('event');
-                  }}
-                  columns={[
-                    { key: 'execution_id', label: 'Позиция' },
-                    { key: 'quantity', label: 'Количество', render: (r) => decimal(r.quantity) },
-                    { key: 'shipped', label: 'Отправлено', render: (r) => decimal(r.shipped) },
-                    { key: 'delivered', label: 'Доставлено', render: (r) => decimal(r.delivered) },
-                    {
-                      key: 'actions',
-                      label: 'Действие',
-                      render: (r) => (
-                        <Button
-                          variant="ghost"
-                          onClick={() => {
-                            setAllocation(r);
-                            setAllocationAction('transfer');
-                          }}
-                        >
-                          Перенести
-                        </Button>
-                      ),
-                    },
-                  ]}
-                />
-              </>
-            )}
-          </div>
-        </Modal>
+                      },
+                    ]}
+                  />
+                </>
+              )}
+            </div>
+          </Modal>
+        )}
+      {selected && completing && (
+        <RecordForm
+          title={`Поставка выполнена: ${String(selected.number)}`}
+          endpoint={`/waves/${selected.id}/complete`}
+          command
+          extra={{ version: selected.version }}
+          submitLabel="Поставка выполнена"
+          fields={[
+            {
+              name: 'reason',
+              label: 'Комментарий',
+              type: 'textarea',
+              required: true,
+              minLength: 3,
+              value: 'Поставка выполнена',
+            },
+          ]}
+          note={
+            plan
+              ? 'Плановая волна и все её рабочие волны будут отмечены выполненными и убраны в архив. Для следующей поставки заведите новую плановую волну.'
+              : 'Волна будет отмечена выполненной и убрана в архив. Волна завершается и сама, когда все её заказы доставлены клиентам.'
+          }
+          onClose={() => setCompleting(false)}
+          onSuccess={done}
+        />
       )}
       {selected && archiving && (
         <RecordForm
@@ -830,7 +886,7 @@ export function Waves() {
           initial={{ ...selected, ...waveWeekInitial(selected) }}
           extra={{ version: selected.version }}
           fields={[
-            ...(plan
+            ...(plan || !leader
               ? []
               : [
                   {
@@ -858,7 +914,11 @@ export function Waves() {
             },
           ]}
           note={
-            plan ? 'У плановой волны нет этапов поставки: они ведутся в рабочих волнах.' : undefined
+            plan
+              ? 'У плановой волны нет этапов поставки: они ведутся в рабочих волнах.'
+              : leader
+                ? undefined
+                : 'Состояние волны меняет руководитель. Когда все заказы волны доставлены клиентам, она завершается сама.'
           }
           onClose={() => setEditing(false)}
           onSuccess={done}

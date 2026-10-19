@@ -37,6 +37,67 @@ function OrderStatus({ value }: { value: unknown }) {
   const status = lineStatuses.find((row) => row.value === value);
   return <Badge value={status?.label || value} tone={status?.tone} />;
 }
+const STATUS_KEY = 'supplier-orders:statuses';
+function savedStatuses(): string[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STATUS_KEY) || '[]') as unknown;
+    return Array.isArray(saved) ? saved.filter((value) => typeof value === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+const withoutCancelled = lineStatuses
+  .filter((row) => row.value !== 'cancelled')
+  .map((row) => row.value);
+/** Several statuses at once, for instance everything but the cancelled positions. */
+function StatusPicker({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const summary = !value.length
+    ? 'Все'
+    : value.length === withoutCancelled.length &&
+        withoutCancelled.every((code) => value.includes(code))
+      ? 'Все, кроме отменённых'
+      : lineStatuses
+          .filter((row) => value.includes(row.value))
+          .map((row) => row.label)
+          .join(', ');
+  return (
+    <details className="status-picker">
+      <summary aria-label="Статусы">{summary}</summary>
+      <div className="status-picker-menu">
+        <div className="inline-actions compact">
+          <Button type="button" variant="ghost" onClick={() => onChange([])}>
+            Все
+          </Button>
+          <Button type="button" variant="ghost" onClick={() => onChange(withoutCancelled)}>
+            Все, кроме отменённых
+          </Button>
+        </div>
+        {lineStatuses.map((row) => (
+          <label key={row.value}>
+            <input
+              type="checkbox"
+              checked={value.includes(row.value)}
+              onChange={(event) =>
+                onChange(
+                  event.target.checked
+                    ? [...value, row.value]
+                    : value.filter((code) => code !== row.value),
+                )
+              }
+            />
+            {row.label}
+          </label>
+        ))}
+      </div>
+    </details>
+  );
+}
 const plainAmount = (value: unknown) => {
   const raw = String(value ?? '0');
   return raw.includes('.') ? raw.replace(/\.?0+$/, '') : raw;
@@ -54,7 +115,16 @@ export function SupplierOrders() {
   ).filter(([key]) => canOrder || key === 'ordered');
   const [tab, setTab] = useState<string>(tabs[0][0]);
   const [supplier, setSupplier] = useState('');
-  const [status, setStatus] = useState('');
+  const [statuses, setStatuses] = useState<string[]>(savedStatuses);
+  function chooseStatuses(next: string[]) {
+    setStatuses(next);
+    setSelection([]);
+    try {
+      localStorage.setItem(STATUS_KEY, JSON.stringify(next));
+    } catch {
+      /* The choice is a convenience: without storage it lasts until the page closes. */
+    }
+  }
   const [selection, setSelection] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [logistics, setLogistics] = useState<Entity>();
@@ -62,11 +132,13 @@ export function SupplierOrders() {
   const [cancelReason, setCancelReason] = useState('');
   const [notice, setNotice] = useState('');
   const [selected, setSelected] = useState<Entity>();
+  const [poWithoutLogistics, setPoWithoutLogistics] = useState(false);
+  const poOptions = poWithoutLogistics ? '?without_logistics=true' : '';
   const [error, setError] = useState<unknown>();
   const command = useCommand();
   const query = new URLSearchParams();
   if (supplier) query.set('supplier_id', supplier);
-  if (status) query.set('status', status);
+  if (statuses.length && tab !== 'positions') query.set('status', statuses.join(','));
   if (tab === 'ordered') query.set('ordered', 'true');
   const list = useApi<Page>(
     (tab === 'orders' ? '/supplier-orders' : '/supplier-orders/positions') + '?' + query,
@@ -90,6 +162,12 @@ export function SupplierOrders() {
     { name: 'payment_terms', label: 'Условия оплаты' },
     { name: 'delivery_terms', label: 'Условия доставки' },
     {
+      name: 'logistics_separately',
+      label: 'Без стоимости доставки: логистика оплачивается отдельно, при консолидации заказов',
+      type: 'checkbox',
+      wide: true,
+    },
+    {
       name: 'logistics_amount',
       label: `Международная логистика, ${String(chosen[0]?.currency || '')}`,
       type: 'decimal',
@@ -100,13 +178,17 @@ export function SupplierOrders() {
             ? `Подставлено: ${String(logistics.basis)}.`
             : 'Сумма не найдена в волне, расчёте и карточке поставщика.',
           ...((logistics?.notes as string[] | undefined) || []),
-        ].join(' ') + ' Сумма входит в итог заказа и в PO.',
+        ].join(' ') + ' Сумма входит в итог заказа и в PO. Без доставки — 0.',
     },
   ];
+  const priceOf = (row: Entity) => prices[row.id] ?? plainAmount(row.unit_price);
+  const goodsTotal = chosen.reduce(
+    (sum, row) => sum + Number(priceOf(row) || 0) * Number(row.quantity || 0),
+    0,
+  );
   function switchTab(key: string) {
     setTab(key);
     setSelection([]);
-    setStatus('');
     setNotice('');
   }
   async function startOrder() {
@@ -122,7 +204,7 @@ export function SupplierOrders() {
   }
   async function moveLines(next: string) {
     const result = await command
-      .run<{ count: number }>(
+      .run<{ count: number; finished_waves?: string[] }>(
         '/supplier-order-lines/status',
         { lines: chosen.map((row) => ({ id: row.id, version: row.version })), status: next },
         'POST',
@@ -130,7 +212,12 @@ export function SupplierOrders() {
       )
       .catch(() => undefined);
     if (!result) return;
-    setNotice(`${lineStatuses.find((row) => row.value === next)?.label}: позиций ${result.count}.`);
+    setNotice(
+      `${lineStatuses.find((row) => row.value === next)?.label}: позиций ${result.count}.` +
+        (result.finished_waves?.length
+          ? ' Все заказы волны доставлены — волна отмечена выполненной и убрана в архив.'
+          : ''),
+    );
     setSelection([]);
     list.refresh();
   }
@@ -235,17 +322,10 @@ export function SupplierOrders() {
           />
         </label>
         {tab !== 'positions' && (
-          <label>
-            Статус
-            <select value={status} onChange={(e) => setStatus(e.target.value)}>
-              <option value="">Все</option>
-              {lineStatuses.map((row) => (
-                <option key={row.value} value={row.value}>
-                  {row.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="filter-field">
+            <span>Статус</span>
+            <StatusPicker value={statuses} onChange={chooseStatuses} />
+          </div>
         )}
         {tab === 'positions' && (
           <Button disabled={!chosen.length || !oneSupplier} onClick={() => void startOrder()}>
@@ -440,21 +520,65 @@ export function SupplierOrders() {
           }}
           command
           extra={{ execution_ids: selection, prices }}
+          deriveValues={(values, changed) =>
+            changed === 'logistics_separately'
+              ? {
+                  ...values,
+                  logistics_amount: values.logistics_separately
+                    ? '0'
+                    : plainAmount(logistics?.amount),
+                }
+              : values
+          }
           note={
             <div>
-              <p>Проверьте закупочные цены выбранных позиций:</p>
-              {chosen.map((row) => (
-                <label key={row.id}>
-                  {String(row.name)} — {String(row.currency)}
-                  <input
-                    aria-label={`Цена ${row.name}`}
-                    value={prices[row.id] ?? String(row.unit_price)}
-                    onChange={(e) =>
-                      setPrices((p) => ({ ...p, [row.id]: e.target.value.replace(',', '.') }))
-                    }
-                  />
-                </label>
-              ))}
+              <p>Проверьте закупочные цены выбранных позиций ({chosen.length}):</p>
+              <div className="table-scroll">
+                <table className="order-price-table">
+                  <thead>
+                    <tr>
+                      <th>№</th>
+                      <th>Наименование</th>
+                      <th>Артикул</th>
+                      <th>Фасовка</th>
+                      <th>Кол-во</th>
+                      <th>Цена за ед., {String(chosen[0]?.currency || '')}</th>
+                      <th>Сумма</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {chosen.map((row, index) => (
+                      <tr key={row.id}>
+                        <td>{index + 1}</td>
+                        <td className="order-price-name">{String(row.name)}</td>
+                        <td>{String(row.article || '—')}</td>
+                        <td>{String(row.packaging || '—')}</td>
+                        <td>{decimal(row.quantity)}</td>
+                        <td>
+                          <input
+                            aria-label={`Цена ${row.name}`}
+                            inputMode="decimal"
+                            value={priceOf(row)}
+                            onChange={(e) =>
+                              setPrices((p) => ({
+                                ...p,
+                                [row.id]: e.target.value.replace(',', '.'),
+                              }))
+                            }
+                          />
+                        </td>
+                        <td>{decimal(Number(priceOf(row) || 0) * Number(row.quantity || 0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <th colSpan={6}>Товары, {String(chosen[0]?.currency || '')}</th>
+                      <th>{decimal(goodsTotal)}</th>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             </div>
           }
           onClose={() => setCreating(false)}
@@ -480,17 +604,29 @@ export function SupplierOrders() {
                   ? `${decimal(selected.logistics_amount)} ${selected.currency}${
                       selected.logistics_basis ? ` (${String(selected.logistics_basis)})` : ''
                     }`
-                  : 'Не включена',
+                  : selected.logistics_separately
+                    ? 'Оплачивается отдельно'
+                    : 'Не включена',
                 Срок: date(selected.expected_date),
                 Контракт: selected.contract,
                 'Условия оплаты': selected.payment_terms,
               }}
             />
+            {Number(selected.logistics_amount) > 0 && (
+              <label className="calculation-internal-toggle">
+                <input
+                  type="checkbox"
+                  checked={poWithoutLogistics}
+                  onChange={(event) => setPoWithoutLogistics(event.target.checked)}
+                />{' '}
+                PO без стоимости доставки — логистика будет оплачена отдельно
+              </label>
+            )}
             <div className="inline-actions">
               <Button
                 onClick={() =>
                   void download(
-                    `/supplier-orders/${selected.id}/po.pdf`,
+                    `/supplier-orders/${selected.id}/po.pdf${poOptions}`,
                     `PO_${selected.number}.pdf`,
                   ).catch(setError)
                 }
@@ -502,7 +638,7 @@ export function SupplierOrders() {
                 variant="secondary"
                 onClick={() =>
                   void download(
-                    `/supplier-orders/${selected.id}/po.xlsx`,
+                    `/supplier-orders/${selected.id}/po.xlsx${poOptions}`,
                     `PO_${selected.number}.xlsx`,
                   ).catch(setError)
                 }

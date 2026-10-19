@@ -2,8 +2,10 @@ from fastapi import APIRouter, Query
 from sqlalchemy import select
 
 from app.core.db import DB
+from app.core.models import User
 from app.core.security import Actor, request_predicate, require_permission
 from app.core.service import serialize
+from app.crm.models import Counterparty
 from app.crm.models import Request as CRMRequest
 
 from . import documents, financial, fulfillment, payments, procurement, wave_board
@@ -47,17 +49,26 @@ def document_registry(
 
 @router.get("/payments", tags=["Реестры"])
 def payment_registry(
-    db: DB, user: Actor, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=100)
+    db: DB, user: Actor, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=100),
+    status: str | None = None,
 ):
+    """Payments of readable requests; `status=declared` lists those waiting for confirmation."""
     require_permission(db, user, "requests.read")
+    query = select(Payment).where(Payment.request_id.in_(select(CRMRequest.id).where(request_predicate(db, user))))
+    if status:
+        query = query.where(Payment.status == status)
     rows = db.scalars(
-        select(Payment)
-        .where(Payment.request_id.in_(select(CRMRequest.id).where(request_predicate(db, user))))
-        .order_by(Payment.created_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+        query.order_by(Payment.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     ).all()
-    return {"items": [payments.payment_view(db, user, row) for row in rows], "page": page, "page_size": page_size}
+    items = []
+    for row in rows:
+        request = db.get(CRMRequest, row.request_id)
+        client = db.get(Counterparty, row.client_id)
+        declared = db.get(User, row.declared_by)
+        items.append({**payments.payment_view(db, user, row), "request_number": request.number if request else None,
+                      "client_name": client.name if client else None,
+                      "declared_by_name": declared.name if declared else None})
+    return {"items": items, "page": page, "page_size": page_size}
 
 
 @router.get("/approvals", tags=["Реестры"])
