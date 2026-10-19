@@ -14,6 +14,7 @@ from fastapi import APIRouter
 from sqlalchemy import select
 
 from app.core.db import DB
+from app.core.errors import DomainError
 from app.core.security import Actor, can, request_predicate, require_permission
 from app.core.service import prefetch
 from app.crm.models import Counterparty
@@ -28,7 +29,8 @@ CURRENT_PROPOSALS = ("issued", "sent", "accepted")
 AMOUNTS = ("quantity", "sales", "net", "profit", "logistics")
 BASIS = ("Продажи — реальный объём: принятые клиентом позиции, в волне, где они распределены. Заявки волны, "
          "по которым КП ещё не принято, показаны отдельно («В КП») и в продажи не входят. Продажи с НДС, "
-         "рентабельность — прибыль к продажам без НДС, логистика — международная на штуку, по принятым позициям.")
+         "рентабельность — прибыль к продажам без НДС, как внутри волны: цены документов и текущие общие "
+         "расходы волны. Логистика — международная на штуку, по принятым позициям.")
 
 
 def line_amounts(line: dict, quantity: Decimal) -> dict[str, Decimal]:
@@ -46,6 +48,8 @@ class Ledger:
 
     def __init__(self) -> None:
         self.accepted = dict.fromkeys(AMOUNTS, Decimal("0"))
+        # The part of `accepted` not yet handed to a wave: priced by its saved calculation only.
+        self.pending = dict.fromkeys(AMOUNTS, Decimal("0"))
         self.offered = dict.fromkeys(AMOUNTS, Decimal("0"))
         self.proposals = 0
         self.requests: set[str] = set()
@@ -123,7 +127,7 @@ class Board:
             return None
         return {line["line_id"]: line for line in snapshot.get("lines", [])}
 
-    def accept(self, wave_id: str, execution: Execution, quantity: Decimal) -> None:
+    def accept(self, wave_id: str, execution: Execution, quantity: Decimal, allocated: bool = True) -> None:
         ledger = self.ledgers[wave_id]
         ledger.requests.add(execution.request_id)
         line = (self.lines(execution.proposal_id) or {}).get(execution.line_id)
@@ -132,6 +136,8 @@ class Board:
             return
         for key, value in line_amounts(line, quantity).items():
             ledger.accepted[key] += value
+            if not allocated:
+                ledger.pending[key] += value
 
     def spread(self) -> None:
         for allocation in self.allocations:
@@ -148,7 +154,7 @@ class Board:
                 for execution in by_request[request.id]:
                     rest = execution.quantity - execution.cancelled_quantity - self.allocated[execution.id]
                     if rest > 0:
-                        self.accept(wave_id, execution, rest)
+                        self.accept(wave_id, execution, rest, allocated=False)
                 continue
             ledger = self.ledgers[wave_id]
             ledger.requests.add(request.id)
@@ -164,6 +170,25 @@ class Board:
             for line in lines.values():
                 for key, value in line_amounts(line, dec(line["quantity"])).items():
                     ledger.offered[key] += value
+
+
+def current_result(db, wave: Wave, ledger: Ledger) -> dict[str, Decimal] | None:
+    """Sales, net and profit of the accepted positions as inside the wave: positions in the wave at their
+    document prices with the current shared costs of the wave, plus the accepted positions still waiting
+    for a wave at their saved calculation. None when the wave cannot be priced that way."""
+    from .financial import wave_financial_summary
+
+    if ledger.accepted["quantity"] == ledger.pending["quantity"]:
+        return None
+    try:
+        actual = (wave_financial_summary(db, wave.id) or {}).get("actual") or {}
+    except DomainError:
+        return None
+    if actual.get("status") != "current":
+        return None
+    return {"sales": dec(actual["sales"]) + ledger.pending["sales"],
+            "net": dec(actual["sale_net"]) + ledger.pending["net"],
+            "profit": dec(actual["profit"]) + ledger.pending["profit"]}
 
 
 @router.get("/waves/board")
@@ -215,12 +240,18 @@ def wave_board(db: DB, user: Actor):
                 "offered_quantity": pieces(ledger.offered["quantity"]), "offered_sales": money(ledger.offered["sales"]),
                 "potential_sales": money(ledger.total()["sales"]),
                 "incomplete": ledger.unpriced, "profit": None, "profitability_percent": None,
-                "offered_profitability_percent": None,
+                "offered_profitability_percent": None, "profit_basis": "saved",
             }
             if profitability and ledger.requests <= profitable:
-                card["summary"]["profit"] = money(real["profit"])
+                # The same profit as inside the wave: current shared costs, not those of the proposal day.
+                current = current_result(db, wave, ledger)
+                if current:
+                    card["summary"].update(sales=money(current["sales"]), sale_net=money(current["net"]),
+                                           accepted_sales=money(current["sales"]), profit_basis="current")
+                result = current or real
+                card["summary"]["profit"] = money(result["profit"])
                 card["summary"]["profitability_percent"] = money(profitability_metrics(
-                    real["profit"], real["net"], Decimal("0"))["profitability_percent"]) if real["net"] else None
+                    result["profit"], result["net"], Decimal("0"))["profitability_percent"]) if result["net"] else None
                 card["summary"]["offered_profitability_percent"] = money(profitability_metrics(
                     ledger.offered["profit"], ledger.offered["net"], Decimal("0"))["profitability_percent"]
                 ) if ledger.offered["net"] else None

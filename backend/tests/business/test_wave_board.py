@@ -77,11 +77,20 @@ def test_accepted_positions_move_from_the_plan_to_the_working_wave(crm):  # noqa
     summary = working["summary"]
     assert Decimal(summary["sales"]) == Decimal(line["total"]).quantize(Decimal("0.01"))
     assert Decimal(summary["sale_net"]) == Decimal(line["net"]).quantize(Decimal("0.01"))
-    assert Decimal(summary["profit"]) == Decimal(line["detail"]["profit"]).quantize(Decimal("0.01"))
-    assert Decimal(summary["profitability_percent"]) == (
-        Decimal(line["detail"]["profit"]) / Decimal(line["net"]) * 100).quantize(Decimal("0.01"))
+    # The card shows the same result as the wave itself: document prices and the current shared costs.
+    actual = wave_row(crm, work["id"])["financial_summary"]["actual"]
+    assert actual["status"] == "current" and summary["profit_basis"] == "current"
+    assert (summary["sales"], summary["sale_net"], summary["profit"], summary["profitability_percent"]) == (
+        actual["sales"], actual["sale_net"], actual["profit"], actual["profitability_percent"])
     assert Decimal(summary["logistics_per_unit"]) == Decimal("500.00")
     assert (summary["offered_sales"], summary["offered_quantity"]) == ("0.00", "0")
+    # A dearer delivery in the wave budget lowers the profit on the card, as inside the wave.
+    cmd(crm, f"/waves/{work['id']}/budget", {"version": wave_row(crm, work["id"])["version"],
+        "profile_id": data["profile_id"], "expenses": [{**LOGISTICS, "amount": "1500"}],
+        "reason": "Дороже доставка"}, method="put")
+    dearer = card(crm, work["id"])["summary"]
+    assert Decimal(dearer["profit"]) < Decimal(summary["profit"])
+    assert dearer["profit"] == wave_row(crm, work["id"])["financial_summary"]["actual"]["profit"]
     assert [row["id"] for row in board(crm)["items"]].count(work["id"]) == 1
 
 

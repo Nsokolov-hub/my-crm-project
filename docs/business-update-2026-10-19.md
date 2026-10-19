@@ -49,6 +49,8 @@
 
 У плановой волны принятые позиции уходят в её рабочие волны, поэтому её реальные продажи обычно 0, а заявки с КП видны в строке «В КП».
 
+Рентабельность на карточке теперь считается так же, как внутри волны: по ценам документов и текущим общим расходам волны (бюджет волны, таможенный сбор), а не по расходам на день выпуска КП. Для «рабочей 1» доска и волна показывают одинаково 41,50 %. Принятые позиции, ещё не распределённые в волну, считаются по сохранённому расчёту. Если волну так посчитать нельзя (например, нет курса валюты), карточка показывает рентабельность по сохранённым расчётам.
+
 ## API
 
 - `GET /requests/{id}/supplier-responses`: у поставщика поля `priced` и `declined`, поставщики отсортированы по числу цен; у ячейки с ценой — `unit_price`, `currency`, `unit_price_rub`, `delivery_days`, `packing_name` (цены — при праве `finance.purchase.read`); в ответе `rates_profile`.
@@ -59,4 +61,4 @@
 - `GET /payments?status=declared` — оплаты на подтверждение; у платежа `request_number`, `client_name`, `declared_by_name`.
 - `GET /notifications?category=work|system`; у уведомления `category`; в ответе `unread_work` и `unread_system` (`unread` = рабочие). `POST /notifications/read-all` с `category` — прочитать все.
 - `POST /waves/{id}/complete` (`version`, `reason`) — «Поставка выполнена», права `waves.write` и `approvals.decide`. `PATCH /waves/{id}` со сменой `status` без `approvals.decide` отвечает `403 WAVE_STATUS_LEADER`. У волны поле `order_lines` — число заказанных позиций по статусам.
-- `GET /waves/board`: `quantity` и `summary.sales`, `sale_net`, `profit`, `profitability_percent`, `logistics`, `logistics_per_unit` — по принятым позициям; новые поля карточки `offered_quantity` и `summary.potential_sales`, `summary.offered_profitability_percent`.
+- `GET /waves/board`: `quantity` и `summary.sales`, `sale_net`, `profit`, `profitability_percent`, `logistics`, `logistics_per_unit` — по принятым позициям; прибыль и рентабельность — по текущим расходам волны (`summary.profit_basis` = `current`) или по сохранённым расчётам (`saved`); новые поля карточки `offered_quantity` и `summary.potential_sales`, `summary.offered_profitability_percent`.
