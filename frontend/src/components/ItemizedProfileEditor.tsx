@@ -202,11 +202,26 @@ function ItemizedProfileForm({
   }
   function changeRule(index: number, patch: Partial<CustomsRule>) {
     update({
-      customs_rules: definition.customs_rules.map((row, n) =>
-        n === index ? { ...row, ...patch } : row,
-      ),
+      customs_rules: definition.customs_rules.map((row, n) => {
+        if (n !== index) return row;
+        const next = { ...row, ...patch };
+        // «Без пошлины» has no rate; a rate typed into it means a percentage duty.
+        if (patch.type === 'NONE') next.value = '0';
+        else if (
+          patch.value !== undefined &&
+          next.type === 'NONE' &&
+          Number(patch.value.replace(',', '.')) > 0
+        )
+          next.type = 'PERCENTAGE';
+        return next;
+      }),
     });
   }
+  const groupOptions =
+    groups.data?.items ||
+    Object.entries(groupNames).map(([slug, name]) => ({ id: slug, slug, name }));
+  const groupLabel = (slug: string) =>
+    String(groupOptions.find((group) => group.slug === slug)?.name || groupNames[slug] || slug);
   function changeBracket(index: number, patch: Partial<FeeBracket>) {
     update({
       customs_fee_brackets: definition.customs_fee_brackets.map((row, n) =>
@@ -278,8 +293,11 @@ function ItemizedProfileForm({
     )
       return 'Комиссия за вывод бонуса должна быть от 0 до 100%.';
     const slugs = definition.customs_rules.map((row) => row.product_group_slug);
-    if (new Set(slugs).size !== slugs.length || slugs.some((slug) => !slug))
-      return 'Проверьте уникальность товарных групп.';
+    const unchosen = slugs.findIndex((slug) => !slug);
+    if (unchosen >= 0) return `Выберите товарную группу в таможенном правиле №${unchosen + 1}.`;
+    const repeated = slugs.find((slug, index) => slugs.indexOf(slug) !== index);
+    if (repeated)
+      return `Группа «${groupLabel(repeated)}» указана в нескольких таможенных правилах — оставьте одно.`;
     if (definition.customs_rules.some((row) => !decimal.test(row.value)))
       return 'Проверьте значения таможенных правил.';
     if (
@@ -695,15 +713,18 @@ function ItemizedProfileForm({
                   <label className="field">
                     Товарная группа
                     <select
+                      aria-label={`Товарная группа правила ${index + 1}`}
                       value={rule.product_group_slug}
+                      aria-invalid={!rule.product_group_slug}
                       onChange={(event) =>
                         changeRule(index, { product_group_slug: event.target.value })
                       }
                     >
-                      {(
-                        groups.data?.items ||
-                        Object.entries(groupNames).map(([slug, name]) => ({ id: slug, slug, name }))
-                      ).map((group) => (
+                      {/* Without it a new rule showed the first group, «Другое», but had none. */}
+                      <option value="" disabled>
+                        Выберите группу
+                      </option>
+                      {groupOptions.map((group) => (
                         <option key={group.slug} value={group.slug}>
                           {group.name}
                         </option>
@@ -713,6 +734,7 @@ function ItemizedProfileForm({
                   <label className="field">
                     Правило
                     <select
+                      aria-label={`Правило ${index + 1}`}
                       value={rule.type}
                       onChange={(event) =>
                         changeRule(index, { type: event.target.value as CustomsRule['type'] })
@@ -725,6 +747,7 @@ function ItemizedProfileForm({
                   <label className="field">
                     Ставка, %
                     <input
+                      aria-label={`Ставка правила ${index + 1}`}
                       inputMode="decimal"
                       value={rule.value}
                       onChange={(event) => changeRule(index, { value: event.target.value })}
@@ -751,7 +774,7 @@ function ItemizedProfileForm({
                 update({
                   customs_rules: [
                     ...definition.customs_rules,
-                    { product_group_slug: '', type: 'NONE', value: '0' },
+                    { product_group_slug: '', type: 'PERCENTAGE', value: '0' },
                   ],
                 })
               }
