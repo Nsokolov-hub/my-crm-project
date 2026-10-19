@@ -1,6 +1,7 @@
 from bisect import bisect_right
 from copy import deepcopy
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
@@ -547,7 +548,8 @@ def wave_financial_summary(db, wave_id: str) -> dict:
     summary.update(status="partial" if unknown_quantity else "current", provisional=bool(unknown_quantity),
                    source_calculation_id=source_id,
                    digest=wave_financial_digest(selections, expenses or [], profile, unknown_quantity, rates))
-    summary["actual"] = wave_actual_summary(db, wave_id, profile, expenses or [], rates)
+    summary["actual"] = wave_actual_summary(db, wave_id, profile, expenses or [], rates,
+                                            budgeted=configured is not None)
     return summary
 
 
@@ -1132,9 +1134,84 @@ def list_calculations(request_id: str, db: DB, user: Actor,
             "total": total, "page": page, "page_size": page_size}
 
 
-def wave_actual_summary(db, wave_id, profile, expenses, rates):
-    """Accepted sales keep their prices; only shared wave costs are redistributed."""
-    selections, accepted = {}, []
+COSTS_SOURCES = {
+    "budget": "общие расходы — бюджет волны",
+    "plan": "общие расходы — бюджет плановой волны",
+    "proposal": "общие расходы — как в последнем принятом КП волны (бюджет волны не задан)",
+    "default": "общие расходы — тариф поставщика и расходы профиля (бюджет волны не задан)",
+}
+
+
+def actual_costs(db, wave: Wave, calculations: list[Calculation], profile, expenses, rates) -> tuple:
+    """Shared costs of a wave without a budget of its own: the budget of its plan or, without one, the shared
+    costs its latest accepted proposal was priced with, at the current rates. The supplier tariff and the profile
+    defaults are the last resort only: a proposal also carries the declarant, the terminal and the like."""
+    plan = db.get(Wave, wave.plan_id) if wave.plan_id else None
+    configured = db.get(CalculationProfile, plan.budget_profile_id) if plan and plan.budget_profile_id else None
+    if configured and plan.budget_expenses is not None:
+        definition = deepcopy(configured.definition)
+        return (definition, deepcopy(plan.budget_expenses), plan.budget_rates or definition.get("exchange_rates") or [],
+                "plan")
+    snapshot = max(calculations, key=lambda row: (row.created_at, row.id)).snapshot
+    priced = [row for row in normalize_logistics_expenses(
+        snapshot.get("resolved_expenses", (snapshot.get("input") or {}).get("expenses")) or [])
+        if row.get("scope", "WAVE") == "WAVE"]
+    if not priced:
+        return profile, expenses, rates, "default"
+    # A currency the profile no longer quotes keeps the rate of the proposal.
+    known = {row["currency"] for row in rates}
+    return profile, priced, [*rates, *(row for row in snapshot.get("rates") or [] if row["currency"] not in known)], \
+        "proposal"
+
+
+def planned_rest(db, wave: Wave, selections: list[dict]) -> list[dict]:
+    """The planned volume not ordered yet, while the wave still takes orders: a working wave shares its costs
+    with the rest of its plan, as the proposals priced on the plan did. A closed wave carries them alone."""
+    if wave.status not in OPEN_WAVES:
+        return []
+    plan = wave if wave.kind == "plan" else db.get(Wave, wave.plan_id) if wave.plan_id else None
+    if not plan or plan.archived:
+        return []
+    ordered = list(selections)
+    for other in [plan.id, *db.scalars(select(Wave.id).where(
+            Wave.plan_id == plan.id, Wave.archived.is_(False), Wave.status.in_(OPEN_WAVES)))]:
+        if other != wave.id:
+            ordered += wave_selections(db, other)[0]
+    return forecast_selections(db, plan, ordered)
+
+
+def accepted_costs(accepted: list[tuple], calculated: dict) -> Decimal:
+    """Costs of the accepted lines: their own part as saved, the shared costs as `calculated` spreads them."""
+    current_lines = {line['line_id']: line for line in calculated['lines']}
+    costs = dec('0')
+    for allocation, old, snapshot, _ in accepted:
+        quantity = allocation.quantity
+        factor = quantity / dec(old['quantity'])
+        detail = old['detail']
+        new = current_lines['allocation:' + allocation.id]
+        current_factor = quantity / dec(new['quantity'])
+        wave_names = {expense['name'] for expense in normalize_logistics_expenses(
+            snapshot.get('resolved_expenses', snapshot.get('input', {}).get('expenses', []) or []))
+                      if expense.get('scope', 'WAVE') == 'WAVE' and expense.get('include_in_cost', True)}
+        old_shared = sum((dec(old.get('expense_details', {}).get(name, '0')) for name in wave_names), dec('0'))
+        old_vat = dec('0') if snapshot.get('vat_deductible', snapshot.get('profile', {}).get('vat_deduction_mode', True)) else dec(detail.get('import_vat', '0'))
+        new_vat = dec('0') if snapshot.get('vat_deductible', snapshot.get('profile', {}).get('vat_deduction_mode', True)) else dec(new['detail']['import_vat'])
+        old_base = (dec(detail['cost']) - old_shared - dec(detail['customs_fee']) - dec(detail['duty']) - old_vat) * factor
+        new_shared = dec(new['detail']['international_logistics']) + dec(new['detail']['general_expenses'])
+        costs += old_base + (new_shared + dec(new['detail']['customs_fee']) + dec(new['detail']['duty']) + new_vat) * current_factor
+    return costs
+
+
+def wave_actual_summary(db, wave_id, profile, expenses, rates, budgeted=True):
+    """Accepted sales keep their prices; only shared wave costs are redistributed.
+
+    Business remark of 19 October 2026: a wave without a budget takes the shared costs of its plan or of its
+    latest accepted proposal (`actual_costs`), and while it still takes orders the planned volume not ordered
+    yet shares them (`planned_rest`), as when the proposals were priced. What the accepted lines would earn
+    shipped alone is given apart as `accepted_only_*`.
+    """
+    wave = db.get(Wave, wave_id)
+    selections, accepted, calculations = {}, [], []
     for allocation in db.scalars(select(WaveAllocation).where(WaveAllocation.wave_id == wave_id, WaveAllocation.active.is_(True))):
         execution = db.get(Execution, allocation.execution_id)
         proposal = db.get(CommercialDocument, execution.proposal_id)
@@ -1153,28 +1230,19 @@ def wave_actual_summary(db, wave_id, profile, expenses, rates):
         selection["quote_item"]["id"] = key
         selections[key] = selection
         accepted.append((allocation, line, calculation.snapshot, execution))
+        calculations.append(calculation)
     if not accepted:
         return {'status': 'empty', 'message': 'В волну ещё не распределены принятые позиции'}
-    current = calculate_itemized(profile, list(selections.values()), expenses, rates)
-    current_lines = {line['line_id']: line for line in current['lines']}
-    sales = sale_net = costs = prepaid = deferred = dec('0')
-    for allocation, old, snapshot, execution in accepted:
-        quantity = allocation.quantity
-        factor = quantity / dec(old['quantity'])
-        detail = old['detail']
-        new = current_lines['allocation:' + allocation.id]
-        current_factor = quantity / dec(new['quantity'])
-        wave_names = {expense['name'] for expense in normalize_logistics_expenses(
-            snapshot.get('resolved_expenses', snapshot.get('input', {}).get('expenses', []) or []))
-                      if expense.get('scope', 'WAVE') == 'WAVE' and expense.get('include_in_cost', True)}
-        old_shared = sum((dec(old.get('expense_details', {}).get(name, '0')) for name in wave_names), dec('0'))
-        old_vat = dec('0') if snapshot.get('vat_deductible', snapshot.get('profile', {}).get('vat_deduction_mode', True)) else dec(detail.get('import_vat', '0'))
-        new_vat = dec('0') if snapshot.get('vat_deductible', snapshot.get('profile', {}).get('vat_deduction_mode', True)) else dec(new['detail']['import_vat'])
-        old_base = (dec(detail['cost']) - old_shared - dec(detail['customs_fee']) - dec(detail['duty']) - old_vat) * factor
-        new_shared = dec(new['detail']['international_logistics']) + dec(new['detail']['general_expenses'])
-        costs += old_base + (new_shared + dec(new['detail']['customs_fee']) + dec(new['detail']['duty']) + new_vat) * current_factor
+    source = "budget"
+    if not budgeted:
+        profile, expenses, rates, source = actual_costs(db, wave, calculations, profile, expenses, rates)
+    planned = planned_rest(db, wave, list(selections.values()))
+    current = calculate_itemized(profile, [*selections.values(), *planned], expenses, rates)
+    costs = accepted_costs(accepted, current)
+    sales = sale_net = prepaid = deferred = dec('0')
+    for allocation, _, snapshot, execution in accepted:
         # Execution amounts preserve document rounding, including partial acceptance.
-        execution_factor = quantity / execution.quantity
+        execution_factor = allocation.quantity / execution.quantity
         total = dec(execution.snapshot['total']) * execution_factor
         net = dec(execution.snapshot['net']) * execution_factor
         sales += total
@@ -1183,10 +1251,26 @@ def wave_actual_summary(db, wave_id, profile, expenses, rates):
         prepaid += total * dec(terms.get('prepayment_percent', '100')) / 100
         deferred += total * dec(terms.get('deferred_percent', '0')) / 100
     profit = sale_net - costs
-    return {key: format(value.quantize(dec('.01')), 'f') for key, value in {
+    planned_quantity = sum((dec(row["quote_item"]["quantity"]) for row in planned), dec('0'))
+    basis = ['Принятые и распределённые позиции: цены документов', COSTS_SOURCES[source]]
+    if planned_quantity:
+        basis.append(f'пока волна комплектуется, общие расходы делятся и на плановый остаток '
+                     f'{format(planned_quantity.normalize(), "f")} шт., как в КП')
+    basis.append('финансирование и бонусы по сохранённому расчёту')
+    result = {key: format(value.quantize(dec('.01')), 'f') for key, value in {
         'sales': sales, 'sale_net': sale_net, 'cost': costs, 'profit': profit,
         'prepayment_total': prepaid, 'deferred_total': deferred,
         **profitability_metrics(profit, sale_net, costs),
     }.items()} | {'status': 'current', 'customs_fee_1': current['wave_distribution']['customs_fee_1'],
-                 'customs_fee_2': current['wave_distribution']['customs_fee_2'],
-                 'basis': 'Принятые и распределённые позиции: цены документов и текущие общие расходы; финансирование и бонусы по сохранённому расчёту'}
+                 'customs_fee_2': current['wave_distribution']['customs_fee_2'], 'costs_source': source,
+                 'planned_quantity': format(planned_quantity.normalize(), 'f') if planned_quantity else '0',
+                 'basis': '; '.join(basis)}
+    if planned_quantity:
+        # Shipped with the accepted lines only, the wave carries all its shared costs alone.
+        alone = accepted_costs(accepted, calculate_itemized(profile, list(selections.values()), expenses, rates))
+        result |= {key: format(value.quantize(dec('.01')), 'f') for key, value in {
+            'accepted_only_cost': alone, 'accepted_only_profit': sale_net - alone,
+            'accepted_only_profitability_percent': profitability_metrics(
+                sale_net - alone, sale_net, alone)['profitability_percent'],
+        }.items()}
+    return result

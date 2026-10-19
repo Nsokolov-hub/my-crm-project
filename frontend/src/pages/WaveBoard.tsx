@@ -19,6 +19,10 @@ type Summary = {
   profit: string | null;
   profitability_percent: string | null;
   offered_profitability_percent?: string | null;
+  /** Planned pieces not ordered yet that share the costs of an assembling wave, as in its proposals. */
+  planned_rest_quantity?: string | null;
+  /** Profitability of the accepted positions if the wave shipped with them alone. */
+  accepted_only_profitability_percent?: string | null;
 };
 export type BoardWave = Entity & {
   number: string;
@@ -167,6 +171,7 @@ function WaveCard({
   const summary = wave.summary;
   const loss =
     summary?.profit !== null && summary?.profit !== undefined && Number(summary.profit) < 0;
+  const alone = summary?.accepted_only_profitability_percent;
   // A wave without requests has nothing to sum up yet: only its plan is worth showing.
   const empty = !wave.requests && !wave.hidden_requests;
   return (
@@ -211,12 +216,22 @@ function WaveCard({
             <dd>{summary ? percent(summary.profitability_percent) : '—'}</dd>
           </div>
         )}
+        {/* Business remark of 19 October 2026: the result counts the planned rest, as the proposals did. */}
+        {!empty && board.profitability && alone !== null && alone !== undefined && (
+          <div className={`wave-card-offered${Number(alone) < 0 ? ' loss' : ''}`}>
+            <dt>Если отправить только принятые</dt>
+            <dd>{percent(alone)}</dd>
+          </div>
+        )}
         {!empty && (
           <div>
             <dt>Штук</dt>
             <dd>
               {wave.quantity === null ? '—' : decimal(wave.quantity)}
               {wave.planned_quantity && <small> из плана {decimal(wave.planned_quantity)}</small>}
+              {summary?.planned_rest_quantity && (
+                <small> + {decimal(summary.planned_rest_quantity)} по плану</small>
+              )}
             </dd>
           </div>
         )}

@@ -372,6 +372,14 @@ function WaveFinancialSummary({ summary }: { summary: Entity }) {
               'Доходность затрат, %': metric((summary.actual as Entity).cost_profitability_percent),
               'Предоплата по заказам, ₽': decimal((summary.actual as Entity).prepayment_total),
               'Отсрочка по заказам, ₽': decimal((summary.actual as Entity).deferred_total),
+              ...(Number((summary.actual as Entity).planned_quantity || 0) > 0 && {
+                'Плановый остаток в расходах, шт.': decimal(
+                  (summary.actual as Entity).planned_quantity,
+                ),
+                'Если отправить только принятые, %': metric(
+                  (summary.actual as Entity).accepted_only_profitability_percent,
+                ),
+              }),
             }}
           />
         </>

@@ -30,7 +30,9 @@ AMOUNTS = ("quantity", "sales", "net", "profit", "logistics")
 BASIS = ("Продажи — реальный объём: принятые клиентом позиции, в волне, где они распределены. Заявки волны, "
          "по которым КП ещё не принято, показаны отдельно («В КП») и в продажи не входят. Продажи с НДС, "
          "рентабельность — прибыль к продажам без НДС, как внутри волны: цены документов и текущие общие "
-         "расходы волны. Логистика — международная на штуку, по принятым позициям.")
+         "расходы волны. Пока волна комплектуется, общие расходы делятся и на плановый остаток, как в КП; "
+         "рентабельность, если отправить только принятые позиции, показана отдельно. Логистика — международная "
+         "на штуку, по принятым позициям.")
 
 
 def line_amounts(line: dict, quantity: Decimal) -> dict[str, Decimal]:
@@ -175,7 +177,8 @@ class Board:
 def current_result(db, wave: Wave, ledger: Ledger) -> dict[str, Decimal] | None:
     """Sales, net and profit of the accepted positions as inside the wave: positions in the wave at their
     document prices with the current shared costs of the wave, plus the accepted positions still waiting
-    for a wave at their saved calculation. None when the wave cannot be priced that way."""
+    for a wave at their saved calculation. With the planned rest of the wave sharing the costs, also that rest
+    and the profit of the accepted positions shipped alone. None when the wave cannot be priced that way."""
     from .financial import wave_financial_summary
 
     if ledger.accepted["quantity"] == ledger.pending["quantity"]:
@@ -186,9 +189,13 @@ def current_result(db, wave: Wave, ledger: Ledger) -> dict[str, Decimal] | None:
         return None
     if actual.get("status") != "current":
         return None
-    return {"sales": dec(actual["sales"]) + ledger.pending["sales"],
-            "net": dec(actual["sale_net"]) + ledger.pending["net"],
-            "profit": dec(actual["profit"]) + ledger.pending["profit"]}
+    result = {"sales": dec(actual["sales"]) + ledger.pending["sales"],
+              "net": dec(actual["sale_net"]) + ledger.pending["net"],
+              "profit": dec(actual["profit"]) + ledger.pending["profit"]}
+    if dec(actual.get("planned_quantity") or "0"):
+        result.update(planned=dec(actual["planned_quantity"]),
+                      alone=dec(actual["accepted_only_profit"]) + ledger.pending["profit"])
+    return result
 
 
 @router.get("/waves/board")
@@ -241,6 +248,7 @@ def wave_board(db: DB, user: Actor):
                 "potential_sales": money(ledger.total()["sales"]),
                 "incomplete": ledger.unpriced, "profit": None, "profitability_percent": None,
                 "offered_profitability_percent": None, "profit_basis": "saved",
+                "planned_rest_quantity": None, "accepted_only_profitability_percent": None,
             }
             if profitability and ledger.requests <= profitable:
                 # The same profit as inside the wave: current shared costs, not those of the proposal day.
@@ -248,6 +256,11 @@ def wave_board(db: DB, user: Actor):
                 if current:
                     card["summary"].update(sales=money(current["sales"]), sale_net=money(current["net"]),
                                            accepted_sales=money(current["sales"]), profit_basis="current")
+                if current and "planned" in current and current["net"]:
+                    card["summary"].update(
+                        planned_rest_quantity=pieces(current["planned"]),
+                        accepted_only_profitability_percent=money(profitability_metrics(
+                            current["alone"], current["net"], Decimal("0"))["profitability_percent"]))
                 result = current or real
                 card["summary"]["profit"] = money(result["profit"])
                 card["summary"]["profitability_percent"] = money(profitability_metrics(

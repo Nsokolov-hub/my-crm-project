@@ -139,6 +139,29 @@ it('lays waves out by month in two lanes with sales, profitability, pieces and l
   expect(open).toHaveBeenCalledWith('work');
 });
 
+it('counts the planned rest of an assembling wave and shows the accepted positions alone apart', async () => {
+  // «Аозеал 4 — рабочая 1»: 3 pieces accepted, 9 more planned share the freight, as in the proposal.
+  const assembling: BoardWave = {
+    ...work,
+    quantity: '3',
+    summary: {
+      ...work.summary!,
+      profit: '28870.79',
+      profitability_percent: '20.73',
+      planned_rest_quantity: '9',
+      accepted_only_profitability_percent: '-27.19',
+    },
+  };
+  vi.mocked(api).mockResolvedValue({ ...board, items: [assembling] });
+  render(<WaveBoard onOpen={vi.fn()} />);
+  await screen.findByText('Октябрь 2026');
+  const working = card('Beijing Asnail Biotechnology Co, Ltd.');
+  expect(within(working).getByText('20,73 %').closest('div')).not.toHaveClass('loss');
+  expect(within(working).getByText(/\+ 9 по плану/)).toBeVisible();
+  expect(within(working).getByText('Если отправить только принятые')).toBeVisible();
+  expect(within(working).getByText('-27,19 %').closest('div')).toHaveClass('loss');
+});
+
 it('shows one lane in detail and places waves by the chosen date', async () => {
   vi.mocked(api).mockResolvedValue(board);
   render(<WaveBoard onOpen={vi.fn()} />);
