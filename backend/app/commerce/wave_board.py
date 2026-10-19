@@ -1,9 +1,10 @@
 """Board of waves in use: planned and working lanes with a short sales summary per wave.
 
-A wave sells what was accepted into it and what its requests still offer. Accepted positions count in the
-wave that holds them; positions accepted but not yet handed to a wave count in the request's wave; a request
-with nothing accepted counts its latest current commercial proposal. Every amount comes from the saved
-calculation lines in RUB, so sales, profit and logistics on one card share one basis.
+The sales of a wave are what was accepted into it, as inside the wave: accepted positions count in the wave
+that holds them; positions accepted but not yet handed to a wave count in the request's wave. What its
+requests still offer — the latest current commercial proposal of a request with nothing accepted — is shown
+apart as «В КП» and is not added to the sales. Every amount comes from the saved calculation lines in RUB, so
+sales, profit and logistics on one card share one basis.
 """
 
 from collections import defaultdict
@@ -25,9 +26,9 @@ router = APIRouter(tags=["Согласования и поставки"])
 
 CURRENT_PROPOSALS = ("issued", "sent", "accepted")
 AMOUNTS = ("quantity", "sales", "net", "profit", "logistics")
-BASIS = ("Принятые позиции считаются в волне, где они распределены; остальные заявки волны — по последнему "
-         "действующему КП. Продажи с НДС, рентабельность — прибыль к продажам без НДС, логистика — "
-         "международная на штуку.")
+BASIS = ("Продажи — реальный объём: принятые клиентом позиции, в волне, где они распределены. Заявки волны, "
+         "по которым КП ещё не принято, показаны отдельно («В КП») и в продажи не входят. Продажи с НДС, "
+         "рентабельность — прибыль к продажам без НДС, логистика — международная на штуку, по принятым позициям.")
 
 
 def line_amounts(line: dict, quantity: Decimal) -> dict[str, Decimal]:
@@ -52,6 +53,7 @@ class Ledger:
         self.unpriced = False
 
     def total(self) -> dict[str, Decimal]:
+        """Accepted and offered together: the potential of the wave, not its sales."""
         return {key: self.accepted[key] + self.offered[key] for key in AMOUNTS}
 
 
@@ -199,22 +201,28 @@ def wave_board(db: DB, user: Actor):
             year, week, _ = day.isocalendar()
             card.update({f"{prefix}_date": day.isoformat(), f"{prefix}_year": getattr(wave, f"{prefix}_year") or year,
                          f"{prefix}_week": getattr(wave, f"{prefix}_week") or week})
-        total = ledger.total()
+        # Business remark of 19 October 2026: the card shows the real sales, the same as inside the wave.
+        real = ledger.accepted
         if ledger.requests <= visible:
-            card["quantity"] = pieces(total["quantity"])
+            card["quantity"] = pieces(real["quantity"])
+            card["offered_quantity"] = pieces(ledger.offered["quantity"])
         if amounts and ledger.requests <= priced:
             card["summary"] = {
-                "sales": money(total["sales"]), "sale_net": money(total["net"]),
-                "logistics": money(total["logistics"]),
-                "logistics_per_unit": money(total["logistics"] / total["quantity"]) if total["quantity"] else None,
-                "accepted_quantity": pieces(ledger.accepted["quantity"]),
-                "accepted_sales": money(ledger.accepted["sales"]),
+                "sales": money(real["sales"]), "sale_net": money(real["net"]),
+                "logistics": money(real["logistics"]),
+                "logistics_per_unit": money(real["logistics"] / real["quantity"]) if real["quantity"] else None,
+                "accepted_quantity": pieces(real["quantity"]), "accepted_sales": money(real["sales"]),
                 "offered_quantity": pieces(ledger.offered["quantity"]), "offered_sales": money(ledger.offered["sales"]),
+                "potential_sales": money(ledger.total()["sales"]),
                 "incomplete": ledger.unpriced, "profit": None, "profitability_percent": None,
+                "offered_profitability_percent": None,
             }
             if profitability and ledger.requests <= profitable:
-                card["summary"]["profit"] = money(total["profit"])
+                card["summary"]["profit"] = money(real["profit"])
                 card["summary"]["profitability_percent"] = money(profitability_metrics(
-                    total["profit"], total["net"], Decimal("0"))["profitability_percent"])
+                    real["profit"], real["net"], Decimal("0"))["profitability_percent"]) if real["net"] else None
+                card["summary"]["offered_profitability_percent"] = money(profitability_metrics(
+                    ledger.offered["profit"], ledger.offered["net"], Decimal("0"))["profitability_percent"]
+                ) if ledger.offered["net"] else None
         cards.append(card)
     return {"items": cards, "basis": BASIS, "amounts": amounts, "profitability": profitability}

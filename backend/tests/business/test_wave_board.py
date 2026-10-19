@@ -1,4 +1,5 @@
-"""The board of waves: sales, profitability, pieces and logistics per unit of every wave in use."""
+"""The board of waves: real sales, profitability, pieces and logistics per unit of every wave in use,
+and the proposals not accepted yet apart."""
 
 from decimal import Decimal
 
@@ -41,14 +42,14 @@ def test_a_plan_shows_the_latest_proposal_of_each_request(crm):  # noqa: F811
     shown = card(crm, req["wave_id"])
     summary = shown["summary"]
     assert (shown["requests"], shown["requests_without_proposal"], shown["proposals"]) == (1, 0, 1)
-    assert shown["quantity"] == "1"
-    assert Decimal(summary["sales"]) == Decimal(line["total"]).quantize(Decimal("0.01"))
-    assert Decimal(summary["sale_net"]) == Decimal(line["net"]).quantize(Decimal("0.01"))
-    assert Decimal(summary["profit"]) == Decimal(line["detail"]["profit"]).quantize(Decimal("0.01"))
-    assert Decimal(summary["profitability_percent"]) == (
+    # Business remark of 19 October 2026: a proposal not accepted yet is not a sale; it is shown apart.
+    assert (shown["quantity"], shown["offered_quantity"]) == ("0", "1")
+    assert (summary["sales"], summary["accepted_sales"], summary["profitability_percent"]) == ("0.00", "0.00", None)
+    assert summary["logistics_per_unit"] is None
+    assert Decimal(summary["offered_sales"]) == Decimal(line["total"]).quantize(Decimal("0.01"))
+    assert summary["potential_sales"] == summary["offered_sales"]
+    assert Decimal(summary["offered_profitability_percent"]) == (
         Decimal(line["detail"]["profit"]) / Decimal(line["net"]) * 100).quantize(Decimal("0.01"))
-    assert Decimal(summary["logistics_per_unit"]) == Decimal("500.00")
-    assert (summary["offered_sales"], summary["accepted_sales"]) == (summary["sales"], "0.00")
 
     with crm["sessions"].begin() as db:
         db.get(Request, req["id"]).commercial_stage = "closed_lost"
@@ -73,7 +74,14 @@ def test_accepted_positions_move_from_the_plan_to_the_working_wave(crm):  # noqa
     assert (working["kind"], working["plan_number"], working["requests"], working["quantity"]) == (
         "work", plan["number"], 1, "1")
     assert working["summary"]["accepted_sales"] == waiting["summary"]["accepted_sales"]
-    assert working["summary"]["sales"] == working["summary"]["accepted_sales"]
+    summary = working["summary"]
+    assert Decimal(summary["sales"]) == Decimal(line["total"]).quantize(Decimal("0.01"))
+    assert Decimal(summary["sale_net"]) == Decimal(line["net"]).quantize(Decimal("0.01"))
+    assert Decimal(summary["profit"]) == Decimal(line["detail"]["profit"]).quantize(Decimal("0.01"))
+    assert Decimal(summary["profitability_percent"]) == (
+        Decimal(line["detail"]["profit"]) / Decimal(line["net"]) * 100).quantize(Decimal("0.01"))
+    assert Decimal(summary["logistics_per_unit"]) == Decimal("500.00")
+    assert (summary["offered_sales"], summary["offered_quantity"]) == ("0.00", "0")
     assert [row["id"] for row in board(crm)["items"]].count(work["id"]) == 1
 
 
@@ -91,6 +99,6 @@ def test_amounts_need_the_finance_rights_on_every_request_of_the_wave(crm):  # n
         db.add_all(PermissionGrant(user_id=crm["manager"].id, code=code, scope="all")
                    for code in ("finance.purchase.read", "finance.calculations.read"))
     visible = card(crm, req["wave_id"])
-    assert (visible["requests"], visible["quantity"]) == (1, "1")
-    assert visible["summary"]["sales"] != "0.00"
+    assert (visible["requests"], visible["quantity"], visible["offered_quantity"]) == (1, "0", "1")
+    assert visible["summary"]["offered_sales"] != "0.00"
     assert (visible["summary"]["profit"], visible["summary"]["profitability_percent"]) == (None, None)

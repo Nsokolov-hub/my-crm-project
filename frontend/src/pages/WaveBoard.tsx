@@ -14,9 +14,11 @@ type Summary = {
   accepted_sales: string;
   offered_quantity: string;
   offered_sales: string;
+  potential_sales?: string;
   incomplete: boolean;
   profit: string | null;
   profitability_percent: string | null;
+  offered_profitability_percent?: string | null;
 };
 export type BoardWave = Entity & {
   number: string;
@@ -30,7 +32,10 @@ export type BoardWave = Entity & {
   hidden_requests: number;
   requests_without_proposal: number;
   proposals: number;
+  /** Real pieces: positions accepted by clients. */
   quantity: string | null;
+  /** Pieces of proposals not accepted yet, shown apart from the sales. */
+  offered_quantity?: string;
   summary: Summary | null;
   close_date: string;
   departure_date: string;
@@ -190,6 +195,16 @@ function WaveCard({
             <dd>{summary ? rubles(summary.sales) : '—'}</dd>
           </div>
         )}
+        {/* Business remark of 19 October 2026: proposals not accepted yet are not sales. */}
+        {!empty && Number(wave.offered_quantity || 0) > 0 && (
+          <div className="wave-card-offered">
+            <dt>В КП, не приняты</dt>
+            <dd>
+              {summary ? rubles(summary.offered_sales) : '—'}
+              <small> · {decimal(wave.offered_quantity)} шт.</small>
+            </dd>
+          </div>
+        )}
         {!empty && board.profitability && (
           <div className={loss ? 'loss' : undefined}>
             <dt>Рентабельность</dt>
@@ -213,20 +228,13 @@ function WaveCard({
         )}
         {detailed && !empty && summary && (
           <>
-            <div>
-              <dt>Принято</dt>
-              <dd>
-                {rubles(summary.accepted_sales)}
-                <small> · {decimal(summary.accepted_quantity)} шт.</small>
-              </dd>
-            </div>
-            <div>
-              <dt>В КП</dt>
-              <dd>
-                {rubles(summary.offered_sales)}
-                <small> · {decimal(summary.offered_quantity)} шт.</small>
-              </dd>
-            </div>
+            {summary.offered_profitability_percent !== null &&
+              summary.offered_profitability_percent !== undefined && (
+                <div>
+                  <dt>Рентабельность КП</dt>
+                  <dd>{percent(summary.offered_profitability_percent)}</dd>
+                </div>
+              )}
             {summary.profit !== null && (
               <div>
                 <dt>Прибыль</dt>

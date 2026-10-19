@@ -24,18 +24,21 @@ beforeEach(() => {
   };
 });
 
+// A plan holds proposals only: its real sales are zero and the proposals are shown apart.
 const summary = {
-  sales: '2400000.00',
-  sale_net: '1967213.11',
-  logistics: '114000.00',
-  logistics_per_unit: '950.00',
+  sales: '0.00',
+  sale_net: '0.00',
+  logistics: '0.00',
+  logistics_per_unit: null,
   accepted_quantity: '0',
   accepted_sales: '0.00',
   offered_quantity: '120',
   offered_sales: '2400000.00',
+  potential_sales: '2400000.00',
   incomplete: false,
-  profit: '363934.43',
-  profitability_percent: '18.50',
+  profit: '0.00',
+  profitability_percent: null,
+  offered_profitability_percent: '18.50',
 };
 const plan: BoardWave = {
   id: 'plan',
@@ -51,7 +54,8 @@ const plan: BoardWave = {
   hidden_requests: 0,
   requests_without_proposal: 1,
   proposals: 1,
-  quantity: '120',
+  quantity: '0',
+  offered_quantity: '120',
   summary,
   close_date: '2026-12-14',
   departure_date: '2026-12-21',
@@ -72,12 +76,20 @@ const work: BoardWave = {
   requests: 1,
   requests_without_proposal: 0,
   quantity: '40',
+  offered_quantity: '0',
   summary: {
     ...summary,
     sales: '800000.00',
+    sale_net: '655737.70',
+    logistics: '28000.00',
+    accepted_quantity: '40',
+    accepted_sales: '800000.00',
+    offered_quantity: '0',
+    offered_sales: '0.00',
     logistics_per_unit: '700.00',
     profit: '-1000.00',
     profitability_percent: '-0.15',
+    offered_profitability_percent: null,
   },
   close_date: '2026-10-12',
   departure_date: '2026-10-26',
@@ -107,16 +119,20 @@ it('lays waves out by month in two lanes with sales, profitability, pieces and l
   expect(screen.getByText('Плановые')).toBeVisible();
   expect(screen.getByText('Рабочие')).toBeVisible();
 
+  // Business remark of 19 October 2026: sales are the real, accepted volume; proposals stand apart.
   const planned = card('Pharmaffiliates Pvt Ltd');
+  expect(within(planned).getByText('0 ₽')).toBeVisible();
+  expect(within(planned).getByText('В КП, не приняты')).toBeVisible();
   expect(within(planned).getByText('2,4 млн ₽')).toBeVisible();
-  expect(within(planned).getByText('18,50 %')).toBeVisible();
+  expect(within(planned).getByText(/· 120 шт\./)).toBeVisible();
   expect(within(planned).getByText(/из плана 300/)).toBeVisible();
-  expect(within(planned).getByText('950 ₽')).toBeVisible();
   expect(within(planned).getByText('Прибытие: 28 декабря · нед. 53')).toBeVisible();
   expect(within(planned).getByText('Заявок: 2 · без КП: 1')).toBeVisible();
 
   const working = card('Beijing Asnail Biotechnology Co, Ltd.');
   expect(within(working).getByText('Комплектуется')).toBeVisible();
+  expect(within(working).getByText('800 000 ₽')).toBeVisible();
+  expect(within(working).queryByText('В КП, не приняты')).not.toBeInTheDocument();
   expect(within(working).getByText('-0,15 %').closest('div')).toHaveClass('loss');
 
   fireEvent.click(within(working).getByText('Asnail W44'));
@@ -130,7 +146,7 @@ it('shows one lane in detail and places waves by the chosen date', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Рабочие подробно' }));
   expect(screen.queryByText('Pharmaffiliates Pvt Ltd')).not.toBeInTheDocument();
   const working = card('Beijing Asnail Biotechnology Co, Ltd.');
-  expect(within(working).getByText('В КП')).toBeVisible();
+  expect(within(working).getByText('Логистика всего')).toBeVisible();
   expect(within(working).getByText('Индия-РФ')).toBeVisible();
   expect(within(working).getByText('Плановая Аснаил')).toBeVisible();
 
