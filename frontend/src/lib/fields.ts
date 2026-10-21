@@ -16,6 +16,14 @@ export const clientFields: Field[] = [
   },
   { name: 'country', label: 'Страна' },
   { name: 'tax_id', label: 'ИНН / налоговый номер' },
+  {
+    // Business remark of 21 October 2026.
+    name: 'in_belarus',
+    label: 'Клиент находится в Республике Беларусь',
+    type: 'checkbox',
+    wide: true,
+    help: 'КП и счета — с НДС 0 % и надписью о Приложении № 18 к Договору о ЕАЭС; расчёт с вычетом НДС недоступен.',
+  },
   { name: 'phone', label: 'Телефон' },
   { name: 'email', label: 'Электронная почта', type: 'email' },
   { name: 'owner_id', label: 'Ответственный', type: 'select', source: '/counterparty-owners' },

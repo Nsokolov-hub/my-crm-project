@@ -120,6 +120,18 @@ export function Requests() {
               },
               { key: 'client_name', label: 'Клиент' },
               {
+                // Business remark of 21 October 2026: how many suppliers gave a quote.
+                key: 'quoted_suppliers',
+                label: 'КП поставщиков',
+                sortable: false,
+                render: (r) =>
+                  Number(r.asked_suppliers) > 0
+                    ? `${Number(r.quoted_suppliers || 0)} из ${Number(r.asked_suppliers)}`
+                    : Number(r.quoted_suppliers)
+                      ? String(r.quoted_suppliers)
+                      : '—',
+              },
+              {
                 key: 'commercial_stage',
                 label: 'Коммерческий этап',
                 render: (r) => <Badge value={r.commercial_stage} />,

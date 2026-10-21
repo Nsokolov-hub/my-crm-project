@@ -2879,6 +2879,34 @@ tr.clickable-row {
   }
 }
 
+.report-search {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+
+  label {
+    display: flex;
+    flex: 1 1 280px;
+    gap: 8px;
+    align-items: center;
+    padding: 0 12px;
+    border: 1px solid #ecebf3;
+    border-radius: 10px;
+    background: #fff;
+    color: #687283;
+  }
+
+  input {
+    flex: 1;
+    min-width: 0;
+    padding: 9px 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+  }
+}
+
 .report-settings {
   display: flex;
   flex-wrap: wrap;

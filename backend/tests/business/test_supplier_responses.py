@@ -45,9 +45,13 @@ def setup(env, monkeypatch):
     return req, items, alpha, beta, {row["supplier_id"]: row["id"] for row in mails["items"]}
 
 
+NAMES = {1: "Atropine", 2: "Caffeine", 3: "Column C18"}
+
+
 def quote(env, req, supplier, rows):
     batch = preview(env, req["id"], list(QUOTE_COLUMNS.values()), [
-        quote_file(supplier["internal_code"], {"source_row": str(number), "article": f"ART-{number}"})
+        quote_file(supplier["internal_code"], {"source_row": str(number), "article": f"ART-{number}",
+                                               "name": NAMES[number]})
         for number in rows], "quotes")
     confirm(env, req["id"], batch["id"])
 
@@ -61,7 +65,7 @@ def test_positions_are_priced_declined_or_waiting_per_supplier(crm, monkeypatch)
     assert set(columns) == {"Alpha Chem", "Beta Labs"}
     assert columns["Alpha Chem"]["hours"] >= 30 and columns["Beta Labs"]["answered_at"] is None
     assert [(row["number"], row["description"], row["manufacturer_name"]) for row in matrix["items"]] == [
-        (1, "Новый товар", "Merck"), (2, "Caffeine", "Merck"), (3, "Новый товар", "Waters")]
+        (1, "Atropine", "Merck"), (2, "Caffeine", "Merck"), (3, "Column C18", "Waters")]
     statuses = [{column: row["cells"][column]["status"] for column in row["cells"]} for row in matrix["items"]]
     assert statuses == [
         {alpha["id"]: "priced", beta["id"]: "waiting"},
@@ -131,7 +135,8 @@ def test_priced_cells_show_rubles_and_term_and_suppliers_with_more_prices_come_f
     quote(crm, req, alpha, [3])
     batch = preview(crm, req["id"], list(QUOTE_COLUMNS.values()), [
         quote_file(beta["internal_code"], {"source_row": str(number), "article": f"B-{number}",
-                                          "currency": "usd", "unit_price": "10", "delivery_days": "21"})
+                                          "name": NAMES[number], "currency": "usd", "unit_price": "10",
+                                          "delivery_days": "21"})
         for number in (1, 2)], "quotes")
     confirm(crm, req["id"], batch["id"])
 

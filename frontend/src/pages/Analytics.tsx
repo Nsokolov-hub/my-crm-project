@@ -5,6 +5,7 @@ import {
   Download,
   Factory,
   Mailbox,
+  Tags,
   Users,
   Wallet,
   Workflow,
@@ -30,6 +31,7 @@ import { SalesManagerReport } from './Business';
 import type { Entity } from '../lib/types';
 import type { DashboardData } from './Dashboard';
 import { ManufacturerReport } from './Manufacturers';
+import { SupplierPricesReport } from './SupplierPrices';
 import { SupplierReport } from './SupplierResponses';
 
 type Settings = { preset: string; from: string; to: string; charts: boolean };
@@ -254,6 +256,18 @@ const REPORTS: Report[] = [
     charts: false,
     defaultPreset: 'year',
     render: ({ from, to }) => <SupplierReport from={from} to={to} />,
+  },
+  {
+    // Business remark of 21 October 2026.
+    id: 'supplier-prices',
+    title: 'База цен поставщиков',
+    description:
+      'Все цены из квот: товар, фасовка, цена в валюте и в рублях, срок. Выгрузка в Excel с лучшими ценами.',
+    icon: Tags,
+    permission: 'finance.purchase.read',
+    charts: false,
+    defaultPreset: 'year',
+    render: ({ from, to }) => <SupplierPricesReport from={from} to={to} />,
   },
   {
     id: 'receivables',

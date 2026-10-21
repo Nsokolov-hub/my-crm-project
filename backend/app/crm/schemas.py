@@ -50,6 +50,7 @@ class ClientInput(Input):
     client_base: Literal['cold', 'working'] = 'working'
     country: str | None = Field(default=None, max_length=100)
     tax_id: str | None = Field(default=None, max_length=100)
+    in_belarus: bool = False
     email: EmailStr | None = None
     phone: str | None = Field(default=None, max_length=100)
     owner_id: str | None = None
@@ -83,6 +84,7 @@ class ClientPatch(Input):
     kind: Literal['client', 'supplier', 'both'] = Field(default=None)
     country: str | None = None
     tax_id: str | None = None
+    in_belarus: bool = Field(default=None)
     email: EmailStr | None = None
     phone: str | None = None
     owner_id: str = Field(default=None)

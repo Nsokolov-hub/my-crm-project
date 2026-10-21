@@ -34,6 +34,8 @@ from app.crm.models import (
     Nomenclature,
     Packing,
     ProductGroup,
+    QuoteItem,
+    QuoteSheet,
     Request,
     RequestItem,
     RequestItemRevision,
@@ -140,10 +142,32 @@ def requests(q: str = '', stage: str | None = None, client_id: str | None = None
     result = paginate(db, stmt.order_by(col.desc() if direction == 'desc' else col, Request.id), page, page_size)
     clients = prefetch(db, Counterparty, (item['client_id'] for item in result['items']))
     owners = prefetch(db, User, (item['owner_id'] for item in result['items']))
+    quoted, asked = supplier_counts(db, [item['id'] for item in result['items']])
     for item in result['items']:
         item['client_name'] = clients[item['client_id']].name
         item['owner_name'] = owners[item['owner_id']].name
+        item['quoted_suppliers'] = quoted.get(item['id'], 0)
+        item['asked_suppliers'] = asked.get(item['id'], 0)
     return result
+
+
+def supplier_counts(db: Session, request_ids: list[str]) -> tuple[dict[str, int], dict[str, int]]:
+    """Business remark of 21 October 2026: per request, how many suppliers gave a quote (a current quote with
+    prices) and how many were sent a request for one."""
+    from app.business.models import SupplierMail
+
+    if not request_ids:
+        return {}, {}
+    quoted = dict(db.execute(
+        select(QuoteSheet.request_id, sa.func.count(sa.distinct(QuoteSheet.supplier_id)))
+        .join(QuoteItem, QuoteItem.quote_id == QuoteSheet.id)
+        .where(QuoteSheet.request_id.in_(request_ids), QuoteSheet.archived.is_(False), QuoteItem.archived.is_(False))
+        .group_by(QuoteSheet.request_id)).all())
+    asked = dict(db.execute(
+        select(SupplierMail.request_id, sa.func.count(sa.distinct(SupplierMail.supplier_id)))
+        .where(SupplierMail.request_id.in_(request_ids), SupplierMail.sent_at.is_not(None))
+        .group_by(SupplierMail.request_id)).all())
+    return quoted, asked
 
 
 @router.post('/requests', status_code=201)
@@ -172,7 +196,10 @@ def create_request(body: RequestInput, idempotency_key: str | None = Header(defa
 def request_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     row = check_request(db, user, entity_id)
     result = serialize(row)
-    result['client_name'] = db.get(Counterparty, row.client_id).name
+    client = db.get(Counterparty, row.client_id)
+    result['client_name'] = client.name
+    # Business remark of 21 October 2026: the calculation form sells to such a client with VAT 0 %.
+    result['client_in_belarus'] = bool(client.in_belarus)
     result['owner_name'] = db.get(User, row.owner_id).name
     result['source_columns'] = list(dict.fromkeys(col for columns in db.scalars(select(RequestItem.source_columns).where(RequestItem.request_id == row.id, RequestItem.archived.is_(False))) for col in (columns or [])))
     contact = db.get(Contact, row.contact_id) if row.contact_id else None

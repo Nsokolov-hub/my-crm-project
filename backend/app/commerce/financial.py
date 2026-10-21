@@ -23,6 +23,7 @@ from app.crm.models import (
     ProductGroup,
     QuoteItem,
     QuoteSheet,
+    RequestItem,
 )
 from app.crm.models import (
     Request as CRMRequest,
@@ -703,8 +704,15 @@ def itemized_selection(db, request_id: str, selection, index: int) -> dict:
     if not group:
         error("PRODUCT_GROUP_REQUIRED", f"У позиции {nomenclature.name} {packing.display_name} не определена товарная группа", field=f"selections.{index}.quote_item_id")
     quote_data = serialize(quote)
-    # A calculation prices one piece unless the user enters another quantity; the request's demand is not used.
-    quote_data["quantity"] = str(selection.quantity) if selection.quantity is not None else "1"
+    # Business remark of 21 October 2026: unless the user enters another quantity, the demand of the request
+    # position is priced (in packings of the quote), one packing when the request states none.
+    if selection.quantity is not None:
+        quote_data["quantity"] = str(selection.quantity)
+    else:
+        from app.crm.quotes import requested_packings
+
+        source = db.get(RequestItem, quote.source_request_item_id) if quote.source_request_item_id else None
+        quote_data["quantity"] = str(requested_packings(db, source, packing) or 1)
     return {
         "quote_item": quote_data,
         "nomenclature": serialize(nomenclature),
@@ -734,8 +742,18 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             "PROFILE_NOT_EFFECTIVE", "Выберите активный опубликованный профиль, действующий на дату расчёта"
         )
     itemized = profile.definition.get("methodology") == "itemized_v2"
+    # Business remark of 21 October 2026: a client in Belarus is sold to with VAT 0 % (Annex 18 to the EAEU
+    # Treaty), and a calculation with VAT deduction is not offered for it.
+    client = db.get(Counterparty, req.client_id)
+    belarus = bool(client and client.in_belarus)
     if data.vat_deductible is None:
-        data = data.model_copy(update={"vat_deductible": itemized})
+        data = data.model_copy(update={"vat_deductible": itemized and not belarus})
+    if belarus and data.vat_deductible:
+        error("VAT_DEDUCTION_BELARUS", "Клиент находится в Республике Беларусь: продажа с НДС 0 %, "
+              "расчёт с вычетом НДС для него недоступен", field="vat_deductible")
+    if belarus and not itemized:
+        error("PROFILE_METHOD", "Для клиента из Республики Беларусь выберите профиль новой методики",
+              field="profile_id")
     if itemized:
         if data.internal_adjustment or any(selection.bonus_coefficient is not None
                                            for selection in data.selections):
@@ -813,6 +831,8 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         validate_unknown_wave_basis(profile.definition, effective_expenses, missing_basis)
         effective_profile = deepcopy(profile.definition)
         effective_profile["vat_deduction_mode"] = data.vat_deductible
+        if belarus:
+            effective_profile.update(sale_vat_rate="0", tax_category="НДС 0%")
         for selection in selections:
             selection["_request_id"] = request_id
         snapshot = calculate_itemized(
@@ -844,6 +864,7 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         else:
             snapshot['wave_distribution']['digest'] = digest({'selections': selections, 'expenses': effective_expenses, 'profile': effective_profile})
         snapshot["vat_deductible"] = data.vat_deductible
+        snapshot["sale_vat"] = {"rate": "0", "reason": "belarus"} if belarus else None
         # The person checks and enters the total delivery term; quotes no longer fill it in.
         snapshot["delivery_days"] = data.delivery_days
         snapshot["resolved_expenses"] = effective_expenses

@@ -36,6 +36,7 @@ from app.crm.models import (
     Nomenclature,
     Packing,
     ProductGroup,
+    QuoteSheet,
     Request,
     RequestItem,
     RequestItemRevision,
@@ -274,6 +275,94 @@ def request_plan(columns, rows, mapping):
     return plan
 
 
+def words(value) -> list[str]:
+    return re.findall(r"[0-9a-zа-яё]+", (value or "").casefold())
+
+
+def compact(value) -> str:
+    return "".join(words(value))
+
+
+def packing_key(value, unit) -> str:
+    """«125 mg», «125.0 MG» and «125 мг» alike, to compare a quoted packing with the one asked for."""
+    try:
+        amount = format(Decimal(str(value).replace(",", ".")).normalize(), "f")
+    except (InvalidOperation, ValueError):
+        return ""
+    return compact(f"{amount} {UNITS.get((unit or '').casefold(), unit or '')}")
+
+
+class Positions:
+    """Matches a quote row to the request position of the same product.
+
+    Business remark of 21 October 2026: a supplier numbers the rows of its own quote, so «Позиция заявки» 2 of
+    Beijing Asnail was the density bottle, which the request holds as position 4. The product decides; the
+    number in the file only settles a tie between positions of the same product.
+    """
+
+    def __init__(self, db, items: list[RequestItem]):
+        self.items = items
+        products = {n.id: n for n in db.scalars(select(Nomenclature).where(
+            Nomenclature.id.in_([item.nomenclature_id for item in items if item.nomenclature_id])))}
+        packs = {p.id: p for p in db.scalars(select(Packing).where(
+            Packing.id.in_([item.packing_id for item in items if item.packing_id])))}
+        self.facts = {}
+        for item in items:
+            product = products.get(item.nomenclature_id)
+            pack = packs.get(item.packing_id)
+            self.facts[item.id] = {
+                "nomenclature_id": item.nomenclature_id,
+                "cas": {compact(value) for value in (item.cas, product and product.cas) if compact(value)},
+                "articles": {compact(value) for value in (item.article, product and product.article)
+                             if len(compact(value)) >= 4},
+                "names": [words(value) for value in (item.description, product and product.name) if words(value)],
+                "packings": {key for key in (packing_key(pack.value, pack.unit) if pack else "",
+                                             compact(item.packaging)) if key},
+            }
+
+    def score(self, item: RequestItem, row: dict) -> tuple[int, int]:
+        """(3 — the same nomenclature, CAS or article; 2 — the same name or one article within the other;
+        1 — the shorter name within the longer; 0 — nothing in common, and 1 when the packing agrees)."""
+        facts = self.facts[item.id]
+        packing = int(bool(row["packing"]) and row["packing"] in facts["packings"])
+        if row["nomenclature_id"] and row["nomenclature_id"] == facts["nomenclature_id"]:
+            return 3, packing
+        if facts["cas"] & row["cas"] or facts["articles"] & row["articles"]:
+            return 3, packing
+        if any(min(len(a), len(b)) >= 5 and (a in b or b in a) for a in facts["articles"] for b in row["articles"]):
+            return 2, packing
+        if any(a == b for a in facts["names"] for b in row["names"]):
+            return 2, packing
+        for a in facts["names"]:
+            for b in row["names"]:
+                short, long = sorted((a, b), key=len)
+                if set(short) <= set(long) and max(map(len, short)) >= 5:
+                    return 1, packing
+        return 0, packing
+
+    def match(self, row: dict, stated: int | None) -> tuple[RequestItem | None, int | None]:
+        """The position of the row and the number the file stated, when the product moved the row elsewhere."""
+        scores = {item.id: self.score(item, row) for item in self.items}
+        best = max(scores.values(), default=(0, 0))
+        leaders = [item for item in self.items if scores[item.id] == best]
+        if stated:
+            named = self.items[stated - 1]
+            if scores[named.id][0] and scores[named.id][0] == best[0]:
+                return named, None
+            if best[0] < 2:
+                return named, None  # The product cannot be told apart: the number in the file stands.
+            if len(leaders) > 1:
+                numbers = ", ".join(str(self.items.index(item) + 1) for item in leaders)
+                raise ValueError(f"В позиции заявки {stated} другой товар, а этот совпадает с позициями {numbers}. "
+                                 "Укажите номер нужной позиции")
+            return leaders[0], stated
+        if best[0] < 2:
+            return None, None
+        if len(leaders) > 1:
+            raise ValueError("Укажите номер позиции заявки: товар совпадает с несколькими строками")
+        return leaders[0], None
+
+
 def quote_plan(db, request_id, columns, rows, mapping, catalog_write=True):
     """Checks every quote row; a group named in the file reclassifies the nomenclature it names.
 
@@ -325,6 +414,8 @@ def quote_plan(db, request_id, columns, rows, mapping, catalog_write=True):
     seen = set()
     new_definitions = {}
     regrouped = {}
+    filled_makers = {}
+    positions = Positions(db, items)
     plan = []
     for i, raw in enumerate(rows, 2):
         values = values_for(columns, raw, mapping)
@@ -357,21 +448,23 @@ def quote_plan(db, request_id, columns, rows, mapping, catalog_write=True):
                 raise ValueError("Срок поставки слишком большой")
             data["delivery_days"] = int(Decimal(days))
             source_row = values.get("source_row", "")
-            if source_row:
-                if not source_row.isdigit() or not 1 <= int(source_row) <= len(items):
-                    raise ValueError("Номер позиции заявки не найден")
-                source = items[int(source_row) - 1]
-            else:
-                candidates = [
-                    item
-                    for item in items
-                    if (item.article or "").strip().casefold() == article.casefold()
-                    or n
-                    and item.nomenclature_id == n.id
-                ]
-                if len(candidates) > 1:
-                    raise ValueError("Укажите номер позиции заявки: найдено несколько строк")
-                source = candidates[0] if candidates else RequestItem(quantity=Decimal(data["quantity"]), unit="pcs")
+            if source_row and (not source_row.isdigit() or not 1 <= int(source_row) <= len(items)):
+                raise ValueError("Номер позиции заявки не найден")
+            product = {
+                "nomenclature_id": n.id if n else None,
+                "cas": {compact(value) for value in (data.get("cas"), n and n.cas) if compact(value)},
+                "articles": {compact(value) for value in (article, n and n.article) if len(compact(value)) >= 4},
+                "names": [words(value) for value in (data.get("name"), n and n.name) if words(value)],
+                "packing": packing_key(data.get("packing_value"), data.get("packing_unit"))
+                if data.get("packing_value") else "",
+            }
+            matched, stated = positions.match(product, int(source_row) if source_row else None)
+            source = matched or RequestItem(quantity=Decimal(data["quantity"]), unit="pcs")
+            if matched:
+                data["source_position"] = items.index(matched) + 1
+                data["source_description"] = matched.description
+            if stated:
+                data["source_position_stated"] = stated
             identity = (s.id, source.id, article.casefold(), data.get("packing_value"), data.get("packing_unit"))
             if identity in seen:
                 raise ValueError("Позиция заявки повторяется для одного поставщика")
@@ -420,8 +513,25 @@ def quote_plan(db, request_id, columns, rows, mapping, catalog_write=True):
                 else:
                     data["manufacturer_id"] = None
                     data["manufacturer_new"] = bool(data.get("manufacturer"))
-            else:
+            elif n.manufacturer_id or n.manufacturer:
                 data["manufacturer"], data["manufacturer_id"] = n.manufacturer, n.manufacturer_id
+            else:
+                # Business remark of 21 October 2026: a nomenclature created without a manufacturer takes
+                # the one a later quote names, like a group still «Другое».
+                stated_maker = data.get("manufacturer")
+                maker = find_manufacturer(db, stated_maker)
+                if maker:
+                    data["manufacturer"], data["manufacturer_id"] = maker.name, maker.id
+                elif (stated_maker or "").isdigit():
+                    raise ValueError(f"Производителя с номером {stated_maker} нет в реестре")
+                else:
+                    data["manufacturer_id"] = None
+                    data["manufacturer_new"] = bool(stated_maker)
+                if stated_maker:
+                    data["manufacturer_filled"] = True
+                    spelling = data["manufacturer_id"] or normalized(stated_maker)
+                    if filled_makers.setdefault(n.id, spelling) != spelling:
+                        raise ValueError("Для одного артикула в файле указаны разные производители")
             existing_packings = packings[n.id] if n else []
             packing = None
             if data.get("packing_value"):
@@ -493,6 +603,35 @@ def regroup_nomenclatures(db, user, batch):
         n.version += 1
         audit(db, user, "nomenclature", n.id, "product_group", before, serialize(n),
               reason=f"Товарная группа из файла квот {batch.source_name}")
+
+
+def fill_manufacturers(db, user, batch) -> set[str]:
+    """Gives the nomenclatures still without a manufacturer the one their quote rows name (see quote_plan)."""
+    created = set()
+    for entry in batch.plan:
+        data = entry["data"]
+        if not data.get("manufacturer_filled") or not data.get("nomenclature_id"):
+            continue
+        n = lock(db, Nomenclature, data["nomenclature_id"])
+        if n.manufacturer_id or n.manufacturer:
+            continue
+        before = serialize(n)
+        fields = manufacturer_fields(db, user, {"manufacturer": data["manufacturer"],
+                                                "manufacturer_id": data["manufacturer_id"]})
+        if data.get("manufacturer_new"):
+            created.add(fields["manufacturer_id"])
+        n.manufacturer, n.manufacturer_id = fields["manufacturer"], fields["manufacturer_id"]
+        n.version += 1
+        audit(db, user, "nomenclature", n.id, "manufacturer", before, serialize(n),
+              reason=f"Производитель из файла квот {batch.source_name}")
+    return created
+
+
+def live_quotes(db, batch) -> bool:
+    """Whether a completed quote import still has a quote that is not deleted."""
+    ids = (batch.result or {}).get("quote_sheet_ids") or []
+    return not ids or bool(db.scalar(select(QuoteSheet.id).where(QuoteSheet.id.in_(ids),
+                                                                 QuoteSheet.archived.is_(False)).limit(1)))
 
 
 def uncovered_positions(db, request_id, plan):
@@ -746,13 +885,17 @@ def confirm(
                     or (batch.kind == "items" and row.columns == batch.columns and row.rows == batch.rows))
                 and {key: value for key, value in row.mapping.items() if value}
                 == {key: value for key, value in batch.mapping.items() if value}
+                # A file whose quotes were all deleted may be loaded again, e.g. to place its rows anew.
+                and (batch.kind != "quotes" or live_quotes(db, row))
             ),
             None,
         )
         if duplicate:
-            # The same file loaded again still corrects the groups it names; quotes are not duplicated.
+            # The same file loaded again still corrects the groups and manufacturers it names; quotes are not
+            # duplicated.
             if batch.kind == "quotes":
                 regroup_nomenclatures(db, user, batch)
+                fill_manufacturers(db, user, batch)
             batch.status = "completed"
             batch.result = {**duplicate.result, "already_imported": True}
             audit(db, user, "table_import", batch.id, "duplicate_skipped", after=batch.result)
@@ -782,11 +925,12 @@ def confirm(
                     "IMPORT_STALE", "Данные изменились после проверки. Загрузите файл ещё раз", 409
                 )
             regroup_nomenclatures(db, user, batch)
+            filled_makers = fill_manufacturers(db, user, batch)
             if any(not row["data"]["nomenclature_id"] or not row["data"]["packing_id"] for row in fresh):
                 require_permission(db, user, "catalog.write")
             groups = defaultdict(list)
             new_catalogue, new_packings, updated_sources = {}, {}, set()
-            new_makers: set[str] = set()
+            new_makers: set[str] = set(filled_makers)
             for entry in fresh:
                 data = entry["data"]
                 n_id = data["nomenclature_id"] or new_catalogue.get(data["article"].casefold())

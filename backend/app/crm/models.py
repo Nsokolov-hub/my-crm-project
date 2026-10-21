@@ -42,6 +42,8 @@ class Counterparty(Entity):
     kind: Mapped[str] = mapped_column(String(20), default='client')
     country: Mapped[str | None] = mapped_column(String(100))
     tax_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    # Business remark of 21 October 2026: proposals and invoices with VAT 0 % (Annex 18 to the EAEU Treaty).
+    in_belarus: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     email: Mapped[str | None] = mapped_column(String(254), index=True)
     phone: Mapped[str | None] = mapped_column(String(100), index=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)

@@ -26,6 +26,14 @@ from app.core.errors import error
 LOGO = Path(__file__).parent / 'assets' / 'ogk-chem.jpg'
 PROPOSAL_NOTICE = "Срок действия предложения 5 календарных дней. Оплата согласно договору. Не является офертой."
 PROPOSAL_SIGNATURE = {"position": "Генеральный директор", "name": "Гильмутдинов Т.Ф"}
+# Business remark of 21 October 2026: the note under a proposal or invoice to a client in Belarus, as worded.
+BELARUS_VAT_NOTE = ("НДС в РФ не начисляется в соответствии с Приложением № 18 к Договору о ЕАЭС (местом реализации "
+                    "электронных услуг признается территория государства Покупателя — Республика Беларусь).")
+
+
+def vat_label(snapshot: dict) -> str:
+    """«В том числе НДС», with the rate when the document is at VAT 0 %."""
+    return "В том числе НДС 0 %" if snapshot.get("vat_rate") == "0" else "В том числе НДС"
 PROPOSAL_INK = "173F35"
 PROPOSAL_LIME = "C6EA76"
 
@@ -266,7 +274,7 @@ def proposal_pdf(snapshot: dict, font_name: str, bold_font: str, *, invoice: boo
     conditions.extend([p(snapshot["terms"]), Spacer(1, 5),
                        p(f"Действует до: {document_date_label(snapshot['valid_until'])}", small)])
     total = [p("К ОПЛАТЕ С НДС" if invoice else "ИТОГО С НДС", white_label), Spacer(1, 5), p(amount_text, amount), Spacer(1, 4),
-             p(f"В том числе НДС: {pdf_decimal(snapshot['totals']['tax'], money=True)} {snapshot['currency']}",
+             p(f"{vat_label(snapshot)}: {pdf_decimal(snapshot['totals']['tax'], money=True)} {snapshot['currency']}",
                white_label)]
     decision = Table([[conditions, total]], colWidths=[width * .56, width * .44])
     decision.setStyle(TableStyle([
@@ -282,7 +290,8 @@ def proposal_pdf(snapshot: dict, font_name: str, bold_font: str, *, invoice: boo
                                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
                                    ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     notice = [] if invoice else [p(snapshot.get("validity_notice") or PROPOSAL_NOTICE, small), Spacer(1, 20)]
-    closing = [decision, Spacer(1, 19), *notice, signature]
+    vat_note = [p(snapshot["vat_note"], body), Spacer(1, 14)] if snapshot.get("vat_note") else []
+    closing = [decision, Spacer(1, 19), *vat_note, *notice, signature]
     content.append(KeepTogether(closing))
 
     def page_brand(canvas, document):
@@ -343,7 +352,8 @@ def document_files(snapshot: dict) -> dict:
         *rows,
         [],
         ["Итого с НДС", "", "", "", "", snapshot["totals"]["total"]],
-        ["В том числе НДС", snapshot["totals"]["tax"]],
+        [vat_label(snapshot), snapshot["totals"]["tax"]],
+        *([["НДС 0 %", snapshot["vat_note"]]] if snapshot.get("vat_note") else []),
         *([["Общий срок поставки, дней", snapshot["delivery_days"]]] if snapshot.get("delivery_days") is not None else []),
         ["Условия", snapshot["terms"]],
         ["Действует до", document_date_label(snapshot["valid_until"])],

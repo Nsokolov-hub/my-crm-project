@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from datetime import timedelta, timezone
+from decimal import ROUND_CEILING, Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Query
@@ -43,6 +44,30 @@ def aware_utc(value: Any) -> Any:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
+def requested_packings(db: Session, item: RequestItem | None, packing: Packing) -> Decimal | None:
+    """Packings of the quote that cover the demand of its request position, a part of a packing as a whole one.
+
+    Pieces of the same packing count as they are; pieces of another packing, or an amount in mass or volume,
+    are converted by the amount: 10 × 125 mg asked and 250 mg quoted make 5 packings. None when the request
+    states no quantity or its unit cannot be converted.
+    """
+    from app.commerce.calculator import convert
+
+    if not item or item.quantity is None or item.quantity <= 0:
+        return None
+    asked = db.get(Packing, item.packing_id) if item.packing_id else None
+    try:
+        if item.unit and item.unit != 'pcs':
+            amount = convert(item.quantity, item.unit, packing.unit) / packing.value
+        elif asked and asked.id != packing.id and asked.value and asked.unit != 'pcs' and packing.unit != 'pcs':
+            amount = convert(item.quantity * asked.value, asked.unit, packing.unit) / packing.value
+        else:
+            amount = item.quantity
+    except DomainError:
+        return None
+    return amount.to_integral_value(rounding=ROUND_CEILING) if amount > 0 else None
+
+
 def quote_item_view(db: Session, row: QuoteItem, show_purchase: bool = True) -> dict[str, Any]:
     value = serialize(row)
     sheet = db.get(QuoteSheet, row.quote_id)
@@ -63,6 +88,9 @@ def quote_item_view(db: Session, row: QuoteItem, show_purchase: bool = True) -> 
         'article': nomenclature.article,
         'manufacturer': nomenclature.manufacturer,
         'request_quantity': db.get(RequestItem, row.source_request_item_id).quantity if row.source_request_item_id else None,
+        # Business remark of 21 October 2026: a calculation takes the quantity of the request by default.
+        'request_packings': requested_packings(
+            db, db.get(RequestItem, row.source_request_item_id) if row.source_request_item_id else None, packing),
         'packing_name': packing.display_name,
         'product_group_id': nomenclature.product_group_id,
         'product_group_name': group.name if group else None,

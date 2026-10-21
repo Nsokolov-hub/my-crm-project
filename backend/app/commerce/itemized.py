@@ -491,6 +491,8 @@ class _Terms:
 
     vat_rate: Decimal
     deduct_vat: bool
+    # VAT of the sale; it differs from the import VAT for a client in Belarus (0 %, Annex 18 to the EAEU Treaty).
+    sale_vat_rate: Decimal
     deferred: Decimal
     days: int
     start_event: str | None
@@ -506,6 +508,7 @@ class _Terms:
 def _pricing_terms(profile, payment_terms, internal_adjustment, selected_rows, rounding) -> _Terms:
     vat_rate = dec(profile.get("vat_rate", "22")) / 100
     deduct_vat = bool(profile.get("vat_deduction_mode", True))
+    sale_vat_rate = dec(profile.get("sale_vat_rate", profile.get("vat_rate", "22"))) / 100
     prepayment = dec(payment_terms.get("prepayment_percent", "100"))
     deferred = dec(payment_terms.get("deferred_percent", "0"))
     try:
@@ -530,7 +533,7 @@ def _pricing_terms(profile, payment_terms, internal_adjustment, selected_rows, r
     fixed_adjustment = {}
     if adjustment_enabled and adjustment_type == "FIXED":
         fixed_adjustment = _allocation(_money(adjustment_value, rounding), selected_rows, "BY_QUANTITY", {}, rounding)
-    return _Terms(vat_rate, deduct_vat, deferred, days, start_event, annual_rate, day_basis, adjustment_enabled,
+    return _Terms(vat_rate, deduct_vat, sale_vat_rate, deferred, days, start_event, annual_rate, day_basis, adjustment_enabled,
                   adjustment_type, adjustment_value, service_percent, fixed_adjustment)
 
 
@@ -587,15 +590,16 @@ def _priced_line(row, profile, rules, terms: _Terms, selected_ids, rounding) -> 
     service_fee = bonus_withdrawal_fee + additional_service_fee
     cost = cost_before_adjustment + internal_bonus + service_fee
     sale_net = _money(pre_bonus_sale_net + internal_bonus + service_fee, rounding)
+    sale_vat = terms.sale_vat_rate
     if profile.get("round_sale_up_to_ruble", True):
-        unit_gross = (sale_net / qty * (Decimal("1") + vat_rate)).to_integral_value(rounding=ROUND_CEILING)
+        unit_gross = (sale_net / qty * (Decimal("1") + sale_vat)).to_integral_value(rounding=ROUND_CEILING)
         sale_total = _money(unit_gross * qty, rounding)
         # The rounded gross price remains taxable in full, including the
         # rounding increment. Extract VAT instead of treating it as VAT.
-        sale_tax = _money(sale_total * vat_rate / (Decimal("1") + vat_rate), rounding)
+        sale_tax = _money(sale_total * sale_vat / (Decimal("1") + sale_vat), rounding)
         sale_net = sale_total - sale_tax
     else:
-        sale_tax = _money(sale_net * vat_rate, rounding)
+        sale_tax = _money(sale_net * sale_vat, rounding)
         sale_total = sale_net + sale_tax
         unit_gross = sale_total / qty
     profit = sale_net - cost

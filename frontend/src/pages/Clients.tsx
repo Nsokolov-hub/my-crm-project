@@ -266,6 +266,9 @@ export function Clients() {
                     Тип: selected.kind,
                     ИНН: selected.tax_id,
                     Страна: selected.country,
+                    ...(selected.in_belarus
+                      ? { 'НДС продажи': '0 % — клиент в Республике Беларусь' }
+                      : {}),
                     Телефон: selected.phone,
                     Почта: selected.email,
                     Ответственный: selected.owner_name || 'Не назначен',

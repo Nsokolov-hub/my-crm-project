@@ -21,6 +21,7 @@ from app.crm.stages import advance_stage
 
 from .calculator import ROUNDING, convert, dec
 from .files import (
+    BELARUS_VAT_NOTE,
     PROPOSAL_NOTICE,
     PROPOSAL_SIGNATURE,
     document_date_label,
@@ -166,6 +167,11 @@ def customer_line(line: dict, template: dict) -> dict:
     }
 
 
+def belarus_sale(calculation: Calculation) -> bool:
+    """A calculation priced at VAT 0 % for a client in Belarus (business remark of 21 October 2026)."""
+    return (calculation.snapshot.get("sale_vat") or {}).get("reason") == "belarus"
+
+
 def base_snapshot(
     db,
     request: CRMRequest,
@@ -197,6 +203,7 @@ def base_snapshot(
         # Proposals and invoices are signed alike.
         "signature": PROPOSAL_SIGNATURE.copy(),
         "price_includes_vat": calculation.snapshot.get("algorithm_version") == "itemized-v2",
+        **({"vat_rate": "0", "vat_note": BELARUS_VAT_NOTE} if belarus_sale(calculation) else {}),
         "number": number,
         "display_number": f"{request.number}-{calculation_version}" if kind == "proposal" else number,
         "date": document_date().isoformat(),
@@ -237,6 +244,12 @@ def issue_proposal(request_id: str, data: ProposalIn, db: DB, user: Actor):
             error("CALCULATION_REQUIRED", "Для выпуска КП нужен сохранённый расчёт этой заявки")
         from app.business.reviews import require_calculation_approved
         require_calculation_approved(db, calc)
+        in_belarus = bool(db.get(Counterparty, req.client_id).in_belarus)
+        if in_belarus != belarus_sale(calc):
+            error("CALCULATION_VAT_CLIENT",
+                  "Клиент находится в Республике Беларусь: сделайте новый расчёт, он будет с НДС 0 %" if in_belarus
+                  else "Расчёт сделан с НДС 0 % для клиента из Беларуси, а клиент так больше не отмечен. "
+                  "Сделайте новый расчёт", field="calculation_id")
         valid_until = document_expiry(data.valid_until)
         if data.previous_id:
             prior = db.get(CommercialDocument, data.previous_id)

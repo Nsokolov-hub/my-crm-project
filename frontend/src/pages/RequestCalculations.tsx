@@ -27,6 +27,11 @@ import {
 } from './calculations/model';
 import { calculationErrors } from './calculations/validation';
 
+/** Business remark of 21 October 2026: the quantity of the request position, in packings of the quote. */
+function requestedQuantity(row: Entity): string {
+  return row.request_packings ? plainQuantity(row.request_packings) : '1';
+}
+
 function CalculationEditor({
   request,
   previous,
@@ -115,8 +120,10 @@ function CalculationEditor({
   const [serviceFeePercent, setServiceFeePercent] = useState(
     String(previousAdjustment.service_fee_percent || '0'),
   );
+  // Business remark of 21 October 2026: a client in Belarus is sold to with VAT 0 %, without VAT deduction.
+  const belarus = Boolean(request.client_in_belarus);
   const [vatDeductible, setVatDeductible] = useState(
-    Boolean(previousInput.vat_deductible ?? previousSnapshot.vat_deductible ?? true),
+    !belarus && Boolean(previousInput.vat_deductible ?? previousSnapshot.vat_deductible ?? true),
   );
   const [deliveryDays, setDeliveryDays] = useState(
     String(
@@ -164,7 +171,7 @@ function CalculationEditor({
         if (next[row.id] && next[row.id].quantity === undefined) {
           next[row.id] = {
             ...next[row.id],
-            quantity: '1',
+            quantity: requestedQuantity(row),
           };
           changed = true;
         }
@@ -286,7 +293,7 @@ function CalculationEditor({
       if (checked)
         next[row.id] = {
           quote_item_id: row.id,
-          quantity: '1',
+          quantity: requestedQuantity(row),
           markup_coefficient: current[row.id]?.markup_coefficient || '1.5',
         };
       else delete next[row.id];
@@ -489,6 +496,7 @@ function CalculationEditor({
               <input
                 type="checkbox"
                 checked={vatDeductible}
+                disabled={belarus}
                 onChange={(event) => {
                   setVatDeductible(event.target.checked);
                   invalidate();
@@ -496,10 +504,18 @@ function CalculationEditor({
               />{' '}
               Расчёт с вычетом НДС
             </label>
-            <p className="muted">
-              При вычете ввозной НДС исключается из себестоимости и цены продажи. В потребности в
-              средствах он сохраняется.
-            </p>
+            {belarus ? (
+              <p className="info-note">
+                Клиент находится в Республике Беларусь: продажа с НДС 0 % (Приложение № 18 к
+                Договору о ЕАЭС), расчёт с вычетом НДС недоступен. КП и счёт выйдут с НДС 0 % и
+                надписью об основании.
+              </p>
+            ) : (
+              <p className="muted">
+                При вычете ввозной НДС исключается из себестоимости и цены продажи. В потребности в
+                средствах он сохраняется.
+              </p>
+            )}
             <label className="field">
               Общий срок поставки, дней
               <input
@@ -570,8 +586,8 @@ function CalculationEditor({
               <div>
                 <h3>Выбранные квоты и количества</h3>
                 <p>
-                  Цена указана за одну фасовку. Количество продажи задайте здесь; оно не ограничено
-                  количеством квоты.
+                  Цена указана за одну фасовку. Количество подставлено из заявки (в фасовках квоты),
+                  его можно изменить; оно не ограничено количеством квоты.
                 </p>
               </div>
               <span className="selection-count">Выбрано: {Object.keys(selections).length}</span>
@@ -619,7 +635,7 @@ function CalculationEditor({
                               if (checked)
                                 next[row.id] = {
                                   quote_item_id: row.id,
-                                  quantity: current[row.id]?.quantity ?? '1',
+                                  quantity: current[row.id]?.quantity ?? requestedQuantity(row),
                                   markup_coefficient: current[row.id]?.markup_coefficient || '1.5',
                                 };
                               else delete next[row.id];

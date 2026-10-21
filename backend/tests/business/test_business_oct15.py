@@ -72,20 +72,28 @@ def plan_with_volume(crm, req, data, target="6"):
                       "stage": "INTERNATIONAL_LOGISTICS", "method": "BY_QUANTITY"}]}, method="put")
 
 
-def test_one_piece_by_default_and_the_planned_volume_shares_the_costs(crm):  # noqa: F811
+def test_the_request_quantity_by_default_and_the_planned_volume_shares_the_costs(crm):  # noqa: F811
+    """Business remark of 21 October 2026 (it replaces one piece by default of 15 October): the demand of the
+    request position is priced unless another quantity is entered; the planned volume still shares the costs."""
     req, data, _, _ = structured(crm, mode="IMPORT", wave_kind="plan")
     with crm["sessions"].begin() as db:
         quote = db.get(QuoteItem, data["selections"][0]["quote_item_id"])
         quote.quantity = Decimal("40")
-        db.get(RequestItem, quote.source_request_item_id).quantity = Decimal("40")
+        db.get(RequestItem, quote.source_request_item_id).quantity = Decimal("4")
     plan_with_volume(crm, req, data)
     data.pop("expenses")
+    data["selections"][0].pop("quantity", None)
     snapshot = cmd(crm, f"/requests/{req['id']}/calculations/preview", data)["snapshot"]
-    assert snapshot["lines"][0]["quantity"] == "1"
+    assert snapshot["lines"][0]["quantity"] == "4"
     distribution = snapshot["wave_distribution"]
     assert (Decimal(distribution["selected_quantity"]), Decimal(distribution["forecast_quantity"]),
-            Decimal(distribution["total_quantity"])) == (1, 5, 6)
-    assert Decimal(snapshot["totals"]["international_logistics"]) == 1000
+            Decimal(distribution["total_quantity"])) == (4, 2, 6)
+    assert Decimal(snapshot["totals"]["international_logistics"]) == 4000
+    one = cmd(crm, f"/requests/{req['id']}/calculations/preview",
+              {**data, "selections": [{**data["selections"][0], "quantity": "1"}]})["snapshot"]
+    assert (one["lines"][0]["quantity"], Decimal(one["wave_distribution"]["forecast_quantity"])) == ("1", 5)
+    quoted = crm["client"].get(f"/api/v1/requests/{req['id']}/quote-items?all=true").json()["items"]
+    assert [row["request_packings"] for row in quoted] == ["4"]
 
 
 def test_leader_loads_all_wave_costs_into_one_calculation(crm):  # noqa: F811

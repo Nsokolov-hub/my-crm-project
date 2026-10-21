@@ -260,6 +260,19 @@ export function TableImportDialog({
                           String((row.data as Record<string, unknown>).supplier_name || '—'),
                       },
                       {
+                        // Business remark of 21 October 2026: the row goes to the position of its product.
+                        key: 'source_position',
+                        label: 'Позиция заявки',
+                        render: (row: Entity) => {
+                          const data = row.data as Record<string, unknown>;
+                          if (!data.source_position) return 'Новая позиция по квоте';
+                          const place = `${String(data.source_position)}. ${String(data.source_description || '')}`;
+                          return data.source_position_stated
+                            ? `${place} (в файле: ${String(data.source_position_stated)} — по товару другая позиция)`
+                            : place;
+                        },
+                      },
+                      {
                         key: 'product_group_name',
                         label: 'Товарная группа',
                         render: (row: Entity) => {
