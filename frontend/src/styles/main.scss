@@ -1346,6 +1346,70 @@ tr.clickable-row {
   border-color: #d8929c;
 }
 
+// Business remark of 22 October 2026: a quote typed by hand from the catalogue.
+.quick-quote-search {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+
+  .search-input {
+    width: 100%;
+    padding: 2px 10px;
+    border: 1px solid $border;
+    border-radius: 10px;
+    background: #fff;
+  }
+}
+
+.quick-quote-results {
+  display: grid;
+  gap: 6px;
+  max-height: 360px;
+  padding: 0;
+  margin: 12px 0 0;
+  overflow-y: auto;
+  list-style: none;
+
+  button {
+    display: grid;
+    gap: 3px;
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid $border;
+    border-radius: 10px;
+    background: #fff;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
+      border-color: #b9a7e6;
+      background: #faf8fe;
+    }
+  }
+
+  small {
+    color: #687283;
+  }
+}
+
+.quick-quote-product {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+
+  div {
+    display: grid;
+    gap: 3px;
+  }
+
+  small {
+    color: #687283;
+  }
+}
+
 .modal-footer {
   display: flex;
   justify-content: flex-end;

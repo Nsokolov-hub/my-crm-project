@@ -15,16 +15,45 @@ from app.core.errors import DomainError
 TYPES = {'.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
          '.gif': 'image/gif', '.txt': 'text/plain', '.csv': 'text/csv',
          '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-         '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}
+         '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+         '.zip': 'application/zip'}
+# Browsers name a zip archive differently; Windows sends application/x-zip-compressed.
+ALIASES = {'.zip': ('application/x-zip-compressed', 'application/x-zip', 'multipart/x-zip')}
+# Business remark of 22 October 2026: certificates come as an archive of PDF files. An archive may hold
+# documents and images, never programs or scripts, and must open without a password so the antivirus sees it.
+ARCHIVE_BLOCKED = {'.exe', '.dll', '.com', '.bat', '.cmd', '.scr', '.msi', '.msp', '.pif', '.cpl', '.js', '.jse',
+                   '.vbs', '.vbe', '.wsf', '.wsh', '.ps1', '.psm1', '.hta', '.jar', '.lnk', '.reg', '.sh', '.app',
+                   '.apk', '.dmg', '.iso', '.html', '.htm', '.svg', '.xlsm', '.docm', '.pptm'}
+ARCHIVE_MEMBERS = 1000
+ARCHIVE_UNPACKED = 300 * 1024 * 1024
+ARCHIVE_RATIO = 100
+
+
+def safe_archive(content: bytes) -> bool:
+    """A zip archive without encryption, absolute or parent paths, programs, or a zip bomb's ratio."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            members = archive.infolist()
+            unpacked = sum(member.file_size for member in members)
+            return (0 < len(members) <= ARCHIVE_MEMBERS and unpacked <= ARCHIVE_UNPACKED
+                    and unpacked <= max(len(content), 1) * ARCHIVE_RATIO
+                    and not any(member.flag_bits & 1 for member in members)
+                    and not any(member.filename.startswith(('/', '\\')) or '..' in re.split(r'[/\\]', member.filename)
+                                for member in members)
+                    and not any(Path(member.filename).suffix.lower() in ARCHIVE_BLOCKED for member in members)
+                    and archive.testzip() is None)
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, RuntimeError, NotImplementedError, EOFError):
+        return False
 
 
 def validate_upload(name: str, claimed_type: str | None, content: bytes) -> tuple[str, str]:
     name = re.sub(r'[\x00-\x1f\x7f]', '', name.replace('\\', '/').split('/')[-1]).strip()[:250]
     extension = Path(name).suffix.lower()
     if not name or extension not in TYPES:
-        raise DomainError('FILE_TYPE_INVALID', 'Допустимы PDF, PNG, JPEG, GIF, TXT, CSV, XLSX и DOCX', 422, 'file')
+        raise DomainError('FILE_TYPE_INVALID', 'Допустимы PDF, PNG, JPEG, GIF, TXT, CSV, XLSX, DOCX и ZIP', 422, 'file')
     expected = TYPES[extension]
-    if claimed_type and claimed_type.split(';')[0].lower() not in (expected, 'application/octet-stream'):
+    if claimed_type and claimed_type.split(';')[0].lower() not in (expected, 'application/octet-stream',
+                                                                    *ALIASES.get(extension, ())):
         raise DomainError('FILE_TYPE_MISMATCH', 'Тип файла не соответствует расширению', 422, 'file')
     valid = False
     if extension == '.pdf':
@@ -52,6 +81,11 @@ def validate_upload(name: str, claimed_type: str | None, content: bytes) -> tupl
                 valid = valid and not any(z.flag_bits & 1 for z in archive.infolist())
         except (zipfile.BadZipFile, OSError):
             valid = False
+    elif extension == '.zip':
+        valid = content.startswith(b'PK\x03\x04') and safe_archive(content)
+        if not valid:
+            raise DomainError('FILE_ARCHIVE_UNSAFE', 'Архив не принят: он должен открываться без пароля, содержать до '
+                              f'{ARCHIVE_MEMBERS} файлов и не содержать программ и скриптов', 422, 'file')
     if not valid:
         raise DomainError('FILE_CONTENT_MISMATCH', 'Содержимое не соответствует безопасному формату файла', 422, 'file')
     return name, expected

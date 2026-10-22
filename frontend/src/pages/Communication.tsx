@@ -35,13 +35,18 @@ export function FilesPanel({
   entityId,
   onAttach,
   initialFile,
+  archiveName = 'Вложения',
 }: {
   entityType: string;
   entityId: string;
   onAttach?: (file: Entity) => void;
   initialFile?: File;
+  /** The name of the zip archive the chosen files are downloaded in. */
+  archiveName?: string;
 }) {
   const [error, setError] = useState<unknown>();
+  // Business remark of 22 October 2026: certificates go to the client as one archive.
+  const [chosen, setChosen] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ current: number; total: number }>();
   const [autoAttachId, setAutoAttachId] = useState<string>();
@@ -153,7 +158,7 @@ export function FilesPanel({
       description={
         entityType === 'calendar_entry'
           ? 'Загрузите счёт в PDF, Excel или изображение. Файл станет доступен после проверки.'
-          : 'Прикрепите один или несколько файлов или вставьте снимок через Ctrl+V / ⌘V. Файлы станут доступны после проверки.'
+          : 'Прикрепите один или несколько файлов, архив ZIP (например, сертификаты) или вставьте снимок через Ctrl+V / ⌘V. Файлы станут доступны после проверки. Отметьте файлы, чтобы скачать их одним архивом.'
       }
     >
       <ErrorBox error={error || files.error} />
@@ -178,7 +183,7 @@ export function FilesPanel({
           type="file"
           multiple
           aria-label="Файлы для загрузки"
-          accept=".pdf,.png,.jpg,.jpeg,.gif,.txt,.csv,.xlsx,.docx"
+          accept=".pdf,.png,.jpg,.jpeg,.gif,.txt,.csv,.xlsx,.docx,.zip"
           disabled={busy}
           onChange={(e) => {
             const chosen = Array.from(e.target.files || []);
@@ -197,6 +202,21 @@ export function FilesPanel({
           <option value="reward">Вознаграждение</option>
           <option value="profit">Прибыль</option>
         </select>
+        {chosen.length > 0 && (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() =>
+              void download(
+                `/files/archive?ids=${chosen.join(',')}&name=${encodeURIComponent(archiveName)}`,
+                `${archiveName}.zip`,
+              ).catch(setError)
+            }
+          >
+            <Download size={16} />
+            Скачать архивом ({chosen.length})
+          </Button>
+        )}
       </div>
       {files.loading ? (
         <Loading />
@@ -204,6 +224,26 @@ export function FilesPanel({
         <DataTable
           rows={files.data?.items || []}
           columns={[
+            {
+              key: 'chosen',
+              label: 'В архив',
+              sortable: false,
+              render: (r) => (
+                <input
+                  type="checkbox"
+                  aria-label={`Добавить в архив ${String(r.original_name || r.name)}`}
+                  disabled={r.status !== 'clean'}
+                  checked={chosen.includes(String(r.id))}
+                  onChange={(event) =>
+                    setChosen((current) =>
+                      event.target.checked
+                        ? [...current, String(r.id)]
+                        : current.filter((id) => id !== String(r.id)),
+                    )
+                  }
+                />
+              ),
+            },
             { key: 'name', label: 'Файл', render: (r) => String(r.original_name || r.name) },
             {
               key: 'size',

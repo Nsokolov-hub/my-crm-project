@@ -35,14 +35,15 @@ def quotes(crm, req, supplier, rows):
 def test_the_request_list_counts_the_suppliers_that_gave_a_quote(crm):
     req, _, _, supplier = structured(crm)
     row = next(row for row in get(crm, "/requests")["items"] if row["id"] == req["id"])
-    assert (row["quoted_suppliers"], row["asked_suppliers"]) == (1, 0)
+    # A supplier that quoted without a request from the CRM counts as asked (remark of 22 October).
+    assert (row["quoted_suppliers"], row["answered_suppliers"], row["asked_suppliers"]) == (1, 1, 1)
     other = post(crm, "/counterparties", {"name": "Beijing Asnail", "kind": "supplier"})
     with crm["sessions"].begin() as db:
         db.add_all(SupplierMail(request_id=req["id"], supplier_id=supplier_id, recipient="rfq@example.com",
                                 subject="RFQ", body="", html_body="", status="sent", sent_at=utcnow(),
                                 author_id=crm["admin"].id) for supplier_id in (supplier["id"], other["id"]))
     row = next(row for row in get(crm, "/requests")["items"] if row["id"] == req["id"])
-    assert (row["quoted_suppliers"], row["asked_suppliers"]) == (1, 2)
+    assert (row["quoted_suppliers"], row["answered_suppliers"], row["asked_suppliers"]) == (1, 1, 2)
 
 
 def test_quote_rows_go_to_the_positions_of_their_products(crm):

@@ -259,7 +259,7 @@ it('refreshes shared wave costs in a new version while retaining request costs a
   );
   fireEvent.click(await screen.findByText(/^№1/));
   expect(screen.getByText(/Состав или расходы волны изменились/)).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'Создать новую версию' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Скопировать в новый расчёт' }));
   // The term is never filled in from quotes; the longest quote term is only a hint.
   expect(await screen.findByLabelText('Общий срок поставки, дней')).toHaveValue(null);
   await waitFor(() =>

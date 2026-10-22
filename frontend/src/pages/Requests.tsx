@@ -120,16 +120,24 @@ export function Requests() {
               },
               { key: 'client_name', label: 'Клиент' },
               {
-                // Business remark of 21 October 2026: how many suppliers gave a quote.
-                key: 'quoted_suppliers',
-                label: 'КП поставщиков',
+                // Business remarks of 21 and 22 October 2026: suppliers that answered, a refusal included.
+                key: 'answered_suppliers',
+                label: 'Ответы поставщиков',
                 sortable: false,
-                render: (r) =>
-                  Number(r.asked_suppliers) > 0
-                    ? `${Number(r.quoted_suppliers || 0)} из ${Number(r.asked_suppliers)}`
-                    : Number(r.quoted_suppliers)
-                      ? String(r.quoted_suppliers)
-                      : '—',
+                render: (r) => {
+                  const answered = Number(r.answered_suppliers || 0);
+                  const asked = Number(r.asked_suppliers || 0);
+                  const priced = Number(r.quoted_suppliers || 0);
+                  if (!asked && !answered) return '—';
+                  return (
+                    <span className="stacked">
+                      <span>
+                        {answered} из {asked}
+                      </span>
+                      {priced < answered && <small>с ценой: {priced}</small>}
+                    </span>
+                  );
+                },
               },
               {
                 key: 'commercial_stage',

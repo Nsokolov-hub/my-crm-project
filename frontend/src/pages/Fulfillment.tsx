@@ -13,7 +13,7 @@ import {
 } from '../components/ui';
 import { api } from '../lib/api';
 import { date, decimal, nowLocal, metric } from '../lib/format';
-import { useApi } from '../lib/hooks';
+import { useApi, useCommand } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
 import { waveKindLabel, waveKindOptions, waveWeekInitial, waveWeekLabel } from '../lib/waves';
 import { WaveBoard } from './WaveBoard';
@@ -349,6 +349,110 @@ const waveFields: Field[] = [
     value: new Date().getFullYear(),
   },
 ];
+/**
+ * Business remark of 22 October 2026: when the first order of a plan goes to work, the other requests of the
+ * plan are gathered into its working wave, so their calculations share its costs with its orders.
+ */
+function PlanRequests({ wave, onMoved }: { wave: Entity; onMoved: (wave: Entity) => void }) {
+  const requests = useApi<Page>(`/waves/${String(wave.id)}/plan-requests`);
+  const command = useCommand();
+  const [chosen, setChosen] = useState<string[]>([]);
+  const rows = requests.data?.items || [];
+  if (!requests.loading && !rows.length && !requests.error) return null;
+  async function move() {
+    const numbers = rows
+      .filter((row) => chosen.includes(String(row.id)))
+      .map((row) => `№${String(row.number)}`)
+      .join(', ');
+    if (
+      !window.confirm(
+        `Перенести заявки ${numbers} в рабочую волну ${String(wave.number)}? ` +
+          'Их следующие расчёты будут делить общие расходы с заказами этой волны и остатком плана.',
+      )
+    )
+      return;
+    try {
+      const result = await command.run<{ moved: string[]; wave: Entity }>(
+        `/waves/${String(wave.id)}/take-plan-requests`,
+        { version: wave.version, request_ids: chosen },
+        'POST',
+        true,
+      );
+      if (result) {
+        setChosen([]);
+        requests.refresh();
+        onMoved(result.wave);
+      }
+    } catch {
+      /* ErrorBox shows the failure. */
+    }
+  }
+  return (
+    <>
+      <h3>Заявки плановой волны</h3>
+      <p className="muted">
+        Заявки плана {String(wave.plan_number || '')}, ещё не собранные в рабочую волну. Перенесите
+        их сюда, чтобы расчёты делили общие расходы с заказами этой волны (и с остатком плана, пока
+        волна комплектуется). Уже сохранённые расчёты не меняются — скопируйте их в новый расчёт.
+      </p>
+      <ErrorBox error={command.error || requests.error} />
+      <DataTable<Entity>
+        rows={rows}
+        columns={[
+          {
+            key: 'chosen',
+            label: 'Перенести',
+            sortable: false,
+            render: (row) => (
+              <input
+                type="checkbox"
+                aria-label={`Перенести заявку №${String(row.number)}`}
+                checked={chosen.includes(String(row.id))}
+                onChange={(event) =>
+                  setChosen((current) =>
+                    event.target.checked
+                      ? [...current, String(row.id)]
+                      : current.filter((id) => id !== String(row.id)),
+                  )
+                }
+              />
+            ),
+          },
+          { key: 'number', label: 'Заявка', render: (row) => `№${String(row.number)}` },
+          { key: 'client_name', label: 'Клиент' },
+          {
+            key: 'commercial_stage',
+            label: 'Этап',
+            render: (row) => <Badge value={row.commercial_stage} />,
+          },
+          {
+            key: 'calculation_number',
+            label: 'Последний расчёт',
+            render: (row) => String(row.calculation_number || '—'),
+          },
+          { key: 'proposals', label: 'КП', render: (row) => String(row.proposals || 0) },
+          {
+            key: 'orders',
+            label: 'Заказов в этой волне',
+            render: (row) => String(row.orders || 0),
+          },
+          { key: 'owner_name', label: 'Ответственный' },
+        ]}
+      />
+      <div className="inline-actions">
+        <Button
+          type="button"
+          disabled={!chosen.length}
+          busy={command.busy}
+          onClick={() => void move()}
+        >
+          Перенести в эту рабочую волну{chosen.length ? ` (${chosen.length})` : ''}
+        </Button>
+      </div>
+    </>
+  );
+}
+
 function WaveFinancialSummary({ summary }: { summary: Entity }) {
   const rows = ((summary.allocations || []) as Entity[]).map((row, index) => ({
     ...row,
@@ -459,6 +563,9 @@ export function Waves() {
   const [creating, setCreating] = useState(false);
   const [forecast, setForecast] = useState<Entity>();
   const [addingForecast, setAddingForecast] = useState(false);
+  // Business remark of 22 October 2026: planned volume can be taken off the wave.
+  const [removingForecast, setRemovingForecast] = useState<Entity>();
+  const [showRemoved, setShowRemoved] = useState(false);
   const [selected, setSelected] = useState<Entity>();
   const [editing, setEditing] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -502,7 +609,9 @@ export function Waves() {
     ['delivered', 'доставлено клиенту'],
     ['cancelled', 'отменено'],
   ];
-  const forecasts = (selected?.forecasts || []) as Entity[];
+  const allForecasts = (selected?.forecasts || []) as Entity[];
+  const removedForecasts = allForecasts.filter((row) => !row.active).length;
+  const forecasts = showRemoved ? allForecasts : allForecasts.filter((row) => row.active);
   const working = (selected?.working_waves || []) as Entity[];
   return (
     <>
@@ -686,7 +795,7 @@ export function Waves() {
                   )}
                 </>
               )}
-              {(plan || forecasts.length > 0) && (
+              {(plan || allForecasts.length > 0) && (
                 <>
                   <h3>Плановые позиции</h3>
                   <p className="muted">
@@ -740,11 +849,52 @@ export function Waves() {
                       {
                         key: 'active',
                         label: 'Прогноз',
-                        render: (row) => (row.active ? 'Включён' : 'Отключён'),
+                        render: (row) => (row.active ? 'Включён' : 'Убран'),
                       },
+                      ...(writable && auth.can('finance.purchase.read')
+                        ? [
+                            {
+                              key: 'remove',
+                              label: 'Действия',
+                              sortable: false,
+                              render: (row: Entity) =>
+                                row.active ? (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setRemovingForecast(row);
+                                    }}
+                                  >
+                                    Убрать
+                                  </Button>
+                                ) : null,
+                            },
+                          ]
+                        : []),
                     ]}
                   />
+                  {removedForecasts > 0 && (
+                    <label className="calculation-internal-toggle">
+                      <input
+                        type="checkbox"
+                        checked={showRemoved}
+                        onChange={(event) => setShowRemoved(event.target.checked)}
+                      />{' '}
+                      Показать убранные ({removedForecasts})
+                    </label>
+                  )}
                 </>
+              )}
+              {!plan && Boolean(selected.plan_id) && writable && (
+                <PlanRequests
+                  wave={selected}
+                  onMoved={(wave) => {
+                    setSelected(wave);
+                    setRevision((value) => value + 1);
+                  }}
+                />
               )}
               {Boolean(selected.financial_summary) && (
                 <WaveFinancialSummary summary={selected.financial_summary as Entity} />
@@ -831,6 +981,32 @@ export function Waves() {
           }
           onClose={() => setArchiving(false)}
           onSuccess={done}
+        />
+      )}
+      {selected && removingForecast && (
+        <RecordForm
+          title="Убрать плановый объём"
+          endpoint={`/waves/${selected.id}/forecasts/${String(removingForecast.id)}/remove`}
+          method="POST"
+          command
+          extra={{ version: selected.version }}
+          fields={[
+            {
+              name: 'reason',
+              label: 'Причина',
+              type: 'textarea',
+              required: true,
+              minLength: 3,
+            },
+          ]}
+          note={`Группа «${String(removingForecast.product_group_name)}», ${decimal(removingForecast.target_quantity)} шт. Расчёты по волне перестанут делить на этот объём общие расходы. Строка останется в истории как убранная.`}
+          onClose={() => setRemovingForecast(undefined)}
+          onSuccess={(row) => {
+            // The wave card stays open with the volume taken off.
+            setRemovingForecast(undefined);
+            setSelected(row);
+            setRevision((value) => value + 1);
+          }}
         />
       )}
       {selected && addingForecast && (

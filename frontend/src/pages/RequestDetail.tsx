@@ -158,12 +158,22 @@ export function RequestDetail() {
               ))}
             </div>
           </Section>
-          {!filesOpen && <FilesPanel entityType="request" entityId={id} />}
+          {!filesOpen && (
+            <FilesPanel
+              entityType="request"
+              entityId={id}
+              archiveName={`Вложения заявки №${String(request.data?.number || '')}`}
+            />
+          )}
         </>
       )}
       {filesOpen && (
         <Modal title="Вложения заявки" wide onClose={() => setFilesOpen(false)}>
-          <FilesPanel entityType="request" entityId={id} />
+          <FilesPanel
+            entityType="request"
+            entityId={id}
+            archiveName={`Вложения заявки №${String(request.data?.number || '')}`}
+          />
         </Modal>
       )}
       {tab === 'items' && (

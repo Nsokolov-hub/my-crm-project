@@ -2,6 +2,9 @@
 
 import hashlib
 import io
+import re
+import zipfile
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import UploadFile
@@ -70,6 +73,48 @@ def attach_file(db: Session, user: User, upload: UploadFile, entity_type: str, e
 
 def file_download(db: Session, user: User, file_id: str) -> StreamingResponse:
     """A checked, clean file as an attachment the browser cannot render or sniff."""
+    row, content = downloadable(db, user, file_id)
+    return StreamingResponse(io.BytesIO(content), media_type='application/octet-stream', headers={
+        'Content-Disposition': f"attachment; filename*=UTF-8''{quote(row.name, safe='')}",
+        'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'",
+        'Cache-Control': 'private, no-store', 'Content-Length': str(len(content))})
+
+
+ARCHIVE_LIMIT = 300 * 1024 * 1024
+
+
+def files_archive(db: Session, user: User, file_ids: list[str], name: str) -> StreamingResponse:
+    """Several clean files as one zip archive.
+
+    Business remark of 22 October 2026: certificates, usually 5–10 PDF files, are forwarded to the client as one
+    archive. Every file passes the same access and download checks as when it is downloaded alone.
+    """
+    ids = list(dict.fromkeys(value.strip() for value in file_ids if value.strip()))
+    if not ids or len(ids) > 100:
+        raise DomainError('FILES_REQUIRED', 'Выберите от 1 до 100 проверенных файлов', 422, 'ids')
+    buffer, names, total = io.BytesIO(), set(), 0
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
+        for file_id in ids:
+            row, content = downloadable(db, user, file_id)
+            total += len(content)
+            if total > ARCHIVE_LIMIT:
+                raise DomainError('ARCHIVE_TOO_LARGE', 'Выбранные файлы больше 300 МБ. Скачайте их частями', 413, 'ids')
+            stem, suffix = Path(row.name).stem, Path(row.name).suffix
+            entry, number = row.name, 1
+            while entry.casefold() in names:
+                number += 1
+                entry = f'{stem} ({number}){suffix}'
+            names.add(entry.casefold())
+            archive.writestr(entry, content)
+    title = re.sub(r'[\\/:*?"<>|\x00-\x1f]', ' ', name).strip()[:120] or 'Вложения'
+    data = buffer.getvalue()
+    return StreamingResponse(io.BytesIO(data), media_type='application/zip', headers={
+        'Content-Disposition': f"attachment; filename=\"files.zip\"; filename*=UTF-8''{quote(title + '.zip', safe='')}",
+        'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-store', 'Content-Length': str(len(data))})
+
+
+def downloadable(db: Session, user: User, file_id: str) -> tuple[FileRecord, bytes]:
+    """A file the user may download, after its virus check, with its verified content; the download is audited."""
     row = check_file(db, user, file_id)
     request_id = row.request_id
     if not request_id:
@@ -83,7 +128,4 @@ def file_download(db: Session, user: User, file_id: str) -> StreamingResponse:
         raise DomainError('FILE_NOT_READY', 'Скачивание доступно только после успешной проверки файла', 409)
     content = verified_content(row.storage_key, row.sha256, row.size)
     audit(db, user, 'file', row.id, 'downloaded', after={'sha256': row.sha256})
-    return StreamingResponse(io.BytesIO(content), media_type='application/octet-stream', headers={
-        'Content-Disposition': f"attachment; filename*=UTF-8''{quote(row.name, safe='')}",
-        'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'",
-        'Cache-Control': 'private, no-store', 'Content-Length': str(len(content))})
+    return row, content

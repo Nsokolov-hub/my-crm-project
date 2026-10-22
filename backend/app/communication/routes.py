@@ -15,7 +15,7 @@ from app.communication.access import (
     check_file,
     file_view,
 )
-from app.communication.attachments import attach_file, file_download
+from app.communication.attachments import attach_file, file_download, files_archive
 from app.communication.models import Chat, ChatMember, FileRecord, Message, MessageFile
 from app.core.db import get_db, utcnow
 from app.core.errors import DomainError
@@ -473,6 +473,13 @@ def files(entity_type: str, entity_id: str, page: int = 1, page_size: int = 25,
                       FileRecord.classification.in_(allowed)).order_by(FileRecord.created_at.desc()), page, page_size)
     result['items'] = [file_view(check_file(db, user, row['id'])) for row in result['items']]
     return result
+
+
+@router.get('/files/archive')
+def download_archive(ids: str, name: str = 'Вложения', user: User = Depends(current_user),
+                     db: Session = Depends(get_db, scope="function")) -> StreamingResponse:
+    """Selected files as one zip archive (comma-separated ids), e.g. certificates for a client."""
+    return files_archive(db, user, ids.split(','), name)
 
 
 @router.get('/files/{entity_id}')

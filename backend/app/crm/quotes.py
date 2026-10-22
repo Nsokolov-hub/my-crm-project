@@ -172,6 +172,76 @@ def latest_price(
     return db.scalar(stmt.order_by(QuoteItem.quoted_at.desc(), QuoteItem.created_at.desc(), QuoteItem.id.desc()).limit(1))
 
 
+@router.get('/requests/{entity_id}/quote-candidates')
+def quote_candidates(
+    entity_id: str, name: str = '', article: str = '',
+    user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
+) -> dict[str, Any]:
+    """Products for a quote entered by hand, found by name or article, with the last quote of every packing.
+
+    Business remark of 22 October 2026: a position moved from another invoice is quoted in a few clicks;
+    supplier, price, currency and term come from its latest quote and may be corrected before saving.
+    """
+    check_request(db, user, entity_id, 'quotes.write')
+    name, article = ' '.join(name.split()), article.strip()
+    if len(name) < 2 and len(article) < 2:
+        return {'items': []}
+    stmt = select(Nomenclature).where(Nomenclature.active.is_(True))
+    if len(name) >= 2:
+        stmt = stmt.where(Nomenclature.name.ilike(f'%{name}%'))
+    if len(article) >= 2:
+        stmt = stmt.where(Nomenclature.article.ilike(f'%{article}%'))
+    products = list(db.scalars(stmt.order_by(Nomenclature.name, Nomenclature.article).limit(20)))
+    show_price = has_request_permission(db, user, entity_id, 'finance.purchase.read')
+    visible = select(Request.id).where(request_predicate(db, user, 'finance.purchase.read'))
+    packings: dict[str, list[Packing]] = defaultdict(list)
+    for packing in db.scalars(select(Packing).where(Packing.nomenclature_id.in_([row.id for row in products]),
+                                                    Packing.active.is_(True)).order_by(Packing.value)):
+        packings[packing.nomenclature_id].append(packing)
+    latest: dict[str, QuoteItem] = {}
+    if show_price and products:
+        for row in db.scalars(select(QuoteItem).join(QuoteSheet, QuoteSheet.id == QuoteItem.quote_id).where(
+                QuoteItem.nomenclature_id.in_([product.id for product in products]),
+                QuoteItem.archived.is_(False), QuoteSheet.archived.is_(False),
+                QuoteSheet.request_id.in_(visible)).order_by(QuoteItem.quoted_at.desc(), QuoteItem.id.desc())):
+            latest.setdefault(row.packing_id, row)
+            latest.setdefault('product:' + row.nomenclature_id, row)
+    items_here = {item.nomenclature_id: item for item in db.scalars(select(RequestItem).where(
+        RequestItem.request_id == entity_id, RequestItem.archived.is_(False),
+        RequestItem.nomenclature_id.in_([product.id for product in products])))}
+    groups = prefetch(db, ProductGroup, (product.product_group_id for product in products))
+    prefetch(db, Counterparty, (row.supplier_id for row in latest.values()))
+    prefetch(db, Currency, (row.currency_id for row in latest.values()))
+    prefetch(db, QuoteSheet, (row.quote_id for row in latest.values()))
+
+    def last(row: QuoteItem | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        sheet = db.get(QuoteSheet, row.quote_id)
+        return {'quote_item_id': row.id, 'packing_id': row.packing_id, 'supplier_id': row.supplier_id,
+                'supplier_name': db.get(Counterparty, row.supplier_id).name, 'unit_price': row.unit_price,
+                'currency_id': row.currency_id, 'currency_code': db.get(Currency, row.currency_id).code,
+                'delivery_days': row.delivery_days, 'quoted_at': row.quoted_at, 'quote_number': sheet.number,
+                'request_number': db.get(Request, sheet.request_id).number}
+
+    result = []
+    for product in products:
+        group = groups.get(product.product_group_id) if product.product_group_id else None
+        position = items_here.get(product.id)
+        result.append({
+            'nomenclature_id': product.id, 'name': product.name, 'article': product.article,
+            'manufacturer': product.manufacturer, 'cas': product.cas,
+            'product_group_name': group.name if group else None,
+            'packings': [{'id': packing.id, 'name': packing.display_name, 'last': last(latest.get(packing.id))}
+                         for packing in packings[product.id]],
+            'last': last(latest.get('product:' + product.id)),
+            'request_item_id': position.id if position else None,
+            'request_quantity': requested_packings(db, position, db.get(Packing, position.packing_id))
+            if position and position.packing_id else (position.quantity if position else None),
+        })
+    return {'items': result, 'prices': show_price}
+
+
 @router.get('/quote-items/latest')
 def latest_quote_item(
     supplier_id: str, nomenclature_id: str, packing_id: str, currency_id: str | None = None,

@@ -1,4 +1,4 @@
-import { Flag, Plus, Save, Trash2 } from 'lucide-react';
+import { Copy, Flag, Plus, Save, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
@@ -343,11 +343,12 @@ function CalculationEditor({
                 },
               }
             : {}),
+          // Business remark of 22 October 2026: any saved calculation may be copied; the copy continues the
+          // numbering of the request's versions from the latest one.
+          ...(previous ? { copy_of_id: previous.id } : {}),
           ...(save && preview
             ? { previous_id: ((preview.snapshot || preview) as Entity).base_version_id || null }
-            : previous
-              ? { previous_id: previous.id }
-              : {}),
+            : {}),
         },
         'POST',
         true,
@@ -424,7 +425,11 @@ function CalculationEditor({
   };
   return (
     <Modal
-      title={previous ? 'Новая версия расчёта' : 'Новый расчёт'}
+      title={
+        previous
+          ? `Копия расчёта ${String(previous.calculation_number || previous.selection_label || '')}`
+          : 'Новый расчёт'
+      }
       wide
       className="calculation-modal"
       onClose={close}
@@ -1633,6 +1638,16 @@ export function RequestCalculations({
   const [selected, setSelected] = useState<Entity>();
   const [previous, setPrevious] = useState<Entity>();
   const [revision, setRevision] = useState(0);
+  function copy(row: Entity) {
+    setPrevious(row);
+    setSelected(undefined);
+    setInitialIds(
+      (((row.snapshot as Entity | undefined)?.lines as Entity[]) || [])
+        .map((line) => String(line.quote_item_id || ''))
+        .filter(Boolean),
+    );
+    setEditing(true);
+  }
   function closeEditor() {
     setEditing(false);
     setInitialIds([]);
@@ -1649,7 +1664,9 @@ export function RequestCalculations({
               типом расчёта DAP или «Перепродажа внутри РФ» (задаётся в карточке поставщика)
               считаются без волны. По плановой волне общие расходы делятся на плановый объём, а
               подтверждённый заказ попадает в её рабочую волну — она создаётся автоматически. По
-              рабочей волне расчёт идёт только по реальным заказам.
+              рабочей волне расходы делятся на её заказы и, пока она комплектуется, на остаток
+              плана. Заявки плана можно перенести в рабочую волну из её карточки или выбрать её
+              здесь.
             </p>
           </div>
         </div>
@@ -1742,7 +1759,9 @@ export function RequestCalculations({
             key: 'wave_stale',
             label: 'Расходы волны',
             render: (row) =>
-              row.wave_stale ? (
+              row.wave_moved ? (
+                <Badge value="Волна заявки изменена" tone="amber" />
+              ) : row.wave_stale ? (
                 <Badge value="Требуется пересчёт" tone="amber" />
               ) : (
                 <Badge value="Актуальны" tone="green" />
@@ -1765,6 +1784,24 @@ export function RequestCalculations({
             key: 'author_id',
             label: 'Автор',
             render: (row) => String(row.author_name || 'Сотрудник'),
+          },
+          {
+            key: 'copy',
+            label: 'Действия',
+            sortable: false,
+            render: (row) => (
+              <Button
+                type="button"
+                variant="ghost"
+                title="Открыть новый расчёт с теми же настройками, расходами и позициями"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  copy(row);
+                }}
+              >
+                <Copy size={15} /> Копировать
+              </Button>
+            ),
           },
         ]}
       />
@@ -1793,27 +1830,29 @@ export function RequestCalculations({
               }}
             />
             <p className="muted">
-              Новая версия будет основана на последней сохранённой версии этой заявки.
+              Копия откроется с теми же квотами, количествами, наценками, расходами и условиями
+              оплаты. Отметьте новые позиции, пересчитайте и сохраните — это будет следующая версия
+              расчёта заявки.
             </p>
+            {Boolean(selected.wave_moved) && (
+              <p className="info-note" role="status">
+                Заявку перенесли в другую волну после этого расчёта. Скопируйте его в новый расчёт —
+                общие расходы разделятся с заказами новой волны.
+              </p>
+            )}
             {Boolean(selected.wave_stale) && (
               <p className="info-note" role="status">
-                Состав или расходы волны изменились. Создайте новую версию расчёта перед новым КП.
+                Состав или расходы волны изменились. Скопируйте расчёт в новый и пересчитайте перед
+                новым КП.
               </p>
             )}
             <Button
               variant="secondary"
               onClick={() => {
-                setPrevious(selected);
-                setSelected(undefined);
-                setInitialIds(
-                  (((selected.snapshot as Entity | undefined)?.lines as Entity[]) || [])
-                    .map((line) => String(line.quote_item_id || ''))
-                    .filter(Boolean),
-                );
-                setEditing(true);
+                copy(selected);
               }}
             >
-              Создать новую версию
+              <Copy size={16} /> Скопировать в новый расчёт
             </Button>
             <CalculationBreakdown snapshot={selected.snapshot as Entity} />
           </div>

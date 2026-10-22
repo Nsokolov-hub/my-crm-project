@@ -1,4 +1,4 @@
-import { Download, Plus, Trash2, Upload } from 'lucide-react';
+import { Download, Plus, Search, Trash2, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Collection } from '../components/Collection';
 import { DirectorySelect, RecordForm } from '../components/Form';
@@ -10,6 +10,7 @@ import type { Entity, Field, Page } from '../lib/types';
 import { useAuth } from '../app/Auth';
 import { SupplierMailEditor } from '../components/SupplierMailEditor';
 import { TableImportDialog } from '../components/TableImportDialog';
+import { QuickQuoteDialog } from './QuickQuote';
 import { RequestSupplierResponses } from './SupplierResponses';
 export function RequestRfqs({
   requestId,
@@ -648,6 +649,7 @@ export function RequestQuotes({
   const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState<Entity>();
   const [creating, setCreating] = useState(false);
+  const [quick, setQuick] = useState(false);
   const [revision, setRevision] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const deleteCommand = useCommand();
@@ -687,6 +689,11 @@ export function RequestQuotes({
         <Button variant="secondary" onClick={() => setCreating(true)}>
           <Plus size={16} /> Новая квота
         </Button>
+        {auth.can('quotes.write') && (
+          <Button variant="secondary" onClick={() => setQuick(true)}>
+            <Search size={16} /> Быстрая квота
+          </Button>
+        )}
         {auth.can('quotes.write') && auth.can('finance.purchase.read') && (
           <Button variant="secondary" onClick={() => setImporting(true)}>
             <Upload size={16} /> Загрузить квоты XLSX
@@ -768,6 +775,16 @@ export function RequestQuotes({
           onClose={() => setCreating(false)}
           onSaved={() => {
             setCreating(false);
+            setRevision((value) => value + 1);
+          }}
+        />
+      )}
+      {quick && (
+        <QuickQuoteDialog
+          requestId={requestId}
+          onClose={() => setQuick(false)}
+          onSaved={() => {
+            setQuick(false);
             setRevision((value) => value + 1);
           }}
         />

@@ -4665,6 +4665,73 @@
         }
       }
     },
+    "/api/v1/requests/{entity_id}/quote-candidates": {
+      "get": {
+        "tags": [
+          "CRM"
+        ],
+        "summary": "Quote Candidates",
+        "description": "Products for a quote entered by hand, found by name or article, with the last quote of every packing.\n\nBusiness remark of 22 October 2026: a position moved from another invoice is quoted in a few clicks;\nsupplier, price, currency and term come from its latest quote and may be corrected before saving.",
+        "operationId": "quote_candidates_api_v1_requests__entity_id__quote_candidates_get",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "article",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Article"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Quote Candidates Api V1 Requests  Entity Id  Quote Candidates Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/quote-items/latest": {
       "get": {
         "tags": [
@@ -8981,6 +9048,164 @@
         }
       }
     },
+    "/api/v1/waves/{wave_id}/plan-requests": {
+      "get": {
+        "tags": [
+          "Согласования и поставки"
+        ],
+        "summary": "Wave Plan Requests",
+        "description": "Business remark of 22 October 2026: when the first order of a plan goes to work, the other requests of\nthe plan are gathered into the working wave so that their calculations share its costs with its orders.",
+        "operationId": "wave_plan_requests_api_v1_waves__wave_id__plan_requests_get",
+        "parameters": [
+          {
+            "name": "wave_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Wave Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/waves/{wave_id}/take-plan-requests": {
+      "post": {
+        "tags": [
+          "Согласования и поставки"
+        ],
+        "summary": "Take Plan Requests",
+        "description": "Moves chosen requests of the plan into its open working wave; their next calculation shares the costs of\nthe working wave with its orders and with the rest of the plan, as the wave itself counts them.",
+        "operationId": "take_plan_requests_api_v1_waves__wave_id__take_plan_requests_post",
+        "parameters": [
+          {
+            "name": "wave_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Wave Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaveTakeRequestsIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/waves/{wave_id}/forecasts/{forecast_id}/remove": {
+      "post": {
+        "tags": [
+          "Согласования и поставки"
+        ],
+        "summary": "Remove Wave Forecast",
+        "description": "Business remark of 22 October 2026: the planned volume of a group is taken off the wave.\n\nThe row stays in the history switched off; calculations by the wave no longer share costs with it.",
+        "operationId": "remove_wave_forecast_api_v1_waves__wave_id__forecasts__forecast_id__remove_post",
+        "parameters": [
+          {
+            "name": "wave_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Wave Id"
+            }
+          },
+          {
+            "name": "forecast_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Forecast Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaveForecastRemoveIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/waves/{wave_id}/budget": {
       "put": {
         "tags": [
@@ -10196,6 +10421,59 @@
                   "additionalProperties": true,
                   "title": "Response Files Api V1 Files Get"
                 }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/files/archive": {
+      "get": {
+        "tags": [
+          "Общение и файлы"
+        ],
+        "summary": "Download Archive",
+        "description": "Selected files as one zip archive (comma-separated ids), e.g. certificates for a client.",
+        "operationId": "download_archive_api_v1_files_archive_get",
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ids"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "Вложения",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -12777,6 +13055,17 @@
               }
             ],
             "title": "Expected Wave Digest"
+          },
+          "copy_of_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Copy Of Id"
           }
         },
         "additionalProperties": false,
@@ -18739,6 +19028,34 @@
         ],
         "title": "WaveForecastIn"
       },
+      "WaveForecastRemoveIn": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "version",
+          "reason"
+        ],
+        "title": "WaveForecastRemoveIn"
+      },
       "WaveIn": {
         "properties": {
           "idempotency_key": {
@@ -18912,6 +19229,45 @@
           "owner_id"
         ],
         "title": "WaveIn"
+      },
+      "WaveTakeRequestsIn": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "request_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Request Ids"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 3,
+            "title": "Reason",
+            "default": "Заявки плановой волны собираются в рабочую волну"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "version",
+          "request_ids"
+        ],
+        "title": "WaveTakeRequestsIn"
       },
       "WaveUpdate": {
         "properties": {

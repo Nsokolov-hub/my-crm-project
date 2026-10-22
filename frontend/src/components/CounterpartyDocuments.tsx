@@ -125,7 +125,7 @@ export function CounterpartyDocuments({
             <input
               ref={fileInput}
               type="file"
-              accept=".pdf,.png,.jpg,.jpeg,.gif,.txt,.csv,.xlsx,.docx"
+              accept=".pdf,.png,.jpg,.jpeg,.gif,.txt,.csv,.xlsx,.docx,.zip"
               disabled={busy}
               onChange={(event) => setFile(event.target.files?.[0])}
             />

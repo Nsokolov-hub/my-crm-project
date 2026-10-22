@@ -39,7 +39,8 @@ it('shows how many suppliers gave a quote out of those asked', async () => {
         client_name: 'ООО "ПИК-ФАРМА"',
         commercial_stage: 'quoted',
         owner_name: 'Тимур',
-        quoted_suppliers: 3,
+        quoted_suppliers: 2,
+        answered_suppliers: 3,
         asked_suppliers: 4,
       },
       {
@@ -50,6 +51,7 @@ it('shows how many suppliers gave a quote out of those asked', async () => {
         commercial_stage: 'new',
         owner_name: 'Тимур',
         quoted_suppliers: 0,
+        answered_suppliers: 0,
         asked_suppliers: 0,
       },
     ],
@@ -60,11 +62,13 @@ it('shows how many suppliers gave a quote out of those asked', async () => {
       <Requests />
     </MemoryRouter>,
   );
-  expect(await screen.findByText('КП поставщиков')).toBeVisible();
+  // Business remark of 22 October 2026: a refusal is an answer too.
+  expect(await screen.findByText('Ответы поставщиков')).toBeVisible();
   expect(screen.getByText('3 из 4')).toBeVisible();
+  expect(screen.getByText('с ценой: 2')).toBeVisible();
   const column = screen
     .getAllByRole('columnheader')
-    .findIndex((header) => header.textContent?.includes('КП поставщиков'));
+    .findIndex((header) => header.textContent?.includes('Ответы поставщиков'));
   const quiet = screen.getByText('Пик Фарма / Оригиналы').closest('tr')!;
   expect(within(quiet).getAllByRole('cell')[column]).toHaveTextContent(/^—$/);
 });

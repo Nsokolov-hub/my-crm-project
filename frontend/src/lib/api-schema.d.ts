@@ -1028,6 +1028,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/requests/{entity_id}/quote-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Quote Candidates
+         * @description Products for a quote entered by hand, found by name or article, with the last quote of every packing.
+         *
+         *     Business remark of 22 October 2026: a position moved from another invoice is quoted in a few clicks;
+         *     supplier, price, currency and term come from its latest quote and may be corrected before saving.
+         */
+        get: operations["quote_candidates_api_v1_requests__entity_id__quote_candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/quote-items/latest": {
         parameters: {
             query?: never;
@@ -2188,6 +2211,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/waves/{wave_id}/plan-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Wave Plan Requests
+         * @description Business remark of 22 October 2026: when the first order of a plan goes to work, the other requests of
+         *     the plan are gathered into the working wave so that their calculations share its costs with its orders.
+         */
+        get: operations["wave_plan_requests_api_v1_waves__wave_id__plan_requests_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/waves/{wave_id}/take-plan-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take Plan Requests
+         * @description Moves chosen requests of the plan into its open working wave; their next calculation shares the costs of
+         *     the working wave with its orders and with the rest of the plan, as the wave itself counts them.
+         */
+        post: operations["take_plan_requests_api_v1_waves__wave_id__take_plan_requests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/waves/{wave_id}/forecasts/{forecast_id}/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove Wave Forecast
+         * @description Business remark of 22 October 2026: the planned volume of a group is taken off the wave.
+         *
+         *     The row stays in the history switched off; calculations by the wave no longer share costs with it.
+         */
+        post: operations["remove_wave_forecast_api_v1_waves__wave_id__forecasts__forecast_id__remove_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/waves/{wave_id}/budget": {
         parameters: {
             query?: never;
@@ -2467,6 +2554,26 @@ export interface paths {
         put?: never;
         /** Upload File */
         post: operations["upload_file_api_v1_files_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Archive
+         * @description Selected files as one zip archive (comma-separated ids), e.g. certificates for a client.
+         */
+        get: operations["download_archive_api_v1_files_archive_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3253,6 +3360,8 @@ export interface components {
             divide_wave_expenses: boolean;
             /** Expected Wave Digest */
             expected_wave_digest?: string | null;
+            /** Copy Of Id */
+            copy_of_id?: string | null;
         };
         /** CalendarBalanceIn */
         CalendarBalanceIn: {
@@ -5170,6 +5279,15 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** WaveForecastRemoveIn */
+        WaveForecastRemoveIn: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Version */
+            version: number;
+            /** Reason */
+            reason: string;
+        };
         /** WaveIn */
         WaveIn: {
             /** Idempotency Key */
@@ -5215,6 +5333,20 @@ export interface components {
             details?: {
                 [key: string]: unknown;
             };
+        };
+        /** WaveTakeRequestsIn */
+        WaveTakeRequestsIn: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Version */
+            version: number;
+            /** Request Ids */
+            request_ids: string[];
+            /**
+             * Reason
+             * @default Заявки плановой волны собираются в рабочую волну
+             */
+            reason: string;
         };
         /** WaveUpdate */
         WaveUpdate: {
@@ -9651,6 +9783,61 @@ export interface operations {
             };
         };
     };
+    quote_candidates_api_v1_requests__entity_id__quote_candidates_get: {
+        parameters: {
+            query?: {
+                name?: string;
+                article?: string;
+            };
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     latest_quote_item_api_v1_quote_items_latest_get: {
         parameters: {
             query: {
@@ -13831,6 +14018,165 @@ export interface operations {
             };
         };
     };
+    wave_plan_requests_api_v1_waves__wave_id__plan_requests_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wave_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    take_plan_requests_api_v1_waves__wave_id__take_plan_requests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wave_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WaveTakeRequestsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    remove_wave_forecast_api_v1_waves__wave_id__forecasts__forecast_id__remove_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wave_id: string;
+                forecast_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WaveForecastRemoveIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     save_wave_budget_api_v1_waves__wave_id__budget_put: {
         parameters: {
             query?: never;
@@ -14880,6 +15226,57 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    download_archive_api_v1_files_archive_get: {
+        parameters: {
+            query: {
+                ids: string;
+                name?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Сеанс отсутствует или отозван */

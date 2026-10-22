@@ -142,32 +142,40 @@ def requests(q: str = '', stage: str | None = None, client_id: str | None = None
     result = paginate(db, stmt.order_by(col.desc() if direction == 'desc' else col, Request.id), page, page_size)
     clients = prefetch(db, Counterparty, (item['client_id'] for item in result['items']))
     owners = prefetch(db, User, (item['owner_id'] for item in result['items']))
-    quoted, asked = supplier_counts(db, [item['id'] for item in result['items']])
+    counts = supplier_counts(db, [item['id'] for item in result['items']])
     for item in result['items']:
         item['client_name'] = clients[item['client_id']].name
         item['owner_name'] = owners[item['owner_id']].name
-        item['quoted_suppliers'] = quoted.get(item['id'], 0)
-        item['asked_suppliers'] = asked.get(item['id'], 0)
+        item.update(counts.get(item['id'], {'quoted_suppliers': 0, 'answered_suppliers': 0, 'asked_suppliers': 0}))
     return result
 
 
-def supplier_counts(db: Session, request_ids: list[str]) -> tuple[dict[str, int], dict[str, int]]:
-    """Business remark of 21 October 2026: per request, how many suppliers gave a quote (a current quote with
-    prices) and how many were sent a request for one."""
+def supplier_counts(db: Session, request_ids: list[str]) -> dict[str, dict[str, int]]:
+    """Per request: suppliers asked for prices, those that answered and those that gave a price.
+
+    Business remarks of 21 and 22 October 2026: a supplier answers with a quote or by a reply without prices
+    («Ответил без цен»), so two requests with one quote and one refusal are «2 из 2». A supplier that sent a
+    quote without being asked from the CRM counts as asked too.
+    """
     from app.business.models import SupplierMail
 
     if not request_ids:
-        return {}, {}
-    quoted = dict(db.execute(
-        select(QuoteSheet.request_id, sa.func.count(sa.distinct(QuoteSheet.supplier_id)))
-        .join(QuoteItem, QuoteItem.quote_id == QuoteSheet.id)
+        return {}
+    quoted = set(db.execute(
+        select(QuoteSheet.request_id, QuoteSheet.supplier_id).join(QuoteItem, QuoteItem.quote_id == QuoteSheet.id)
         .where(QuoteSheet.request_id.in_(request_ids), QuoteSheet.archived.is_(False), QuoteItem.archived.is_(False))
-        .group_by(QuoteSheet.request_id)).all())
-    asked = dict(db.execute(
-        select(SupplierMail.request_id, sa.func.count(sa.distinct(SupplierMail.supplier_id)))
-        .where(SupplierMail.request_id.in_(request_ids), SupplierMail.sent_at.is_not(None))
-        .group_by(SupplierMail.request_id)).all())
-    return quoted, asked
+        .distinct()).tuples())
+    mails = db.execute(select(SupplierMail.request_id, SupplierMail.supplier_id, SupplierMail.replied_at).where(
+        SupplierMail.request_id.in_(request_ids), SupplierMail.sent_at.is_not(None))).tuples().all()
+    asked = {(request_id, supplier_id) for request_id, supplier_id, _ in mails}
+    answered = quoted | {(request_id, supplier_id) for request_id, supplier_id, replied in mails if replied}
+    result: dict[str, dict[str, int]] = {}
+    for request_id in request_ids:
+        def count(pairs: set[tuple[str, str]]) -> int:
+            return sum(1 for pair in pairs if pair[0] == request_id)
+        result[request_id] = {'quoted_suppliers': count(quoted), 'answered_suppliers': count(answered),
+                              'asked_suppliers': count(asked | answered)}
+    return result
 
 
 @router.post('/requests', status_code=201)

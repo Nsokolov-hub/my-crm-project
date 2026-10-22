@@ -137,14 +137,15 @@ def test_planned_wave_calculates_on_its_volume_and_confirmed_orders_go_to_its_wo
     assert Decimal(distribution["total_quantity"]) == 10
     assert Decimal(previewed["totals"]["international_logistics"]) == 200
     assert sum(Decimal(x) for x in previewed["expense_allocations"][0]["wave_parts"].values()) == 1000
-    # ...and on the working wave by its real orders only.
+    # ...and on the working wave by its real orders and, while it is assembled, the rest of the plan
+    # (business remark of 22 October 2026): 2 ordered + 2 calculated + 6 of the plan's 10.
     other, other_quote = peer_request(crm, seller, supplier, item_data, work["id"])
     real = cmd(crm, f"/requests/{other['id']}/calculations/preview", {**peer_payload,
         "request_version": other["version"], "selections": [{"quote_item_id": other_quote["id"], "quantity": "2"}]})["snapshot"]
     assert Decimal(real["wave_distribution"]["existing_quantity"]) == 2
-    assert Decimal(real["wave_distribution"]["forecast_quantity"]) == 0
-    assert Decimal(real["wave_distribution"]["total_quantity"]) == 4
-    assert Decimal(real["totals"]["international_logistics"]) == 500
+    assert Decimal(real["wave_distribution"]["forecast_quantity"]) == 6
+    assert Decimal(real["wave_distribution"]["total_quantity"]) == 10
+    assert Decimal(real["totals"]["international_logistics"]) == 200
     # A wave version/forecast change invalidates a preview without mutating released documents.
     cmd(crm, f"/waves/{plan['id']}/forecasts", {**forecast_data, "version": plan["version"], "active": False}, method="put")
     conflict = cmd(crm, f"/requests/{peer['id']}/calculations", {**peer_payload,

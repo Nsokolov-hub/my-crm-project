@@ -256,6 +256,8 @@ class CalculationIn(Command):
     # False keeps the wave link but loads every wave expense into this calculation alone (leader only).
     divide_wave_expenses: bool = True
     expected_wave_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    # Business remark of 22 October 2026: a saved calculation of the request copied with its settings.
+    copy_of_id: str | None = None
 
 
 class RequestWaveIn(Command):
@@ -380,6 +382,15 @@ class WaveForecastIn(VersionCommand):
     unit_price_rub: Positive
     weight_per_unit: Nonnegative = Decimal("0")
     active: bool = True
+    reason: str = Field(min_length=3)
+
+
+class WaveTakeRequestsIn(VersionCommand):
+    request_ids: list[str] = Field(min_length=1, max_length=200)
+    reason: str = Field(default="Заявки плановой волны собираются в рабочую волну", min_length=3, max_length=2000)
+
+
+class WaveForecastRemoveIn(VersionCommand):
     reason: str = Field(min_length=3)
 
 

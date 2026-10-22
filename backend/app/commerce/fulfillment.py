@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Query
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from app.commerce.recalculate import recalculate_fulfillment
 from app.core.db import DB, utcnow
@@ -49,7 +49,9 @@ from .schemas import (
     WaveBudgetIn,
     WaveCompleteIn,
     WaveForecastIn,
+    WaveForecastRemoveIn,
     WaveIn,
+    WaveTakeRequestsIn,
     WaveUpdate,
 )
 from .waves import OPEN_WAVES, active_plan, finish_wave, usable, working_wave
@@ -1161,6 +1163,112 @@ def save_wave_forecast(wave_id: str, data: WaveForecastIn, db: DB, user: Actor):
               after=serialize(row), reason=data.reason)
         return wave_view(db, user, wave)
     return idem(db, user, data.idempotency_key, f"wave-forecast:{wave_id}", data.model_dump(mode="json"), operation)
+
+
+def plan_requests(db, user, wave: Wave) -> list[CRMRequest]:
+    """Requests still planned in the plan of a working wave: candidates to gather into the working wave."""
+    if wave.kind != "work" or not wave.plan_id:
+        return []
+    return list(db.scalars(select(CRMRequest).where(
+        CRMRequest.wave_id == wave.plan_id, CRMRequest.archived.is_(False), CRMRequest.is_test.is_(False),
+        CRMRequest.commercial_stage != "closed_lost", request_predicate(db, user))
+        .order_by(CRMRequest.created_at, CRMRequest.id)))
+
+
+@router.get("/waves/{wave_id}/plan-requests")
+def wave_plan_requests(wave_id: str, db: DB, user: Actor):
+    """Business remark of 22 October 2026: when the first order of a plan goes to work, the other requests of
+    the plan are gathered into the working wave so that their calculations share its costs with its orders."""
+    require_permission(db, user, "requests.read")
+    wave = db.get(Wave, wave_id)
+    if not wave:
+        error("NOT_FOUND", "Волна не найдена", 404)
+    rows = plan_requests(db, user, wave)
+    clients = {row.id: row for row in db.scalars(select(Counterparty).where(
+        Counterparty.id.in_([request.client_id for request in rows])))}
+    owners = {row.id: row for row in db.scalars(select(User).where(User.id.in_([request.owner_id for request in rows])))}
+    items = []
+    for request in rows:
+        latest = db.scalar(select(Calculation).where(Calculation.request_id == request.id)
+                           .order_by(Calculation.created_at.desc(), Calculation.id.desc()).limit(1))
+        proposals = db.scalar(select(func.count(CommercialDocument.id)).where(
+            CommercialDocument.request_id == request.id, CommercialDocument.kind == "proposal",
+            CommercialDocument.status.in_(("issued", "sent", "accepted")))) or 0
+        orders = db.scalar(select(func.count(WaveAllocation.id)).join(
+            Execution, Execution.id == WaveAllocation.execution_id).where(
+            WaveAllocation.wave_id == wave.id, WaveAllocation.active.is_(True),
+            Execution.request_id == request.id)) or 0
+        items.append({"id": request.id, "number": request.number, "title": request.title, "orders": orders,
+                      "client_name": clients[request.client_id].name if request.client_id in clients else None,
+                      "owner_name": owners[request.owner_id].name if request.owner_id in owners else None,
+                      "commercial_stage": request.commercial_stage, "version": request.version,
+                      "calculation_number": latest.snapshot.get("calculation_number") if latest else None,
+                      "proposals": proposals})
+    return {"items": items, "plan_id": wave.plan_id}
+
+
+@router.post("/waves/{wave_id}/take-plan-requests")
+def take_plan_requests(wave_id: str, data: WaveTakeRequestsIn, db: DB, user: Actor):
+    """Moves chosen requests of the plan into its open working wave; their next calculation shares the costs of
+    the working wave with its orders and with the rest of the plan, as the wave itself counts them."""
+    def operation():
+        advisory(db, f"wave:{wave_id}")
+        wave = usable(lock(db, Wave, wave_id))
+        check_version(wave, data.version)
+        if wave.kind != "work" or not wave.plan_id:
+            error("WAVE_KIND", "Заявки плановой волны переносятся в её рабочую волну", field="wave_id")
+        if wave.status not in OPEN_WAVES:
+            error("WAVE_CLOSED", "Перенести заявки можно в рабочую волну, которая ещё комплектуется")
+        moved = []
+        for request_id in sorted(set(data.request_ids)):
+            require_permission(db, user, "waves.write", request_id)
+            advisory(db, f"request-commerce:{request_id}")
+            request = lock(db, CRMRequest, request_id)
+            check_request(db, user, request_id)
+            if request.wave_id != wave.plan_id:
+                error("REQUEST_WAVE", f"Заявка №{request.number} уже не в плановой волне этой рабочей волны",
+                      field="request_ids")
+            before = {"wave_id": request.wave_id}
+            request.wave_id = wave.id
+            request.version += 1
+            audit(db, user, "request", request.id, "assign_wave", before=before, after={"wave_id": wave.id},
+                  reason=data.reason)
+            moved.append(request.number)
+        wave.version += 1
+        db.flush()
+        return {"moved": moved, "wave": wave_view(db, user, wave)}
+    return idem(db, user, data.idempotency_key, f"wave-take-requests:{wave_id}", data.model_dump(mode="json"),
+                operation)
+
+
+@router.post("/waves/{wave_id}/forecasts/{forecast_id}/remove")
+def remove_wave_forecast(wave_id: str, forecast_id: str, data: WaveForecastRemoveIn, db: DB, user: Actor):
+    """Business remark of 22 October 2026: the planned volume of a group is taken off the wave.
+
+    The row stays in the history switched off; calculations by the wave no longer share costs with it.
+    """
+    def operation():
+        advisory(db, f"wave:{wave_id}")
+        wave = usable(lock(db, Wave, wave_id))
+        check_wave_finances(db, user, wave)
+        check_version(wave, data.version)
+        row = db.get(WaveForecast, forecast_id)
+        if not row or row.wave_id != wave.id:
+            error("NOT_FOUND", "Плановый объём не найден", 404)
+        if not row.active:
+            error("WAVE_FORECAST_REMOVED", "Плановый объём уже убран", 409)
+        row = lock(db, WaveForecast, row.id)
+        before = serialize(row)
+        row.active = False
+        row.author_id = user.id
+        row.reason = data.reason
+        row.version += 1
+        wave.version += 1
+        db.flush()
+        audit(db, user, "wave_forecast", row.id, "removed", before=before, after=serialize(row), reason=data.reason)
+        return wave_view(db, user, wave)
+    return idem(db, user, data.idempotency_key, f"wave-forecast-remove:{forecast_id}", data.model_dump(mode="json"),
+                operation)
 
 
 @router.put("/waves/{wave_id}/budget")

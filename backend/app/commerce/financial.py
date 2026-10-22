@@ -229,6 +229,13 @@ class CalculationListContext:
         self.access = RequestAccess(db, user)
         self.ordinals = ordinals or {}
         self.waves: dict[str, tuple] = {}
+        self.request_waves: dict[str, str | None] = {}
+
+    def request_wave(self, db, request_id: str) -> str | None:
+        """The wave a request is planned in now, read once per response."""
+        if request_id not in self.request_waves:
+            self.request_waves[request_id] = db.scalar(select(CRMRequest.wave_id).where(CRMRequest.id == request_id))
+        return self.request_waves[request_id]
 
     @classmethod
     def for_request(cls, db, user, request_id: str) -> "CalculationListContext":
@@ -269,6 +276,9 @@ def calculation_view(db, user, calculation: Calculation, context: CalculationLis
             result[name] = snapshot.get(name)
         result["version_number"] = version
         wave_id = (snapshot.get("wave") or {}).get("id")
+        current_wave = context.request_wave(db, calculation.request_id) if wave_id else None
+        # The request was moved to another wave after this calculation: its costs are shared elsewhere now.
+        result["wave_moved"] = bool(wave_id and current_wave and current_wave != wave_id)
         if wave_id and snapshot.get("algorithm_version") == "itemized-v2":
             current_digest, revision_digest, problem = context.wave_state(db, wave_id)
             if problem is None:
@@ -682,6 +692,19 @@ def stamp_version(db, request_id: str, snapshot: dict, previous: Calculation | N
     return snapshot, reason
 
 
+def mark_copy(db, request_id: str, snapshot: dict, reason: str, copy_of_id: str | None) -> tuple[dict, str]:
+    """A copy keeps the numbering of the request's versions and names the calculation it was copied from."""
+    if not copy_of_id:
+        return snapshot, reason
+    source = db.get(Calculation, copy_of_id)
+    if not source or source.request_id != request_id:
+        error("CALCULATION_REQUIRED", "Копируемый расчёт не найден в этой заявке", 404, field="copy_of_id")
+    number = source.snapshot.get("calculation_number") or source.id
+    snapshot["copy_of"] = {"id": source.id, "number": number}
+    snapshot["source_label"] = f"Копия расчёта {number}"
+    return snapshot, f"Копия расчёта {number}"
+
+
 def itemized_selection(db, request_id: str, selection, index: int) -> dict:
     quote = db.get(QuoteItem, selection.quote_item_id)
     if not quote or quote.archived:
@@ -803,7 +826,11 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
                     replacement_quantities={row["quote_item"]["id"]: dec(row["quote_item"]["quantity"]) for row in selections})
                 if existing_quantity and db.scalar(select(WaveForecast.id).where(WaveForecast.wave_id == wave.id, WaveForecast.active.is_(True))):
                     error("WAVE_BASIS_REQUIRED", "Для прогноза необходимо восстановить группы ранее принятых позиций")
-                peer_selections += forecast_selections(db, wave, [*selections, *peer_selections])
+                # Business remark of 22 October 2026: requests gathered into a working wave still assembled
+                # share its costs with its orders and with the rest of its plan, as the wave counts itself.
+                peer_selections += (planned_rest(db, wave, [*selections, *peer_selections])
+                                    if wave.kind == "work" and wave.plan_id
+                                    else forecast_selections(db, wave, [*selections, *peer_selections]))
             wave_expenses, wave_expense_source = latest_wave_expenses(db, wave.id)
         missing_basis = existing_quantity
         if data.expenses is not None:
@@ -1083,6 +1110,7 @@ def preview_calculation(request_id: str, data: CalculationIn, db: DB, user: Acto
     if "previous_id" in data.model_fields_set and data.previous_id != (previous.id if previous else None):
         error("CALCULATION_VERSION_CONFLICT", "Основание версии изменилось. Обновите расчёт", 409)
     result, _ = stamp_version(db, request_id, result, previous)
+    result, _ = mark_copy(db, request_id, result, "", data.copy_of_id)
     result = filter_calculation_snapshot(db, user, request_id, result)
     return {"saved": False, "snapshot": result}
 
@@ -1103,6 +1131,7 @@ def save_calculation(request_id: str, data: CalculationIn, db: DB, user: Actor):
         if "previous_id" in data.model_fields_set and data.previous_id != (previous.id if previous else None):
             error("CALCULATION_VERSION_CONFLICT", "Основание версии изменилось. Обновите расчёт", 409)
         snapshot, reason = stamp_version(db, request_id, snapshot, previous)
+        snapshot, reason = mark_copy(db, request_id, snapshot, reason, data.copy_of_id)
         obj = Calculation(
             request_id=request_id,
             profile_id=data.profile_id,
