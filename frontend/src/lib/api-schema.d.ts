@@ -3267,6 +3267,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/site-requests/{entity_id}/conversion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Conversion
+         * @description Данные окна «Создать заявку»: найденные клиенты с причинами совпадения и предложенная карточка.
+         */
+        get: operations["conversion_api_v1_site_requests__entity_id__conversion_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/site-requests/{entity_id}/convert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Convert
+         * @description Создать клиента (если новый), контакт и заявку CRM одной командой; заявка с сайта — «Преобразована».
+         */
+        post: operations["convert_api_v1_site_requests__entity_id__convert_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3801,6 +3841,48 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /** ConvertInput */
+        ConvertInput: {
+            /** Version */
+            version: number;
+            /** Client Id */
+            client_id?: string | null;
+            client?: components["schemas"]["NewClientInput"] | null;
+            /** Contact Id */
+            contact_id?: string | null;
+            contact?: components["schemas"]["NewContactInput"] | null;
+            /** Title */
+            title: string;
+            /** Items */
+            items?: components["schemas"]["ConvertItemInput"][];
+        };
+        /**
+         * ConvertItemInput
+         * @description A request line as it will be saved; the employee may correct the proposal before saving.
+         */
+        ConvertItemInput: {
+            /** Site Item Id */
+            site_item_id?: string | null;
+            /** Description */
+            description: string;
+            /** Article */
+            article?: string | null;
+            /** Cas */
+            cas?: string | null;
+            /** Packaging */
+            packaging?: string | null;
+            /** Quantity */
+            quantity?: number | string | null;
+            /** Unit */
+            unit?: ("g" | "kg" | "mg" | "l" | "ml" | "pcs") | null;
+            /**
+             * Allow Analogue
+             * @default false
+             */
+            allow_analogue: boolean;
+            /** Comment */
+            comment?: string | null;
+        };
         /** CounterpartyArchiveInput */
         CounterpartyArchiveInput: {
             /** Version */
@@ -4318,6 +4400,35 @@ export interface components {
             mention_ids?: string[];
             /** Document Refs */
             document_refs?: components["schemas"]["DocumentRef"][];
+        };
+        /**
+         * NewClientInput
+         * @description A new client card, filled from the site request and checked by the employee.
+         */
+        NewClientInput: {
+            /** Name */
+            name: string;
+            /** Tax Id */
+            tax_id?: string | null;
+            /** Country */
+            country?: string | null;
+            /** City */
+            city?: string | null;
+            /** Phone */
+            phone?: string | null;
+            /** Email */
+            email?: string | null;
+        };
+        /** NewContactInput */
+        NewContactInput: {
+            /** Name */
+            name: string;
+            /** Position */
+            position?: string | null;
+            /** Phone */
+            phone?: string | null;
+            /** Email */
+            email?: string | null;
         };
         /** NomenclatureInput */
         NomenclatureInput: {
@@ -17910,6 +18021,116 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["RejectInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    conversion_api_v1_site_requests__entity_id__conversion_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    convert_api_v1_site_requests__entity_id__convert_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConvertInput"];
             };
         };
         responses: {

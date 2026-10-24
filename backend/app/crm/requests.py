@@ -213,6 +213,9 @@ def request_detail(entity_id: str, user: User = Depends(current_user), db: Sessi
     contact = db.get(Contact, row.contact_id) if row.contact_id else None
     result['contact_name'] = contact.name if contact else None
     result['members'] = list(db.scalars(select(RequestMember.user_id).where(RequestMember.request_id == row.id)))
+    # A request created from a site request shows where the customer came from (TZ of the site, 9.4).
+    from app.integrations.site_conversion import site_source
+    result['site_request'] = site_source(db, row.id)
     result['next_task'] = None
     task = db.scalar(
         select(Task).where(

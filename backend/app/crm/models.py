@@ -147,6 +147,8 @@ class Request(Entity):
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     # Archived together with its client, and restored with it.
     archived_with_client: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # Where the request came from, e.g. «Сайт» for one created from a site request.
+    source: Mapped[str | None] = mapped_column(String(250))
 
 
 class RequestMember(Entity):

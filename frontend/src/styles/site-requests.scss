@@ -1,0 +1,106 @@
+// «Заявки с сайта» and the «Создать заявку» window.
+
+.history-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0 23px 20px 40px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.convert-options {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 0;
+}
+
+.convert-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  align-items: start;
+  padding: 12px 14px;
+  border: 1px solid #ece4f6;
+  border-radius: 10px;
+  background: #fcfbff;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.convert-option:has(input:checked) {
+  border-color: #b8a3df;
+  background: #f6f1fd;
+}
+
+.convert-option input {
+  margin-top: 2px;
+}
+
+.convert-option small {
+  grid-column: 2;
+  color: #8a789f;
+  line-height: 1.6;
+}
+
+.convert-option .badge {
+  margin-left: 6px;
+}
+
+.convert-warning {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid #f1dcae;
+  border-radius: 8px;
+  background: #fdf7e9;
+  color: #8a6a2a;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.convert-lines td {
+  vertical-align: top;
+}
+
+.convert-lines input:not([type='checkbox']),
+.convert-lines select,
+.convert-lines textarea {
+  width: 100%;
+  min-width: 110px;
+}
+
+.convert-lines td.narrow-cell input,
+.convert-lines td.narrow-cell select {
+  min-width: 64px;
+}
+
+.convert-lines td.wide-cell {
+  min-width: 220px;
+}
+
+.convert-lines textarea {
+  min-height: 34px;
+  resize: vertical;
+}
+
+// The legend names the group for screen readers; the section title already shows it.
+.convert-legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+// Panels of the window hold forms, not tables: their content keeps the panel's inner margins.
+.convert-form .panel > :not(.section-heading) {
+  margin-right: 23px;
+  margin-left: 23px;
+}
+
+.convert-form .panel > :last-child {
+  margin-bottom: 20px;
+}

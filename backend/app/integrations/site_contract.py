@@ -10,7 +10,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.core.schemas import Input
 
@@ -165,6 +165,69 @@ class AssignInput(Input):
 class RejectInput(Input):
     reason: str = Field(min_length=1, max_length=2000)
     version: int = Field(ge=1)
+
+
+# ── «Создать заявку» (TZ 9.4.1): one window, one command ──
+
+class NewClientInput(Input):
+    """A new client card, filled from the site request and checked by the employee."""
+
+    name: str = Field(min_length=1, max_length=250)
+    tax_id: str | None = Field(default=None, max_length=100)
+    country: str | None = Field(default=None, max_length=100)
+    city: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=100)
+    email: EmailStr | None = None
+
+
+class NewContactInput(Input):
+    name: str = Field(min_length=1, max_length=250)
+    position: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=100)
+    email: EmailStr | None = None
+
+
+class ConvertItemInput(Input):
+    """A request line as it will be saved; the employee may correct the proposal before saving."""
+
+    site_item_id: str | None = Field(default=None, max_length=36)
+    description: str = Field(min_length=1, max_length=10000)
+    article: str | None = Field(default=None, max_length=150)
+    cas: str | None = Field(default=None, max_length=30)
+    packaging: str | None = Field(default=None, max_length=200)
+    quantity: Decimal | None = Field(default=None, gt=0, max_digits=24, decimal_places=6)
+    unit: Literal['g', 'kg', 'mg', 'l', 'ml', 'pcs'] | None = None
+    allow_analogue: bool = False
+    comment: str | None = Field(default=None, max_length=10000)
+
+    @field_validator('quantity', mode='before')
+    @classmethod
+    def decimal_string(cls, value: Any) -> Any:
+        if isinstance(value, float):
+            raise ValueError('Количество передаётся десятичной строкой')
+        return value
+
+
+class ConvertInput(Input):
+    version: int = Field(ge=1)
+    # An existing client found by the search, or a new card — exactly one of them.
+    client_id: str | None = Field(default=None, max_length=36)
+    client: NewClientInput | None = None
+    # An existing contact of that client, or a new one — exactly one of them.
+    contact_id: str | None = Field(default=None, max_length=36)
+    contact: NewContactInput | None = None
+    title: str = Field(min_length=1, max_length=250)
+    items: list[ConvertItemInput] = Field(default_factory=list, max_length=MAX_ITEMS)
+
+    @model_validator(mode='after')
+    def one_client_and_contact(self) -> 'ConvertInput':
+        if (self.client_id is None) == (self.client is None):
+            raise ValueError('Выберите найденного клиента или заполните карточку нового')
+        if (self.contact_id is None) == (self.contact is None):
+            raise ValueError('Выберите контакт клиента или заполните новый')
+        if self.client is not None and self.contact_id is not None:
+            raise ValueError('У нового клиента контакт тоже новый')
+        return self
 
 
 def contract_schemas() -> dict[str, Any]:

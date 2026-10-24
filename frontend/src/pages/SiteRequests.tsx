@@ -1,4 +1,4 @@
-import { Download, Search, UserRoundCheck, XCircle } from 'lucide-react';
+import { ClipboardPlus, Download, Search, UserRoundCheck, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { RecordForm } from '../components/Form';
@@ -20,6 +20,8 @@ import { download } from '../lib/api';
 import { date } from '../lib/format';
 import { useApi, useDebounced } from '../lib/hooks';
 import type { Entity, Page } from '../lib/types';
+import { SiteRequestConvert } from './SiteRequestConvert';
+import '../styles/site-requests.scss';
 
 /**
  * «Заявки с сайта» (ТЗ сайта 9.4.1): входящие заявки ogk-chem.ru в том виде, как их отправил клиент.
@@ -120,7 +122,7 @@ export function SiteRequestCard({
   onChanged: () => void;
 }) {
   const detail = useApi<SiteRequestDetail>(`/site-requests/${id}`);
-  const [action, setAction] = useState<'assign' | 'reject' | null>(null);
+  const [action, setAction] = useState<'assign' | 'reject' | 'convert' | null>(null);
   const [fileError, setFileError] = useState<unknown>();
   const row = detail.data;
   const open = row && !['converted', 'rejected'].includes(row.status);
@@ -160,6 +162,15 @@ export function SiteRequestCard({
         onSuccess={done}
       />
     );
+  if (row && action === 'convert')
+    return (
+      <SiteRequestConvert
+        siteRequestId={id}
+        version={row.version}
+        onClose={() => setAction(null)}
+        onDone={done}
+      />
+    );
   if (row && action === 'reject')
     return (
       <RecordForm
@@ -186,6 +197,11 @@ export function SiteRequestCard({
               <>
                 <div className="heading-actions">
                   <Badge value={row.status_label} tone={STATUS_TONES[row.status]} />
+                  {open && row.can_process && (
+                    <Button onClick={() => setAction('convert')}>
+                      <ClipboardPlus size={15} /> Создать заявку
+                    </Button>
+                  )}
                   {open && row.can_assign && (
                     <Button variant="secondary" onClick={() => setAction('assign')}>
                       <UserRoundCheck size={15} />

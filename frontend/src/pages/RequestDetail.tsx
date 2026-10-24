@@ -38,6 +38,24 @@ const tabs = [
   ['fulfillment', 'Исполнение'],
   ['history', 'История и обсуждение'],
 ];
+const SITE_CHANNELS: Record<string, string> = {
+  cpc: 'реклама',
+  organic: 'поиск',
+  referral: 'переход с сайта',
+  direct: 'прямой заход',
+  email: 'рассылка',
+  social: 'соцсети',
+};
+
+/** «Сайт: заявка W-1, реклама (yandex / cpc)» — откуда пришла заявка, созданная из заявки с сайта */
+function sourceLabel(row: Entity) {
+  const site = row.site_request as
+    { number: string; channel?: string | null; last_touch?: string | null } | null | undefined;
+  if (!site) return String(row.source);
+  const channel = site.channel ? `, ${SITE_CHANNELS[site.channel] ?? site.channel}` : '';
+  return `${String(row.source)}: заявка ${site.number}${channel}${site.last_touch ? ` (${site.last_touch})` : ''}`;
+}
+
 export function RequestDetail() {
   const { id = '' } = useParams();
   const [params, setParams] = useSearchParams();
@@ -117,6 +135,7 @@ export function RequestDetail() {
                   Клиент: row.client_name,
                   Контакт: row.contact_name,
                   Ответственный: row.owner_name,
+                  ...(row.source ? { Источник: sourceLabel(row) } : {}),
                   Создана: date(row.created_at, true),
                   'Желаемый срок': date(row.due_at),
                   'Коммерческий этап': row.commercial_stage,
