@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   FileText,
   FlaskConical,
+  Globe,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -34,6 +35,12 @@ import '../styles/business.scss';
 const links = [
   { label: 'Рабочий стол', path: '/', icon: LayoutDashboard, permission: undefined },
   { label: 'Заявки', path: '/requests', icon: ClipboardList, permission: 'requests.read' },
+  {
+    label: 'Заявки с сайта',
+    path: '/site-requests',
+    icon: Globe,
+    permission: 'site_requests.read',
+  },
   { label: 'Клиенты', path: '/clients', icon: Building2, permission: 'clients.read' },
   { label: 'Контакты', path: '/contacts', icon: Building2, permission: 'clients.read' },
   { label: 'База обзвона', path: '/calls', icon: Phone, permission: 'clients.read' },

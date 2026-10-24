@@ -748,6 +748,7 @@ export function Notifications() {
     if (row.entity_type === 'workflow_review' || row.entity_type === 'payment') return '/approvals';
     if (row.entity_type === 'calendar_entry') return '/payment-calendar';
     if (row.entity_type === 'employee_absence') return '/tasks';
+    if (row.entity_type === 'site_request') return `/site-requests?id=${row.entity_id}`;
     return row.entity_type === 'request'
       ? `/requests/${row.entity_id}`
       : row.entity_type === 'counterparty'
@@ -825,13 +826,15 @@ export function Notifications() {
                     <span>
                       {row.entity_type === 'request'
                         ? 'Заявка'
-                        : row.entity_type === 'chat'
-                          ? 'Сообщение'
-                          : row.entity_type === 'payment'
-                            ? 'Оплата'
-                            : row.category === 'system'
-                              ? 'Системное событие'
-                              : 'Рабочее событие'}
+                        : row.entity_type === 'site_request'
+                          ? 'Заявка с сайта'
+                          : row.entity_type === 'chat'
+                            ? 'Сообщение'
+                            : row.entity_type === 'payment'
+                              ? 'Оплата'
+                              : row.category === 'system'
+                                ? 'Системное событие'
+                                : 'Рабочее событие'}
                     </span>
                     {!row.read && <Badge value="Новое" tone="purple" />}
                   </div>

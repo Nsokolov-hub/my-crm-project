@@ -121,5 +121,19 @@ def metrics(request: Request):
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-for module in ['core.routes', 'audit.routes', 'crm.routes', 'crm.imports', 'crm.table_imports', 'analytics.routes', 'commerce.routes', 'communication.routes', 'business.routes']:
+for module in ['core.routes', 'audit.routes', 'crm.routes', 'crm.imports', 'crm.table_imports', 'analytics.routes', 'commerce.routes', 'communication.routes', 'business.routes', 'integrations.routes']:
     app.include_router(import_module(f'app.{module}').router, prefix='/api/v1')
+
+_route_openapi = app.openapi
+
+
+def openapi_with_contracts() -> dict:
+    # Contract F1 is parsed by its endpoint, not by FastAPI; its schemas are added for the site's contract test.
+    if app.openapi_schema is None:
+        from app.integrations.site_contract import contract_schemas
+        components = _route_openapi()['components']
+        components['schemas'] = dict(sorted({**components['schemas'], **contract_schemas()}.items()))
+    return app.openapi_schema or {}
+
+
+app.openapi = openapi_with_contracts  # type: ignore[method-assign]

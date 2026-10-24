@@ -68,7 +68,8 @@ class FileRecord(Entity):
                         'CASE WHEN quote_id IS NULL THEN 0 ELSE 1 END + '
                         'CASE WHEN calculation_id IS NULL THEN 0 ELSE 1 END + '
                         'CASE WHEN document_id IS NULL THEN 0 ELSE 1 END + '
-                        'CASE WHEN calendar_entry_id IS NULL THEN 0 ELSE 1 END) = 1'),
+                        'CASE WHEN calendar_entry_id IS NULL THEN 0 ELSE 1 END + '
+                        'CASE WHEN site_request_id IS NULL THEN 0 ELSE 1 END) = 1'),
     )
     name: Mapped[str] = mapped_column(String(250))
     media_type: Mapped[str] = mapped_column(String(100))
@@ -88,6 +89,8 @@ class FileRecord(Entity):
     calculation_id: Mapped[str | None] = mapped_column(ForeignKey('calculations.id'), index=True)
     document_id: Mapped[str | None] = mapped_column(ForeignKey('commercial_documents.id'), index=True)
     calendar_entry_id: Mapped[str | None] = mapped_column(ForeignKey('calendar_entries.id'), index=True)
+    # Attachments a customer sent with a site request (app.integrations.site_requests).
+    site_request_id: Mapped[str | None] = mapped_column(ForeignKey('site_requests.id'), index=True)
 
 
 class MessageFile(Entity):

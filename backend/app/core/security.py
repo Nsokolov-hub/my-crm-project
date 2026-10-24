@@ -36,6 +36,9 @@ PERMISSIONS = {
     'settings.dictionaries.write': 'Настройка рабочих справочников',
     'settings.system.write': 'Настройка системных правил',
     'settings.commerce.write': 'Настройка коммерческих правил',
+    'site_requests.read': 'Просмотр заявок с сайта',
+    'site_requests.assign': 'Назначение ответственных за заявки с сайта',
+    'site_requests.write': 'Обработка заявок с сайта',
 }
 
 

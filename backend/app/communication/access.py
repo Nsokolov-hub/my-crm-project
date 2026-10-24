@@ -21,6 +21,7 @@ ENTITY_COLUMNS = {
     "calculation": "calculation_id",
     "document": "document_id",
     "calendar_entry": "calendar_entry_id",
+    "site_request": "site_request_id",
 }
 
 
@@ -79,6 +80,13 @@ def check_entity(db: Session, user: User, entity_type: str, entity_id: str):
         if row is None:
             raise DomainError("NOT_FOUND", "Платёж недоступен", 404)
         calendar_visible(db, user, row)
+        return row
+    if entity_type == "site_request":
+        from app.integrations.models import SiteRequest
+        require_permission(db, user, "site_requests.read")
+        row = db.get(SiteRequest, entity_id)
+        if row is None:
+            raise DomainError("NOT_FOUND", "Заявка с сайта не найдена", 404)
         return row
     if entity_type in ("quote", "calculation", "document"):
         from app.commerce.models import Calculation, CommercialDocument, Quote

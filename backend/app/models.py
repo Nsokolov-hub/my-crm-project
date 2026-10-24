@@ -5,3 +5,4 @@ import app.commerce.models  # noqa: F401
 import app.communication.models  # noqa: F401
 import app.core.models  # noqa: F401
 import app.crm.models  # noqa: F401
+import app.integrations.models  # noqa: F401

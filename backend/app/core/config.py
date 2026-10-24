@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     smtp_password: str = ''
     smtp_from: str = ''
     smtp_starttls: bool = True
+    # Site integration (docs/site-integration.md): addresses the site server calls from, comma-separated
+    # IPs or CIDR ranges. Empty means any address in development; production then refuses every call.
+    site_integration_allowed_ips: str = ''
+    # A signed site request is accepted this many seconds around its timestamp, which stops replays.
+    site_integration_max_skew_seconds: int = 300
 
     def verify(self) -> None:
         if self.environment == 'production':

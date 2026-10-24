@@ -12594,6 +12594,372 @@
           }
         }
       }
+    },
+    "/api/v1/integrations/site/requests": {
+      "post": {
+        "tags": [
+          "Заявки с сайта"
+        ],
+        "summary": "Receive",
+        "description": "Заявка с сайта (поток F1). multipart/form-data: часть `payload` — JSON `SiteRequestIn`, части `files` —\nвложения в порядке `attachments`. Заголовки `Authorization`, `X-Site-Timestamp`, `X-Site-Signature`,\n`Idempotency-Key` описаны в docs/site-integration.md.",
+        "operationId": "receive_api_v1_integrations_site_requests_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "payload": {
+                    "type": "string",
+                    "contentMediaType": "application/json",
+                    "contentSchema": {
+                      "$ref": "#/components/schemas/SiteRequestIn"
+                    },
+                    "description": "JSON заявки SiteRequestIn"
+                  },
+                  "files": {
+                    "items": {
+                      "type": "string",
+                      "format": "binary"
+                    },
+                    "type": "array",
+                    "maxItems": 5,
+                    "description": "Вложения в порядке attachments"
+                  }
+                },
+                "type": "object",
+                "required": [
+                  "payload"
+                ]
+              },
+              "encoding": {
+                "payload": {
+                  "contentType": "application/json"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteRequestReceipt"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет токена, подпись неверна или устарела"
+          },
+          "403": {
+            "description": "Адрес сервера сайта не разрешён"
+          },
+          "409": {
+            "description": "Ключ уже использован для другого содержимого"
+          },
+          "422": {
+            "description": "Заявка или вложения не прошли проверку"
+          },
+          "200": {
+            "description": "Заявка уже получена: повтор с тем же ключом и содержимым",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteRequestReceipt"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/site-requests": {
+      "get": {
+        "tags": [
+          "Заявки с сайта"
+        ],
+        "summary": "List Site Requests",
+        "operationId": "list_site_requests_api_v1_site_requests_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "new",
+                    "in_work",
+                    "converted",
+                    "rejected"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 25,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Site Requests Api V1 Site Requests Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/site-requests/{entity_id}": {
+      "get": {
+        "tags": [
+          "Заявки с сайта"
+        ],
+        "summary": "Site Request",
+        "operationId": "site_request_api_v1_site_requests__entity_id__get",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Site Request Api V1 Site Requests  Entity Id  Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/site-requests/{entity_id}/assign": {
+      "post": {
+        "tags": [
+          "Заявки с сайта"
+        ],
+        "summary": "Assign Site Request",
+        "description": "Назначить ответственного. Переназначение — с причиной; новый ответственный получает задачу\n«Связаться с клиентом» со сроком 2 рабочих часа.",
+        "operationId": "assign_site_request_api_v1_site_requests__entity_id__assign_post",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Assign Site Request Api V1 Site Requests  Entity Id  Assign Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/site-requests/{entity_id}/reject": {
+      "post": {
+        "tags": [
+          "Заявки с сайта"
+        ],
+        "summary": "Reject Site Request",
+        "description": "Отклонить заявку (спам, дубль, не наш профиль) с причиной; учитывается в отчёте по каналам.",
+        "operationId": "reject_site_request_api_v1_site_requests__entity_id__reject_post",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Reject Site Request Api V1 Site Requests  Entity Id  Reject Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -12779,6 +13145,41 @@
           "reviewer_id"
         ],
         "title": "ApprovalIn"
+      },
+      "AssignInput": {
+        "properties": {
+          "assignee_id": {
+            "type": "string",
+            "maxLength": 36,
+            "minLength": 1,
+            "title": "Assignee Id"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "assignee_id",
+          "version"
+        ],
+        "title": "AssignInput"
       },
       "Body_preview_api_v1_imports_preview_post": {
         "properties": {
@@ -17556,6 +17957,28 @@
         "type": "object",
         "title": "ReadInput"
       },
+      "RejectInput": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reason",
+          "version"
+        ],
+        "title": "RejectInput"
+      },
       "RequestInput": {
         "properties": {
           "title": {
@@ -18337,6 +18760,706 @@
           "reason"
         ],
         "title": "ShareInput"
+      },
+      "SiteAttachment": {
+        "properties": {
+          "file_name": {
+            "maxLength": 250,
+            "minLength": 1,
+            "title": "File Name",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size": {
+            "exclusiveMinimum": 0,
+            "maximum": 10485760,
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_name",
+          "sha256",
+          "size"
+        ],
+        "title": "SiteAttachment",
+        "type": "object"
+      },
+      "SiteAttribution": {
+        "properties": {
+          "first_touch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SiteTouch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "last_touch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SiteTouch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "conversion_page_url": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Conversion Page Url"
+          },
+          "channel": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cpc",
+                  "organic",
+                  "referral",
+                  "direct",
+                  "email",
+                  "social"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Channel"
+          },
+          "client_ids": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SiteClientIds"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "title": "SiteAttribution",
+        "type": "object"
+      },
+      "SiteClientIds": {
+        "properties": {
+          "ym_uid": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ym Uid"
+          },
+          "ga_client_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ga Client Id"
+          }
+        },
+        "title": "SiteClientIds",
+        "type": "object"
+      },
+      "SiteCustomer": {
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "company": {
+            "maxLength": 250,
+            "minLength": 1,
+            "title": "Company",
+            "type": "string"
+          },
+          "inn": {
+            "anyOf": [
+              {
+                "maxLength": 12,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Inn"
+          },
+          "phone": {
+            "description": "E.164: +79991234567",
+            "pattern": "^\\+[1-9][0-9]{6,14}$",
+            "title": "Phone",
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 254,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          },
+          "city": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "City"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "maxLength": 10000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Comment"
+          },
+          "marketing_consent": {
+            "default": false,
+            "title": "Marketing Consent",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "company",
+          "phone",
+          "email"
+        ],
+        "title": "SiteCustomer",
+        "type": "object"
+      },
+      "SiteItem": {
+        "properties": {
+          "site_product_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Site Product Id"
+          },
+          "crm_product_id": {
+            "anyOf": [
+              {
+                "maxLength": 36,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Crm Product Id"
+          },
+          "brand": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Brand"
+          },
+          "catalog_number": {
+            "anyOf": [
+              {
+                "maxLength": 150,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Catalog Number"
+          },
+          "cas": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cas"
+          },
+          "name": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "packaging": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Packaging"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1000000.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,19}0*$)\\d{0,12}\\.\\d{0,6}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "unit": {
+            "default": "pack",
+            "enum": [
+              "pack",
+              "mg",
+              "g",
+              "kg",
+              "ml",
+              "l",
+              "pcs"
+            ],
+            "title": "Unit",
+            "type": "string"
+          },
+          "analogue": {
+            "default": "none",
+            "enum": [
+              "none",
+              "allowed",
+              "requested"
+            ],
+            "title": "Analogue",
+            "type": "string"
+          },
+          "custom_packaging": {
+            "default": false,
+            "title": "Custom Packaging",
+            "type": "boolean"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "maxLength": 5000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Comment"
+          },
+          "page_url": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Page Url"
+          }
+        },
+        "required": [
+          "name",
+          "quantity"
+        ],
+        "title": "SiteItem",
+        "type": "object"
+      },
+      "SiteRequestIn": {
+        "description": "Body of POST /api/v1/integrations/site/requests (the `payload` part of the multipart form).",
+        "properties": {
+          "site_request_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Site Request Id",
+            "type": "string"
+          },
+          "site_number": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Site Number",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "product_rfq",
+              "one_click",
+              "service",
+              "general"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "lang": {
+            "default": "ru",
+            "enum": [
+              "ru",
+              "en"
+            ],
+            "title": "Lang",
+            "type": "string"
+          },
+          "form_type": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Form Type"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "page_url": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Page Url"
+          },
+          "desired_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Desired Date"
+          },
+          "customer": {
+            "$ref": "#/components/schemas/SiteCustomer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SiteItem"
+            },
+            "maxItems": 200,
+            "title": "Items",
+            "type": "array"
+          },
+          "service": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SiteService"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/SiteAttachment"
+            },
+            "maxItems": 5,
+            "title": "Attachments",
+            "type": "array"
+          },
+          "attribution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SiteAttribution"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "site_request_id",
+          "site_number",
+          "kind",
+          "created_at",
+          "customer"
+        ],
+        "title": "SiteRequestIn",
+        "type": "object"
+      },
+      "SiteRequestReceipt": {
+        "description": "Answer to the site: the record the CRM keeps for this request.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "number": {
+            "title": "Number",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "status",
+          "received_at"
+        ],
+        "title": "SiteRequestReceipt",
+        "type": "object"
+      },
+      "SiteService": {
+        "properties": {
+          "slug": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Slug",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 250,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "fields": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 50,
+            "title": "Fields",
+            "type": "object"
+          }
+        },
+        "required": [
+          "slug",
+          "name"
+        ],
+        "title": "SiteService",
+        "type": "object"
+      },
+      "SiteTouch": {
+        "properties": {
+          "landing_url": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Landing Url"
+          },
+          "referrer": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Referrer"
+          },
+          "utm_source": {
+            "anyOf": [
+              {
+                "maxLength": 250,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Utm Source"
+          },
+          "utm_medium": {
+            "anyOf": [
+              {
+                "maxLength": 250,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Utm Medium"
+          },
+          "utm_campaign": {
+            "anyOf": [
+              {
+                "maxLength": 250,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Utm Campaign"
+          },
+          "utm_content": {
+            "anyOf": [
+              {
+                "maxLength": 250,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Utm Content"
+          },
+          "utm_term": {
+            "anyOf": [
+              {
+                "maxLength": 250,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Utm Term"
+          },
+          "yclid": {
+            "anyOf": [
+              {
+                "maxLength": 250,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Yclid"
+          },
+          "gclid": {
+            "anyOf": [
+              {
+                "maxLength": 250,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Gclid"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "At"
+          }
+        },
+        "title": "SiteTouch",
+        "type": "object"
       },
       "StartItemsInput": {
         "properties": {

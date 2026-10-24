@@ -3170,6 +3170,103 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/integrations/site/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Receive
+         * @description Заявка с сайта (поток F1). multipart/form-data: часть `payload` — JSON `SiteRequestIn`, части `files` —
+         *     вложения в порядке `attachments`. Заголовки `Authorization`, `X-Site-Timestamp`, `X-Site-Signature`,
+         *     `Idempotency-Key` описаны в docs/site-integration.md.
+         */
+        post: operations["receive_api_v1_integrations_site_requests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/site-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Site Requests */
+        get: operations["list_site_requests_api_v1_site_requests_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/site-requests/{entity_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Site Request */
+        get: operations["site_request_api_v1_site_requests__entity_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/site-requests/{entity_id}/assign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assign Site Request
+         * @description Назначить ответственного. Переназначение — с причиной; новый ответственный получает задачу
+         *     «Связаться с клиентом» со сроком 2 рабочих часа.
+         */
+        post: operations["assign_site_request_api_v1_site_requests__entity_id__assign_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/site-requests/{entity_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject Site Request
+         * @description Отклонить заявку (спам, дубль, не наш профиль) с причиной; учитывается в отчёте по каналам.
+         */
+        post: operations["reject_site_request_api_v1_site_requests__entity_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3235,6 +3332,15 @@ export interface components {
             execution_ids: string[];
             /** Reviewer Id */
             reviewer_id: string;
+        };
+        /** AssignInput */
+        AssignInput: {
+            /** Assignee Id */
+            assignee_id: string;
+            /** Version */
+            version: number;
+            /** Reason */
+            reason?: string | null;
         };
         /** Body_preview_api_v1_imports_preview_post */
         Body_preview_api_v1_imports_preview_post: {
@@ -4817,6 +4923,13 @@ export interface components {
             /** Through */
             through?: number | null;
         };
+        /** RejectInput */
+        RejectInput: {
+            /** Reason */
+            reason: string;
+            /** Version */
+            version: number;
+        };
         /** RequestInput */
         RequestInput: {
             /** Title */
@@ -5051,6 +5164,276 @@ export interface components {
             member_ids: string[];
             /** Reason */
             reason: string;
+        };
+        /** SiteAttachment */
+        SiteAttachment: {
+            /** File Name */
+            file_name: string;
+            /** Sha256 */
+            sha256: string;
+            /** Size */
+            size: number;
+        };
+        /** SiteAttribution */
+        SiteAttribution: {
+            /** @default null */
+            first_touch: components["schemas"]["SiteTouch"] | null;
+            /** @default null */
+            last_touch: components["schemas"]["SiteTouch"] | null;
+            /**
+             * Conversion Page Url
+             * @default null
+             */
+            conversion_page_url: string | null;
+            /**
+             * Channel
+             * @default null
+             */
+            channel: ("cpc" | "organic" | "referral" | "direct" | "email" | "social") | null;
+            /** @default null */
+            client_ids: components["schemas"]["SiteClientIds"] | null;
+        };
+        /** SiteClientIds */
+        SiteClientIds: {
+            /**
+             * Ym Uid
+             * @default null
+             */
+            ym_uid: string | null;
+            /**
+             * Ga Client Id
+             * @default null
+             */
+            ga_client_id: string | null;
+        };
+        /** SiteCustomer */
+        SiteCustomer: {
+            /** Name */
+            name: string;
+            /** Company */
+            company: string;
+            /**
+             * Inn
+             * @default null
+             */
+            inn: string | null;
+            /**
+             * Phone
+             * @description E.164: +79991234567
+             */
+            phone: string;
+            /** Email */
+            email: string;
+            /**
+             * City
+             * @default null
+             */
+            city: string | null;
+            /**
+             * Comment
+             * @default null
+             */
+            comment: string | null;
+            /**
+             * Marketing Consent
+             * @default false
+             */
+            marketing_consent: boolean;
+        };
+        /** SiteItem */
+        SiteItem: {
+            /**
+             * Site Product Id
+             * @default null
+             */
+            site_product_id: string | null;
+            /**
+             * Crm Product Id
+             * @default null
+             */
+            crm_product_id: string | null;
+            /**
+             * Brand
+             * @default null
+             */
+            brand: string | null;
+            /**
+             * Catalog Number
+             * @default null
+             */
+            catalog_number: string | null;
+            /**
+             * Cas
+             * @default null
+             */
+            cas: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Packaging
+             * @default null
+             */
+            packaging: string | null;
+            /** Quantity */
+            quantity: number | string;
+            /**
+             * Unit
+             * @default pack
+             * @enum {string}
+             */
+            unit: "pack" | "mg" | "g" | "kg" | "ml" | "l" | "pcs";
+            /**
+             * Analogue
+             * @default none
+             * @enum {string}
+             */
+            analogue: "none" | "allowed" | "requested";
+            /**
+             * Custom Packaging
+             * @default false
+             */
+            custom_packaging: boolean;
+            /**
+             * Comment
+             * @default null
+             */
+            comment: string | null;
+            /**
+             * Page Url
+             * @default null
+             */
+            page_url: string | null;
+        };
+        /**
+         * SiteRequestIn
+         * @description Body of POST /api/v1/integrations/site/requests (the `payload` part of the multipart form).
+         */
+        SiteRequestIn: {
+            /** Site Request Id */
+            site_request_id: string;
+            /** Site Number */
+            site_number: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "product_rfq" | "one_click" | "service" | "general";
+            /**
+             * Lang
+             * @default ru
+             * @enum {string}
+             */
+            lang: "ru" | "en";
+            /**
+             * Form Type
+             * @default null
+             */
+            form_type: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Page Url
+             * @default null
+             */
+            page_url: string | null;
+            /**
+             * Desired Date
+             * @default null
+             */
+            desired_date: string | null;
+            customer: components["schemas"]["SiteCustomer"];
+            /** Items */
+            items?: components["schemas"]["SiteItem"][];
+            /** @default null */
+            service: components["schemas"]["SiteService"] | null;
+            /** Attachments */
+            attachments?: components["schemas"]["SiteAttachment"][];
+            /** @default null */
+            attribution: components["schemas"]["SiteAttribution"] | null;
+        };
+        /**
+         * SiteRequestReceipt
+         * @description Answer to the site: the record the CRM keeps for this request.
+         */
+        SiteRequestReceipt: {
+            /** Id */
+            id: string;
+            /** Number */
+            number: string;
+            /** Status */
+            status: string;
+            /**
+             * Received At
+             * Format: date-time
+             */
+            received_at: string;
+        };
+        /** SiteService */
+        SiteService: {
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Fields */
+            fields?: {
+                [key: string]: string;
+            };
+        };
+        /** SiteTouch */
+        SiteTouch: {
+            /**
+             * Landing Url
+             * @default null
+             */
+            landing_url: string | null;
+            /**
+             * Referrer
+             * @default null
+             */
+            referrer: string | null;
+            /**
+             * Utm Source
+             * @default null
+             */
+            utm_source: string | null;
+            /**
+             * Utm Medium
+             * @default null
+             */
+            utm_medium: string | null;
+            /**
+             * Utm Campaign
+             * @default null
+             */
+            utm_campaign: string | null;
+            /**
+             * Utm Content
+             * @default null
+             */
+            utm_content: string | null;
+            /**
+             * Utm Term
+             * @default null
+             */
+            utm_term: string | null;
+            /**
+             * Yclid
+             * @default null
+             */
+            yclid: string | null;
+            /**
+             * Gclid
+             * @default null
+             */
+            gclid: string | null;
+            /**
+             * At
+             * @default null
+             */
+            at: string | null;
         };
         /** StartItemsInput */
         StartItemsInput: {
@@ -17250,6 +17633,295 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    receive_api_v1_integrations_site_requests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** @description JSON заявки SiteRequestIn */
+                    payload: string;
+                    /** @description Вложения в порядке attachments */
+                    files?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Заявка уже получена: повтор с тем же ключом и содержимым */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteRequestReceipt"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteRequestReceipt"];
+                };
+            };
+            /** @description Нет токена, подпись неверна или устарела */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Адрес сервера сайта не разрешён */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ключ уже использован для другого содержимого */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Заявка или вложения не прошли проверку */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_site_requests_api_v1_site_requests_get: {
+        parameters: {
+            query?: {
+                status?: ("new" | "in_work" | "converted" | "rejected") | null;
+                q?: string;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    site_request_api_v1_site_requests__entity_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    assign_site_request_api_v1_site_requests__entity_id__assign_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reject_site_request_api_v1_site_requests__entity_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RejectInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Сеанс отсутствует или отозван */

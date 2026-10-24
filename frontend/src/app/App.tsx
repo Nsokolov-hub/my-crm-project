@@ -20,6 +20,9 @@ const RequestDetail = lazy(() =>
   import('../pages/RequestDetail').then((m) => ({ default: m.RequestDetail })),
 );
 const Catalog = lazy(() => import('../pages/Catalog').then((m) => ({ default: m.Catalog })));
+const SiteRequests = lazy(() =>
+  import('../pages/SiteRequests').then((m) => ({ default: m.SiteRequests })),
+);
 const Waves = lazy(() => import('../pages/Fulfillment').then((m) => ({ default: m.Waves })));
 const Chats = lazy(() => import('../pages/Communication').then((m) => ({ default: m.Chats })));
 const Notifications = lazy(() =>
@@ -52,6 +55,7 @@ function AuthenticatedApp() {
         <Route path="tasks" element={<Tasks />} />
         <Route path="requests" element={<Requests />} />
         <Route path="requests/:id" element={<RequestDetail />} />
+        <Route path="site-requests" element={<SiteRequests />} />
         <Route path="catalog" element={<Catalog />} />
         <Route path="documents" element={<Registry kind="documents" />} />
         <Route path="payments" element={<Registry kind="payments" />} />
