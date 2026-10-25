@@ -19,7 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.db import Base, Entity
+from app.core.db import Base, Entity, utcnow
 
 
 class Manufacturer(Entity, Base):
@@ -34,6 +34,9 @@ class Manufacturer(Entity, Base):
     # The umbrella brand is another entry; the analytics groups by it.
     umbrella_id: Mapped[str | None] = mapped_column(ForeignKey("manufacturers.id"), index=True)
     merged_into_id: Mapped[str | None] = mapped_column(ForeignKey("manufacturers.id"))
+    # Changes of the entry or of its spellings: the site loads the registry by it (flow F5).
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+                                                 index=True)
 
 
 class ManufacturerAlias(Entity, Base):

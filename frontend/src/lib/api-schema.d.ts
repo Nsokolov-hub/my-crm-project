@@ -3307,6 +3307,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/integrations/site/manufacturers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Site Manufacturers
+         * @description Реестр производителей для сайта (поток F5): изменённые с `updated_since`, постранично по `cursor`.
+         *     Подпись HMAC — от строки `GET <путь>?<параметры>` вместо тела (docs/site-integration.md).
+         */
+        get: operations["site_manufacturers_api_v1_integrations_site_manufacturers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5414,6 +5435,33 @@ export interface components {
              * @default null
              */
             page_url: string | null;
+        };
+        /** SiteManufacturer */
+        SiteManufacturer: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Internal Code */
+            internal_code: number;
+            /** Aliases */
+            aliases: string[];
+            /** Umbrella Id */
+            umbrella_id: string | null;
+            /** Merged Into Id */
+            merged_into_id: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** SiteManufacturers */
+        SiteManufacturers: {
+            /** Items */
+            items: components["schemas"]["SiteManufacturer"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /**
          * SiteRequestIn
@@ -18153,6 +18201,58 @@ export interface operations {
                 content?: never;
             };
             /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    site_manufacturers_api_v1_integrations_site_manufacturers_get: {
+        parameters: {
+            query?: {
+                updated_since?: string | null;
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteManufacturers"];
+                };
+            };
+            /** @description Нет токена, подпись неверна или устарела */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Адрес сервера сайта не разрешён */
             403: {
                 headers: {
                     [name: string]: unknown;

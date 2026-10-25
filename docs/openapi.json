@@ -13080,6 +13080,87 @@
           }
         }
       }
+    },
+    "/api/v1/integrations/site/manufacturers": {
+      "get": {
+        "tags": [
+          "Интеграция с сайтом"
+        ],
+        "summary": "Site Manufacturers",
+        "description": "Реестр производителей для сайта (поток F5): изменённые с `updated_since`, постранично по `cursor`.\nПодпись HMAC — от строки `GET <путь>?<параметры>` вместо тела (docs/site-integration.md).",
+        "operationId": "site_manufacturers_api_v1_integrations_site_manufacturers_get",
+        "parameters": [
+          {
+            "name": "updated_since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Updated Since"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 500,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteManufacturers"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет токена, подпись неверна или устарела"
+          },
+          "403": {
+            "description": "Адрес сервера сайта не разрешён"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -19575,6 +19656,95 @@
         ],
         "title": "SiteItem",
         "type": "object"
+      },
+      "SiteManufacturer": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "internal_code": {
+            "type": "integer",
+            "title": "Internal Code"
+          },
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Aliases"
+          },
+          "umbrella_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Umbrella Id"
+          },
+          "merged_into_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into Id"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "internal_code",
+          "aliases",
+          "umbrella_id",
+          "merged_into_id",
+          "updated_at"
+        ],
+        "title": "SiteManufacturer"
+      },
+      "SiteManufacturers": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SiteManufacturer"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "SiteManufacturers"
       },
       "SiteRequestIn": {
         "description": "Body of POST /api/v1/integrations/site/requests (the `payload` part of the multipart form).",
