@@ -50,7 +50,7 @@ markupsafe==3.0.3
     # via mako
 openpyxl==3.1.5
     # via reaktiv-crm-backend (pyproject.toml)
-pillow==12.3.0
+pillow==13.0.0
     # via reportlab
 prometheus-client==0.26.0
     # via reaktiv-crm-backend (pyproject.toml)

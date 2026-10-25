@@ -30,7 +30,7 @@ boolean-py==5.0
     # via license-expression
 cachecontrol==0.14.4
     # via pip-audit
-certifi==2026.7.22
+certifi==2026.10.19
     # via
     #   httpcore
     #   httpx
@@ -80,7 +80,7 @@ fastapi==0.141.1
     # via
     #   -c requirements.lock
     #   reaktiv-crm-backend (pyproject.toml)
-filelock==3.32.6
+filelock==4.2.1
     # via cachecontrol
 greenlet==3.5.6 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'
     # via
@@ -143,7 +143,7 @@ packaging==26.3
     #   pytest
 pathspec==1.1.1
     # via mypy
-pillow==12.3.0
+pillow==13.0.0
     # via
     #   -c requirements.lock
     #   reportlab
@@ -272,7 +272,7 @@ tzdata==2026.5 ; sys_platform == 'win32'
     #   psycopg
 urllib3==2.8.0
     # via requests
-uv==0.13.0
+uv==0.13.4
     # via reaktiv-crm-backend (pyproject.toml:dev)
 uvicorn==0.52.4
     # via
