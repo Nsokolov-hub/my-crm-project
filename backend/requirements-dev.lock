@@ -32,6 +32,7 @@ cachecontrol==0.14.4
     # via pip-audit
 certifi==2026.10.19
     # via
+    #   -c requirements.lock
     #   httpcore
     #   httpx
     #   requests
@@ -92,13 +93,17 @@ h11==0.16.0
     #   httpcore
     #   uvicorn
 httpcore==1.0.9
-    # via httpx
+    # via
+    #   -c requirements.lock
+    #   httpx
 httptools==0.8.0
     # via
     #   -c requirements.lock
     #   uvicorn
 httpx==0.28.1
-    # via reaktiv-crm-backend (pyproject.toml:dev)
+    # via
+    #   -c requirements.lock
+    #   reaktiv-crm-backend (pyproject.toml)
 idna==3.19
     # via
     #   -c requirements.lock

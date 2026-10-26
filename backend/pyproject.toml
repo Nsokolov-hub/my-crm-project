@@ -13,6 +13,8 @@ dependencies = [
     "defusedxml>=0.7.1",
     "email-validator>=2.3",
     "fastapi>=0.141.1",
+    # Signed events for the site (flow F2) are sent by the worker over HTTP.
+    "httpx>=0.28.1",
     "openpyxl>=3.1.5",
     "prometheus-client>=0.26",
     "psycopg[binary]>=3.3.5",
@@ -28,7 +30,6 @@ dependencies = [
 [dependency-groups]
 # Tests, linters and audit; pinned in requirements-dev.lock together with the runtime set.
 dev = [
-    "httpx>=0.28.1",
     "mypy>=1.20",
     "pip-audit>=2.10",
     "pytest>=9.0.3",

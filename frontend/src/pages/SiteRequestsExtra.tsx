@@ -31,15 +31,16 @@ type Report = {
 
 const money = (value: string | number) =>
   Number(value).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) + ' ₽';
+/** Дата N дней назад в формате поля date; вызывается один раз при открытии отчёта */
+const isoDay = (daysAgo = 0) =>
+  new Date(Date.now() - daysAgo * 86400000).toISOString().slice(0, 10);
 const share = (part: number, whole: number) =>
   whole ? `${Math.round((part / whole) * 100)} %` : '—';
 
 /** Сквозная воронка: заявки с сайта → квалифицированные → КП → продажи → выручка, по каналу первого визита */
 export function ChannelReport() {
-  const today = new Date().toISOString().slice(0, 10);
-  const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-  const [from, setFrom] = useState(monthAgo);
-  const [to, setTo] = useState(today);
+  const [from, setFrom] = useState(() => isoDay(30));
+  const [to, setTo] = useState(() => isoDay());
   const report = useApi<Report>(`/site-requests/report?date_from=${from}&date_to=${to}`);
   const data = report.data;
   const lines = data ? [...data.channels, { channel: 'total', name: 'Итого', ...data.totals }] : [];
