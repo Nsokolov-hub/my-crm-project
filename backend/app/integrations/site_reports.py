@@ -140,7 +140,8 @@ def channel_report(user: Actor, db: DB, date_from: date | None = None, date_to: 
     if not sees_all(db, user):
         raise DomainError('FORBIDDEN', 'Отчёт по каналам доступен сотрудникам с доступом ко всем заявкам', 403)
     zone = ZoneInfo(settings.company_timezone)
-    end = date_to or date.today()
+    # «Today» of the company, not of the server: after midnight in Moscow a UTC server is still on yesterday.
+    end = date_to or datetime.now(zone).date()
     start = date_from or end - timedelta(days=30)
     since = datetime.combine(start, time.min, zone)
     until = datetime.combine(end + timedelta(days=1), time.min, zone)

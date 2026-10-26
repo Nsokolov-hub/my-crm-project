@@ -69,3 +69,21 @@ def test_a_site_request_joins_an_existing_crm_request(site):
                                 json={'version': 2, 'request_id': created['request_id'], 'items': []},
                                 headers={'Idempotency-Key': str(uuid4())})
     assert again.status_code == 409
+
+
+def test_the_report_ends_today_in_the_company_timezone(site, monkeypatch):
+    from datetime import datetime as real_datetime
+    from zoneinfo import ZoneInfo
+
+    from app.integrations import site_reports
+
+    class LateEvening(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            # 22:30 UTC on 26 October is already 27 October in Moscow.
+            return real_datetime(2026, 10, 26, 22, 30, tzinfo=ZoneInfo('UTC')).astimezone(tz)
+
+    monkeypatch.setattr(site_reports, 'datetime', LateEvening)
+    login(site)
+    report = site['client'].get('/api/v1/site-requests/report').json()
+    assert report['date_to'] == '2026-10-27'
