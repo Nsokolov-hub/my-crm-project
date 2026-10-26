@@ -12595,6 +12595,248 @@
         }
       }
     },
+    "/api/v1/site-requests/export.xlsx": {
+      "get": {
+        "tags": [
+          "Заявки с сайта"
+        ],
+        "summary": "Export List",
+        "description": "Список заявок с сайта с текущими фильтрами в Excel.",
+        "operationId": "export_list_api_v1_site_requests_export_xlsx_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/site-requests/{entity_id}/export.xlsx": {
+      "get": {
+        "tags": [
+          "Заявки с сайта"
+        ],
+        "summary": "Export One",
+        "description": "Одна заявка с сайта в Excel: контакты, позиции, источник.",
+        "operationId": "export_one_api_v1_site_requests__entity_id__export_xlsx_get",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/site-requests/report": {
+      "get": {
+        "tags": [
+          "Заявки с сайта"
+        ],
+        "summary": "Channel Report",
+        "description": "Сквозной отчёт по каналам (ТЗ сайта 15.3): заявки с сайта → квалифицированные → КП → продажи → выручка.",
+        "operationId": "channel_report_api_v1_site_requests_report_get",
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Channel Report Api V1 Site Requests Report Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/site-requests/{entity_id}/attach": {
+      "post": {
+        "tags": [
+          "Заявки с сайта"
+        ],
+        "summary": "Attach",
+        "description": "Добавить заявку с сайта в существующую заявку CRM того же клиента (ТЗ сайта 9.4.1, P1): позиции и вложения\nпереходят в неё, заявка с сайта — «Преобразована» со ссылкой на неё.",
+        "operationId": "attach_api_v1_site_requests__entity_id__attach_post",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Attach Api V1 Site Requests  Entity Id  Attach Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/integrations/site/requests": {
       "post": {
         "tags": [
@@ -13161,6 +13403,148 @@
           }
         }
       }
+    },
+    "/api/v1/integrations/site/subscribers": {
+      "post": {
+        "tags": [
+          "Интеграция с сайтом"
+        ],
+        "summary": "Receive",
+        "description": "Подписчик рассылки сайта: подписка или отписка. Подпись — как у потока F1.",
+        "operationId": "receive_api_v1_integrations_site_subscribers_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Receive Api V1 Integrations Site Subscribers Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет токена, подпись неверна или устарела"
+          },
+          "403": {
+            "description": "Адрес сервера сайта не разрешён"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Подписчик не прошёл проверку"
+          }
+        }
+      }
+    },
+    "/api/v1/site-subscribers": {
+      "get": {
+        "tags": [
+          "Интеграция с сайтом"
+        ],
+        "summary": "Subscribers",
+        "description": "Подписчики рассылки сайта: контакты для рассылок с согласием, полученным на сайте.",
+        "operationId": "subscribers_api_v1_site_subscribers_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "subscribed",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subscribed"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Subscribers Api V1 Site Subscribers Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/site-subscribers/export": {
+      "get": {
+        "tags": [
+          "Интеграция с сайтом"
+        ],
+        "summary": "Export",
+        "description": "CSV подписанных адресов для сервиса рассылок: почта, язык, дата согласия, источник.",
+        "operationId": "export_api_v1_site_subscribers_export_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -13381,6 +13765,35 @@
           "version"
         ],
         "title": "AssignInput"
+      },
+      "AttachInput": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "request_id": {
+            "type": "string",
+            "maxLength": 36,
+            "title": "Request Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConvertItemInput"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version",
+          "request_id"
+        ],
+        "title": "AttachInput"
       },
       "Body_preview_api_v1_imports_preview_post": {
         "properties": {
@@ -16870,6 +17283,17 @@
             "type": "integer",
             "minimum": 1.0,
             "title": "Version"
+          },
+          "publish_to_site": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publish To Site"
           },
           "name": {
             "type": "string",

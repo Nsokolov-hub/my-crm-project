@@ -22,7 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.db import Entity
+from app.core.db import Entity, utcnow
 
 SITE_REQUEST_STATUSES = ('new', 'in_work', 'converted', 'rejected')
 SITE_REQUEST_KINDS = ('product_rfq', 'one_click', 'service', 'general')
@@ -137,3 +137,23 @@ class SiteRequestAttribution(Entity):
     gclid: Mapped[str | None] = mapped_column(String(250))
     ym_uid: Mapped[str | None] = mapped_column(String(100))
     ga_client_id: Mapped[str | None] = mapped_column(String(100))
+
+
+class SiteSubscriber(Entity):
+    """A subscriber of the site's mailing (site TZ 11.2): a contact for mailings, with the consent from the site.
+
+    The site is the master: it sends every change (subscribed, unsubscribed) with its own version; an older version
+    arriving late never overwrites a newer one.
+    """
+
+    __tablename__ = 'site_subscribers'
+    site_subscriber_id: Mapped[str] = mapped_column(String(36), unique=True)
+    site_version: Mapped[int] = mapped_column(Integer, default=1)
+    email: Mapped[str] = mapped_column(String(254), index=True)
+    lang: Mapped[str] = mapped_column(String(2), default='ru')
+    subscribed: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    unsubscribed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source: Mapped[str | None] = mapped_column(String(40))
+    page_url: Mapped[str | None] = mapped_column(String(2000))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

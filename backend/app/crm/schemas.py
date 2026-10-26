@@ -356,6 +356,8 @@ class NomenclatureInput(Input):
 
 class NomenclaturePatch(Input):
     version: int = Field(ge=1)
+    # Flow F4: the position goes to the site as a draft card (catalog.write only).
+    publish_to_site: bool | None = None
     name: str = Field(default=None, min_length=1, max_length=250)
     article: str | None = Field(default=None, max_length=150)
     manufacturer_id: str | None = None

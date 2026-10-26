@@ -219,6 +219,10 @@ class Nomenclature(Entity):
     linear_formula: Mapped[str | None] = mapped_column(String(500))
     description: Mapped[str | None] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Flow F4: the position goes to the site as a draft card «Под заказ» (the site's moderation publishes it).
+    publish_to_site: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # The site's card of this position, once the site has created it.
+    site_product_id: Mapped[str | None] = mapped_column(String(100), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 

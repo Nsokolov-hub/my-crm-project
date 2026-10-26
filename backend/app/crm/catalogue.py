@@ -259,6 +259,11 @@ def edit_nomenclature(entity_id: str, body: NomenclaturePatch, user: User = Depe
     check_version(row, body.version)
     before = nomenclature_view(db, row)
     data = body.model_dump(exclude_unset=True, exclude={'version'})
+    if 'publish_to_site' in data:
+        # Which positions the site shows is decided by the catalogue's keepers (site TZ 9.4, flow F4).
+        require_permission(db, user, 'catalog.write')
+        if data['publish_to_site'] is None:
+            data.pop('publish_to_site')
     if 'product_group_id' in data:
         data['product_group_id'] = require_group(db, data['product_group_id']).id
     if 'manufacturer_id' in data or 'manufacturer' in data:

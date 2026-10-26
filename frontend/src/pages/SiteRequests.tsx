@@ -1,4 +1,12 @@
-import { ClipboardPlus, Download, Search, UserRoundCheck, XCircle } from 'lucide-react';
+import {
+  ClipboardPlus,
+  Download,
+  FileSpreadsheet,
+  Link2,
+  Search,
+  UserRoundCheck,
+  XCircle,
+} from 'lucide-react';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { RecordForm } from '../components/Form';
@@ -21,6 +29,7 @@ import { date } from '../lib/format';
 import { useApi, useDebounced } from '../lib/hooks';
 import type { Entity, Page } from '../lib/types';
 import { SiteRequestConvert } from './SiteRequestConvert';
+import { AttachToRequest, ChannelReport, SiteSubscribers } from './SiteRequestsExtra';
 import '../styles/site-requests.scss';
 
 /**
@@ -122,7 +131,7 @@ export function SiteRequestCard({
   onChanged: () => void;
 }) {
   const detail = useApi<SiteRequestDetail>(`/site-requests/${id}`);
-  const [action, setAction] = useState<'assign' | 'reject' | 'convert' | null>(null);
+  const [action, setAction] = useState<'assign' | 'reject' | 'convert' | 'attach' | null>(null);
   const [fileError, setFileError] = useState<unknown>();
   const row = detail.data;
   const open = row && !['converted', 'rejected'].includes(row.status);
@@ -171,6 +180,16 @@ export function SiteRequestCard({
         onDone={done}
       />
     );
+  if (row && action === 'attach')
+    return (
+      <AttachToRequest
+        siteRequestId={id}
+        version={row.version}
+        company={row.company}
+        onClose={() => setAction(null)}
+        onDone={done}
+      />
+    );
   if (row && action === 'reject')
     return (
       <RecordForm
@@ -202,6 +221,21 @@ export function SiteRequestCard({
                       <ClipboardPlus size={15} /> Создать заявку
                     </Button>
                   )}
+                  {open && row.can_process && (
+                    <Button variant="secondary" onClick={() => setAction('attach')}>
+                      <Link2 size={15} /> В существующую заявку
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    onClick={() =>
+                      download(`/site-requests/${id}/export.xlsx`, `${row.number}.xlsx`).catch(
+                        setFileError,
+                      )
+                    }
+                  >
+                    <FileSpreadsheet size={15} /> Excel
+                  </Button>
                   {open && row.can_assign && (
                     <Button variant="secondary" onClick={() => setAction('assign')}>
                       <UserRoundCheck size={15} />
@@ -350,6 +384,8 @@ export function SiteRequestCard({
 
 export function SiteRequests() {
   const [params, setParams] = useSearchParams();
+  const [view, setView] = useState<'requests' | 'report' | 'subscribers'>('requests');
+  const [exportError, setExportError] = useState<unknown>();
   const [status, setStatus] = useState(params.get('status') || '');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
@@ -367,101 +403,129 @@ export function SiteRequests() {
         title="Заявки с сайта"
         description="Запросы с ogk-chem.ru: корзина, «Заказать в 1 клик», формы услуг. Новые назначает главный администратор, ответственный связывается с клиентом за 2 рабочих часа."
       />
-      <div className="panel">
-        <div className="tabs">
-          {TABS.map((tab) => {
-            const count = tab.key ? list.data?.counts[tab.key] : total;
-            return (
-              <button
-                key={tab.key}
-                className={status === tab.key ? 'active' : ''}
-                onClick={() => {
-                  setStatus(tab.key);
+      <div className="tabs">
+        {(
+          [
+            ['requests', 'Заявки'],
+            ['report', 'Отчёт по каналам'],
+            ['subscribers', 'Подписчики сайта'],
+          ] as const
+        ).map(([key, title]) => (
+          <button key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}>
+            {title}
+          </button>
+        ))}
+      </div>
+      {view === 'report' && <ChannelReport />}
+      {view === 'subscribers' && <SiteSubscribers />}
+      {view === 'requests' && (
+        <div className="panel">
+          <div className="tabs">
+            {TABS.map((tab) => {
+              const count = tab.key ? list.data?.counts[tab.key] : total;
+              return (
+                <button
+                  key={tab.key}
+                  className={status === tab.key ? 'active' : ''}
+                  onClick={() => {
+                    setStatus(tab.key);
+                    setPage(1);
+                  }}
+                >
+                  {tab.title}
+                  {Boolean(count) && <span>{count}</span>}
+                </button>
+              );
+            })}
+          </div>
+          <div className="request-toolbar">
+            <div className="search-input">
+              <Search size={17} />
+              <input
+                aria-label="Поиск по заявкам с сайта"
+                placeholder="Компания, ИНН, телефон, почта или номер…"
+                value={q}
+                onChange={(e) => {
+                  setQ(e.target.value);
                   setPage(1);
                 }}
-              >
-                {tab.title}
-                {Boolean(count) && <span>{count}</span>}
-              </button>
-            );
-          })}
-        </div>
-        <div className="request-toolbar">
-          <div className="search-input">
-            <Search size={17} />
-            <input
-              aria-label="Поиск по заявкам с сайта"
-              placeholder="Компания, ИНН, телефон, почта или номер…"
-              value={q}
-              onChange={(e) => {
-                setQ(e.target.value);
-                setPage(1);
-              }}
-            />
-          </div>
-        </div>
-        <ErrorBox error={list.error} retry={list.refresh} />
-        {list.loading ? (
-          <Loading />
-        ) : (
-          <>
-            <DataTable
-              rows={list.data?.items || []}
-              onRow={(row) => setParams({ ...(status ? { status } : {}), id: row.id })}
-              empty={
-                <Empty
-                  compact
-                  title="Заявок нет"
-                  description={
-                    q
-                      ? 'По запросу ничего не найдено.'
-                      : 'Новые заявки с сайта появятся здесь сами.'
-                  }
-                />
+              />
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() =>
+                download(
+                  `/site-requests/export.xlsx?q=${encodeURIComponent(debounced)}${status ? `&status=${status}` : ''}`,
+                  'site-requests.xlsx',
+                ).catch(setExportError)
               }
-              columns={[
-                { key: 'number', label: 'Номер' },
-                {
-                  key: 'received_at',
-                  label: 'Получена',
-                  render: (row) => date(row.received_at, true),
-                },
-                {
-                  key: 'status',
-                  label: 'Статус',
-                  render: (row) => (
-                    <Badge value={row.status_label} tone={STATUS_TONES[row.status]} />
-                  ),
-                },
-                { key: 'kind_label', label: 'Тип' },
-                {
-                  key: 'company',
-                  label: 'Компания',
-                  render: (row) => (
-                    <span>
-                      {row.company}
-                      {row.inn && <small className="muted"> · ИНН {row.inn}</small>}
-                    </span>
-                  ),
-                },
-                { key: 'customer_name', label: 'Контакт' },
-                { key: 'items_count', label: 'Позиций' },
-                {
-                  key: 'channel',
-                  label: 'Канал',
-                  render: (row) => (row.channel ? CHANNELS[row.channel] : '—'),
-                },
-                {
-                  key: 'assignee_name',
-                  label: 'Ответственный',
-                  render: (row) => row.assignee_name || '—',
-                },
-              ]}
-            />
-            <Pagination page={page} total={Number(list.data?.total || 0)} onChange={setPage} />
-          </>
-        )}
-      </div>
+            >
+              <FileSpreadsheet size={15} /> Выгрузить в Excel
+            </Button>
+          </div>
+          <ErrorBox error={exportError || list.error} retry={list.refresh} />
+          {list.loading ? (
+            <Loading />
+          ) : (
+            <>
+              <DataTable
+                rows={list.data?.items || []}
+                onRow={(row) => setParams({ ...(status ? { status } : {}), id: row.id })}
+                empty={
+                  <Empty
+                    compact
+                    title="Заявок нет"
+                    description={
+                      q
+                        ? 'По запросу ничего не найдено.'
+                        : 'Новые заявки с сайта появятся здесь сами.'
+                    }
+                  />
+                }
+                columns={[
+                  { key: 'number', label: 'Номер' },
+                  {
+                    key: 'received_at',
+                    label: 'Получена',
+                    render: (row) => date(row.received_at, true),
+                  },
+                  {
+                    key: 'status',
+                    label: 'Статус',
+                    render: (row) => (
+                      <Badge value={row.status_label} tone={STATUS_TONES[row.status]} />
+                    ),
+                  },
+                  { key: 'kind_label', label: 'Тип' },
+                  {
+                    key: 'company',
+                    label: 'Компания',
+                    render: (row) => (
+                      <span>
+                        {row.company}
+                        {row.inn && <small className="muted"> · ИНН {row.inn}</small>}
+                      </span>
+                    ),
+                  },
+                  { key: 'customer_name', label: 'Контакт' },
+                  { key: 'items_count', label: 'Позиций' },
+                  {
+                    key: 'channel',
+                    label: 'Канал',
+                    render: (row) => (row.channel ? CHANNELS[row.channel] : '—'),
+                  },
+                  {
+                    key: 'assignee_name',
+                    label: 'Ответственный',
+                    render: (row) => row.assignee_name || '—',
+                  },
+                ]}
+              />
+              <Pagination page={page} total={Number(list.data?.total || 0)} onChange={setPage} />
+            </>
+          )}
+        </div>
+      )}
       {openId && (
         <SiteRequestCard
           id={openId}

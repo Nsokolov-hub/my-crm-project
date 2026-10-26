@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     site_integration_allowed_ips: str = ''
     # A signed site request is accepted this many seconds around its timestamp, which stops replays.
     site_integration_max_skew_seconds: int = 300
+    # Flow F2: events of the CRM to the site (stages, site requests, published nomenclature, manufacturers).
+    # The address of the site's endpoint, e.g. https://www.ogk-chem.ru/api/v1/crm/events, and the HMAC key the
+    # site checks them with (CRM_EVENTS_SECRET of the site). Empty — no events are queued.
+    site_events_url: str = ''
+    site_events_secret: str = ''
 
     def verify(self) -> None:
         if self.environment == 'production':

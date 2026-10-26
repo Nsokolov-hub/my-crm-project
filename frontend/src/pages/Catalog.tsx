@@ -33,6 +33,8 @@ type Nomenclature = Entity & {
   linear_formula?: string;
   description?: string;
   created_by_id?: string;
+  publish_to_site?: boolean;
+  site_product_id?: string | null;
   packings: Packing[];
 };
 
@@ -362,6 +364,35 @@ export function Catalog() {
                 Описание: selected.description || '—',
               }}
             />
+            <Section
+              title="Сайт ogk-chem.ru"
+              description="Отмеченная позиция уходит на сайт черновиком карточки «Под заказ»; на сайте её проверяют и публикуют. Цены и поставщики не передаются."
+            >
+              <label className="checkbox-line">
+                <input
+                  type="checkbox"
+                  checked={Boolean(selected.publish_to_site)}
+                  disabled={!auth.can('catalog.write') || archive.busy}
+                  onChange={async (event) => {
+                    const result = await archive
+                      .run<Nomenclature>(
+                        `/nomenclatures/${selected.id}`,
+                        { version: selected.version, publish_to_site: event.target.checked },
+                        'PATCH',
+                      )
+                      .catch(() => undefined);
+                    if (result) {
+                      setSelected(result);
+                      list.refresh();
+                    }
+                  }}
+                />{' '}
+                Публиковать на сайте
+                {selected.site_product_id ? (
+                  <small className="muted"> · карточка на сайте создана</small>
+                ) : null}
+              </label>
+            </Section>
             <Section
               title="Фасовки"
               action={

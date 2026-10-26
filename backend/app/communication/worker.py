@@ -206,6 +206,11 @@ def dispatch(db: Session, event: OutboxEvent) -> None:
         from app.crm.imports import process_import
         process_import(db, payload)
         return
+    if event.kind == 'site.event':
+        # Flow F2: a signed event to the site (app.integrations.site_events).
+        from app.integrations.site_events import deliver
+        deliver(db, event)
+        return
     raise DomainError('OUTBOX_KIND_UNKNOWN', 'Для фонового события не зарегистрирован обработчик', 422)
 
 
