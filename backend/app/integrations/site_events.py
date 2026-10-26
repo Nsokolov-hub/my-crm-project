@@ -152,7 +152,7 @@ def http_client() -> httpx.Client:
 
 
 def deliver(session: Session, outbox: OutboxEvent) -> None:
-    """POST the event to the site; 2xx — done, 4xx other than 408/409/429 — the event is wrong (no retry)."""
+    """POST the event to the site; 2xx — done; 400/404/410/422 — the event is wrong (no retry); else a retry."""
     if not enabled():
         raise DomainError('SITE_EVENTS_DISABLED', 'Отправка событий на сайт выключена', 503)
     body = json.dumps(outbox.payload, ensure_ascii=False, separators=(',', ':')).encode()
@@ -170,8 +170,9 @@ def deliver(session: Session, outbox: OutboxEvent) -> None:
         if outbox.payload.get('type') == 'product.upserted' and site_product_id:
             remember_site_product(session, str(outbox.payload['data'].get('crm_product_id')), str(site_product_id))
         return
-    if response.status_code in (400, 401, 403, 404, 410, 422):
+    if response.status_code in (400, 404, 410, 422):
         raise DomainError('SITE_REFUSED', f'Сайт отклонил событие: {response.status_code}', 422)
+    # 401/403: the key or the address list differs between the two sides — retried, so fixing the settings heals it.
     raise DomainError('SITE_UNAVAILABLE', f'Сайт ответил {response.status_code}', 503)
 
 

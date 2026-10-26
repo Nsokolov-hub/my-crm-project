@@ -173,3 +173,14 @@ def test_subscribers_from_the_site(site):
     assert listing['counts'] == {'subscribed': 1, 'unsubscribed': 0} and listing['items'][0]['email'] == 'a@example.ru'
     exported = site['client'].get('/api/v1/site-subscribers/export')
     assert exported.status_code == 200 and 'a@example.ru;ru' in exported.text
+
+
+def test_a_key_mismatch_is_retried(events, monkeypatch):
+    # 401: the keys of the two sides differ; once fixed, the queued events go through.
+    monkeypatch.setattr(site_events, 'http_client',
+                        lambda: httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(401))))
+    with events['sessions'].begin() as db:
+        site_events.emit(db, 'manufacturer.upserted', 'key-mismatch', {'id': 'x'})
+    with events['sessions'].begin() as db:
+        counts = worker.process_events(db)
+    assert counts['retried'] == 1 and counts['failed'] == 0
