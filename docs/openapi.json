@@ -8468,6 +8468,49 @@
         }
       }
     },
+    "/api/v1/approvals/{approval_id}/waves": {
+      "get": {
+        "tags": [
+          "Согласования и поставки"
+        ],
+        "summary": "Approval Waves",
+        "description": "Business remark of 28 October 2026: the waves the leader may send the approved orders to.",
+        "operationId": "approval_waves_api_v1_approvals__approval_id__waves_get",
+        "parameters": [
+          {
+            "name": "approval_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Approval Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/approvals/{approval_id}/decision": {
       "post": {
         "tags": [
@@ -14081,6 +14124,27 @@
               }
             ],
             "title": "Copy Of Id"
+          },
+          "planned_volume": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PlannedVolumeIn"
+                },
+                "type": "array",
+                "maxItems": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Volume"
+          },
+          "planned_volume_comment": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Planned Volume Comment",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -15548,6 +15612,17 @@
             "type": "string",
             "title": "Reason",
             "default": ""
+          },
+          "wave_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wave Id"
           }
         },
         "additionalProperties": false,
@@ -17952,6 +18027,34 @@
           "reason"
         ],
         "title": "PaymentReverseIn"
+      },
+      "PlannedVolumeIn": {
+        "properties": {
+          "product_group_id": {
+            "type": "string",
+            "title": "Product Group Id"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,24}|(?=[\\d.]{1,25}0*$)\\d{0,24}\\.\\d{0,0}0*$)"
+              }
+            ],
+            "title": "Quantity"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "product_group_id",
+          "quantity"
+        ],
+        "title": "PlannedVolumeIn"
       },
       "ProductGroupInput": {
         "properties": {

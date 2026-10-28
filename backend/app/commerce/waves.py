@@ -48,14 +48,21 @@ def working_number(db, plan: Wave) -> str:
         sequence += 1
 
 
-def working_wave(db, user, wave: Wave, reason: str) -> Wave:
-    """The wave that takes a real order. The caller holds the lock of `wave`, so one plan makes one copy."""
-    if wave.kind == "work":
-        return wave
-    current = db.scalar(
-        select(Wave).where(Wave.plan_id == wave.id, Wave.archived.is_(False), Wave.status.in_(OPEN_WAVES))
+def open_working_wave(db, plan: Wave) -> Wave | None:
+    """The working wave a plan's next order joins: its earliest open one."""
+    return db.scalar(
+        select(Wave).where(Wave.plan_id == plan.id, Wave.archived.is_(False), Wave.status.in_(OPEN_WAVES))
         .order_by(Wave.close_date, Wave.created_at, Wave.id).limit(1)
     )
+
+
+def working_wave(db, user, wave: Wave, reason: str, *, new: bool = False) -> Wave:
+    """The wave that takes a real order. The caller holds the lock of `wave`, so one plan makes one copy.
+
+    `new` starts another working wave of the plan even when one is open (the leader's choice)."""
+    if wave.kind == "work":
+        return wave
+    current = None if new else open_working_wave(db, wave)
     if current:
         advisory(db, f"wave:{current.id}")
         return lock(db, Wave, current.id)

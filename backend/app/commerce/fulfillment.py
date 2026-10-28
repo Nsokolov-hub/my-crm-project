@@ -54,7 +54,7 @@ from .schemas import (
     WaveTakeRequestsIn,
     WaveUpdate,
 )
-from .waves import OPEN_WAVES, active_plan, finish_wave, usable, working_wave
+from .waves import OPEN_WAVES, active_plan, finish_wave, open_working_wave, usable, working_wave
 
 router = APIRouter(tags=["Согласования и поставки"])
 WAVE_TRANSITIONS = {
@@ -511,6 +511,51 @@ def submit_approval(request_id: str, data: ApprovalIn, db: DB, user: Actor):
     )
 
 
+def approval_imports(executions: list[Execution]) -> bool:
+    """Imports go to a wave; DAP and purchases in Russia need none."""
+    return any((execution.snapshot or {}).get("calculation_type", "IMPORT") == "IMPORT" for execution in executions)
+
+
+def wave_option(db, wave: Wave, *, new: bool = False) -> dict:
+    supplier = db.get(Counterparty, wave.supplier_id) if wave.supplier_id else None
+    week = f" · отправка: неделя {wave.departure_week}, {wave.departure_year}" if wave.departure_week else ""
+    label = (f"Новая рабочая волна из плановой «{wave.number}»" if new
+             else f"Рабочая · {wave.number}{week}")
+    return {"id": wave.id, "label": label, "kind": wave.kind, "number": wave.number, "status": wave.status,
+            "supplier_name": supplier.name if supplier else None, "new": new}
+
+
+@router.get("/approvals/{approval_id}/waves")
+def approval_waves(approval_id: str, db: DB, user: Actor):
+    """Business remark of 28 October 2026: the waves the leader may send the approved orders to."""
+    approval = db.get(Approval, approval_id)
+    if not approval:
+        error("NOT_FOUND", "Согласование не найдено", 404)
+    req = check_request(db, user, approval.request_id, "approvals.decide")
+    executions = [db.get(Execution, row["execution_id"]) for row in approval.snapshot["lines"]]
+    if not approval_imports(executions):
+        return {"items": [], "wave_id": None, "required": False}
+    suppliers = set()
+    for execution in executions:
+        source = db.get(QuoteItem, execution.quote_item_id) if execution.quote_item_id else db.get(Quote, execution.quote_id)
+        if source:
+            suppliers.add(source.supplier_id)
+    items = []
+    for supplier_id in sorted(suppliers):
+        items += [wave_option(db, row) for row in db.scalars(select(Wave).where(
+            Wave.supplier_id == supplier_id, Wave.kind == "work", Wave.archived.is_(False),
+            Wave.status.in_(OPEN_WAVES)).order_by(Wave.close_date, Wave.created_at, Wave.id))]
+        if (plan := active_plan(db, supplier_id)) and plan.status in OPEN_WAVES:
+            items.append(wave_option(db, plan, new=True))
+    current = db.get(Wave, req.wave_id) if req.wave_id else None
+    default = None
+    if current and not current.archived and current.status in OPEN_WAVES:
+        joined = open_working_wave(db, current) if current.kind == "plan" else current
+        default = (joined or current).id
+    return {"items": items, "wave_id": default if any(row["id"] == default for row in items) else None,
+            "required": True}
+
+
 @router.post("/approvals/{approval_id}/decision")
 def decide_approval(approval_id: str, data: DecisionIn, db: DB, user: Actor):
     initial = db.get(Approval, approval_id)
@@ -552,16 +597,27 @@ def decide_approval(approval_id: str, data: DecisionIn, db: DB, user: Actor):
                 execution.procurement_at = utcnow()
                 execution.financing_deficit = dec(approved_line["funding"]["ratio"]) < dec(approved_line["funding_ratio"])
                 execution.version += 1
-            if req.wave_id:
-                advisory(db, f"wave:{req.wave_id}")
-                wave = usable(lock(db, Wave, req.wave_id))
+            chosen = data.wave_id or req.wave_id
+            if data.wave_id and not approval_imports(executions):
+                error("WAVE_NOT_USED", "Волна указывается только для импортных позиций", field="wave_id")
+            if chosen:
+                for wave_id in sorted({value for value in (req.wave_id, chosen) if value}):
+                    advisory(db, f"wave:{wave_id}")
+                wave = lock(db, Wave, chosen) if db.get(Wave, chosen) else None
+                if not wave:
+                    error("WAVE_REQUIRED", "Волна не найдена", field="wave_id")
+                usable(wave, field="wave_id")
                 if wave.status not in OPEN_WAVES:
-                    error("WAVE_CLOSED", "Для передачи в закупки выберите открытую волну")
-                wave = working_wave(db, user, wave, f"Подтверждён заказ по заявке №{req.number}")
+                    error("WAVE_CLOSED", "Для передачи в закупки выберите открытую волну", field="wave_id")
+                # The leader's planned wave means a new working wave copied from it; the request's own
+                # planned wave (no choice made) keeps joining the plan's open working wave.
+                wave = working_wave(db, user, wave, f"Подтверждён заказ по заявке №{req.number}",
+                                    new=bool(data.wave_id) and wave.kind == "plan")
                 for execution in executions:
                     quote = check_execution_quote(db, execution)
                     if wave.supplier_id != quote.supplier_id:
-                        error("WAVE_SUPPLIER", "Волна не соответствует поставщику подтверждённых позиций")
+                        error("WAVE_SUPPLIER", "Волна не соответствует поставщику подтверждённых позиций",
+                              field="wave_id")
                     allocated = sum((row.quantity for row in db.scalars(select(WaveAllocation).where(
                         WaveAllocation.execution_id == execution.id, WaveAllocation.active.is_(True)
                     ))), Decimal("0"))
@@ -572,6 +628,12 @@ def decide_approval(approval_id: str, data: DecisionIn, db: DB, user: Actor):
                         audit(db, user, "execution", execution.id, "procurement_handoff",
                               after={"wave_id": wave.id, "quantity": str(remaining)})
                 wave.version += 1
+                if data.wave_id and req.wave_id != wave.id:
+                    # Later calculations of the request share costs with the orders it now has in this wave.
+                    before = {"wave_id": req.wave_id}
+                    req.wave_id = wave.id
+                    audit(db, user, "request", req.id, "assign_wave", before=before, after={"wave_id": wave.id},
+                          reason=f"Волна указана руководителем при согласовании: {wave.number}")
             req.version += 1
             recalculate_fulfillment(db, req.id)
         approval.status, approval.reason = data.decision, data.reason
@@ -599,10 +661,11 @@ def decide_approval(approval_id: str, data: DecisionIn, db: DB, user: Actor):
             "approval",
             approval.id,
             "decision",
-            after={"decision": data.decision, "digest": approval.digest},
+            after={"decision": data.decision, "digest": approval.digest,
+                   **({"wave_id": req.wave_id} if data.decision == "approved" else {})},
             reason=data.reason,
         )
-        return serialize(approval)
+        return {**serialize(approval), "wave_id": req.wave_id if data.decision == "approved" else None}
 
     return idem(
         db,

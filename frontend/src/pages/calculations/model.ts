@@ -145,3 +145,38 @@ export const airportPickup = expenseFromReference({
   stage: 'DOMESTIC_LOGISTICS',
   scope: 'WAVE',
 });
+
+/** Planned pieces of a product group in the wave a calculation divides its shared costs by. */
+export type PlannedVolumeRow = {
+  product_group_id: string;
+  product_group_name: string;
+  wave_quantity: string;
+  plan_number?: string;
+};
+
+const plannedValue = (row: PlannedVolumeRow, values: Record<string, string>) =>
+  values[row.product_group_id] ?? plainQuantity(row.wave_quantity);
+
+export const plannedVolumeChanged = (rows: PlannedVolumeRow[], values: Record<string, string>) =>
+  rows.some((row) => {
+    const value = plannedValue(row, values);
+    return value === '' || Number(value) !== Number(row.wave_quantity);
+  });
+
+export function plannedVolumeErrors(
+  rows: PlannedVolumeRow[],
+  values: Record<string, string>,
+  comment: string,
+): string[] {
+  const errors = rows
+    .filter((row) => !/^\d+$/.test(plannedValue(row, values)))
+    .map(
+      (row) =>
+        `Плановый объём «${row.product_group_name}»: укажите целое число штук, 0 или больше.`,
+    );
+  if (plannedVolumeChanged(rows, values) && comment.trim().length < 3)
+    errors.push(
+      'Плановый объём волны изменён: укажите комментарий — без него объём не сохраняется.',
+    );
+  return errors;
+}

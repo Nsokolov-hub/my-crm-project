@@ -262,6 +262,29 @@ export function ApprovalDecision({
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  // Business remark of 28 October 2026: the leader names the wave the approved orders go to.
+  const waves = useApi<{
+    items: (Entity & { label: string })[];
+    wave_id: string | null;
+    required: boolean;
+  }>(`/approvals/${row.id}/waves`);
+  if (waves.loading) return null;
+  const choice = waves.data;
+  const waveField: Field[] = choice?.required
+    ? [
+        {
+          name: 'wave_id',
+          label: 'Волна поставки',
+          type: 'select',
+          value: choice.wave_id || '',
+          options: choice.items.map((wave) => ({ value: wave.id, label: wave.label })),
+          help: choice.items.length
+            ? 'Обязательно при согласовании. Открытая рабочая волна поставщика — заказ добавится в неё; «Новая рабочая волна» — копия плановой волны с этим заказом.'
+            : 'У поставщика нет открытой волны: заведите плановую волну в «Волнах поставок».',
+          wide: true,
+        },
+      ]
+    : [];
   return (
     <RecordForm
       title="Решение по составу исполнения"
@@ -280,6 +303,7 @@ export function ApprovalDecision({
             { value: 'rejected', label: 'Отклонить' },
           ],
         },
+        ...waveField,
         {
           name: 'reason',
           label: 'Комментарий к решению',
@@ -287,7 +311,16 @@ export function ApprovalDecision({
           help: 'Обязательно при возврате и отклонении.',
         },
       ]}
-      note="Согласование передаёт подтверждённые позиции в закупки. Если в заявке плановая волна, заказ попадёт в её открытую рабочую волну, а если открытой нет — в новую, созданную копией плановой. Оплата может поступить позже по условиям заказа."
+      transform={(values) => ({
+        ...values,
+        wave_id: values.decision === 'approved' && values.wave_id ? values.wave_id : null,
+      })}
+      validate={(values): Record<string, string> =>
+        choice?.required && values.decision === 'approved' && !values.wave_id
+          ? { wave_id: 'Укажите волну, в которую уходят заказы' }
+          : {}
+      }
+      note="Согласование передаёт подтверждённые позиции в закупки, в указанную волну. Заявка переходит в эту волну: следующие расчёты делят её расходы с её заказами. Оплата может поступить позже по условиям заказа."
       onClose={onClose}
       onSuccess={onSuccess}
     />

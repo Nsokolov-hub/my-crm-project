@@ -2049,6 +2049,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/approvals/{approval_id}/waves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Approval Waves
+         * @description Business remark of 28 October 2026: the waves the leader may send the approved orders to.
+         */
+        get: operations["approval_waves_api_v1_approvals__approval_id__waves_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/approvals/{approval_id}/decision": {
         parameters: {
             query?: never;
@@ -3679,6 +3699,13 @@ export interface components {
             expected_wave_digest?: string | null;
             /** Copy Of Id */
             copy_of_id?: string | null;
+            /** Planned Volume */
+            planned_volume?: components["schemas"]["PlannedVolumeIn"][] | null;
+            /**
+             * Planned Volume Comment
+             * @default
+             */
+            planned_volume_comment: string;
         };
         /** CalendarBalanceIn */
         CalendarBalanceIn: {
@@ -4115,6 +4142,8 @@ export interface components {
              * @default
              */
             reason: string;
+            /** Wave Id */
+            wave_id?: string | null;
         };
         /** DocumentRef */
         DocumentRef: {
@@ -4823,6 +4852,13 @@ export interface components {
             kind: "unallocate" | "refund" | "correction";
             /** Reason */
             reason: string;
+        };
+        /** PlannedVolumeIn */
+        PlannedVolumeIn: {
+            /** Product Group Id */
+            product_group_id: string;
+            /** Quantity */
+            quantity: number | string;
         };
         /** ProductGroupInput */
         ProductGroupInput: {
@@ -14085,6 +14121,56 @@ export interface operations {
                 "application/json": components["schemas"]["ApprovalIn"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    approval_waves_api_v1_approvals__approval_id__waves_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

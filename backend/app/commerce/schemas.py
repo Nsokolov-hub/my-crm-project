@@ -239,6 +239,11 @@ class ExpenseTypePatch(Input):
     active: bool
 
 
+class PlannedVolumeIn(Input):
+    product_group_id: str
+    quantity: Annotated[Decimal, Field(ge=0, max_digits=24, decimal_places=0)]
+
+
 class CalculationIn(Command):
     delivery_city: str | None = Field(default=None, max_length=150)
     delivery_required: bool = False
@@ -258,6 +263,10 @@ class CalculationIn(Command):
     expected_wave_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     # Business remark of 22 October 2026: a saved calculation of the request copied with its settings.
     copy_of_id: str | None = None
+    # Business remark of 28 October 2026: the planned volume of the wave entered by hand for this calculation
+    # (product group → pieces); it is kept only with a comment saying why it differs from the wave.
+    planned_volume: list[PlannedVolumeIn] | None = Field(default=None, max_length=200)
+    planned_volume_comment: str = Field(default="", max_length=2000)
 
 
 class RequestWaveIn(Command):
@@ -330,6 +339,9 @@ class ApprovalIn(Command):
 class DecisionIn(VersionCommand):
     decision: Literal["approved", "returned", "rejected"]
     reason: str = ""
+    # Business remark of 28 October 2026: the leader names the wave the approved orders go to — an open
+    # working wave of the supplier, or its planned wave for a new working wave copied from it.
+    wave_id: str | None = None
 
 
 class WaveIn(Command):

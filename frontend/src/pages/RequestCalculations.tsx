@@ -19,9 +19,12 @@ import {
   moscowDelivery,
   nameOf,
   plainQuantity,
+  plannedVolumeChanged,
+  plannedVolumeErrors,
   standardExpenses,
   validMarkup,
   type Expense,
+  type PlannedVolumeRow,
   type Rate,
   type Selection,
 } from './calculations/model';
@@ -66,6 +69,7 @@ function CalculationEditor({
     source_calculation_id: string | null;
     complete_budget?: boolean;
     wave_version?: number;
+    planned_volume?: PlannedVolumeRow[];
   }>(request.wave_id ? `/requests/${request.id}/wave-expenses` : null);
   const command = useCommand();
   const budgetCommand = useCommand();
@@ -139,6 +143,18 @@ function CalculationEditor({
     Boolean(previousInput.delivery_required ?? true),
   );
   const [deliveryCity, setDeliveryCity] = useState(String(previousInput.delivery_city || ''));
+  // Business remark of 28 October 2026: the planned volume of the wave changed by hand for this calculation.
+  const [plannedVolume, setPlannedVolume] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      (Array.isArray(previousInput.planned_volume)
+        ? (previousInput.planned_volume as Entity[])
+        : []
+      ).map((row) => [String(row.product_group_id), plainQuantity(row.quantity)]),
+    ),
+  );
+  const [plannedComment, setPlannedComment] = useState(
+    String(previousInput.planned_volume_comment || ''),
+  );
   const tariffs = useApi<Page>('/delivery-tariffs');
   const [preview, setPreview] = useState<Entity>();
   const [showDetails, setShowDetails] = useState(false);
@@ -261,25 +277,35 @@ function CalculationEditor({
   const serverSelectionId = Number.isInteger(serverSelectionIndex)
     ? Object.values(selections)[serverSelectionIndex]?.quote_item_id
     : undefined;
-  const errors = calculationErrors({
-    waveId: request.wave_id,
-    rows: selectedRows,
-    selections,
-    waveExpenses: { loading: waveExpenses.loading, error: waveExpenses.error },
-    profileId,
-    profileReady: hydratedProfileId === profileHydrationKey,
-    profile: selectedProfile?.definition as Record<string, unknown> | undefined,
-    canReadReward: auth.can('finance.reward.read'),
-    currencies: neededCurrencies,
-    rates: profileRates,
-    expenses,
-    prepayment,
-    deferred,
-    deferredDays,
-    deferredStart,
-    deliveryDays,
-    serviceFeePercent,
-  });
+  const plannedRows = waveExpenses.data?.planned_volume || [];
+  const volumeShown =
+    Boolean(request.wave_id) && hasImportSelections && divideWaveExpenses && plannedRows.length > 0;
+  const volumeChanged = plannedVolumeChanged(plannedRows, plannedVolume);
+  const volumeErrors = volumeShown
+    ? plannedVolumeErrors(plannedRows, plannedVolume, plannedComment)
+    : [];
+  const errors = [
+    ...calculationErrors({
+      waveId: request.wave_id,
+      rows: selectedRows,
+      selections,
+      waveExpenses: { loading: waveExpenses.loading, error: waveExpenses.error },
+      profileId,
+      profileReady: hydratedProfileId === profileHydrationKey,
+      profile: selectedProfile?.definition as Record<string, unknown> | undefined,
+      canReadReward: auth.can('finance.reward.read'),
+      currencies: neededCurrencies,
+      rates: profileRates,
+      expenses,
+      prepayment,
+      deferred,
+      deferredDays,
+      deferredStart,
+      deliveryDays,
+      serviceFeePercent,
+    }),
+    ...volumeErrors,
+  ];
   function invalidate() {
     setPreview(undefined);
     command.setError(undefined);
@@ -319,6 +345,15 @@ function CalculationEditor({
           delivery_required: deliveryRequired,
           delivery_city: deliveryCity || null,
           ...(divideWaveExpenses ? {} : { divide_wave_expenses: false }),
+          ...(volumeShown && volumeChanged
+            ? {
+                planned_volume: plannedRows.map((row) => ({
+                  product_group_id: row.product_group_id,
+                  quantity: plannedVolume[row.product_group_id] ?? plainQuantity(row.wave_quantity),
+                })),
+                planned_volume_comment: plannedComment.trim(),
+              }
+            : {}),
           ...(deliveryDays !== '' ? { delivery_days: Number(deliveryDays) } : {}),
           ...(save && preview && ((preview.snapshot || preview) as Entity).wave_distribution
             ? {
@@ -381,6 +416,8 @@ function CalculationEditor({
     deliveryRequired,
     deliveryCity,
     divideWaveExpenses,
+    plannedVolume: volumeShown && volumeChanged ? plannedVolume : null,
+    plannedComment: volumeShown && volumeChanged ? plannedComment.trim() : '',
     requestVersion: request.version,
     waveId: request.wave_id,
     selectedRows: selectedRows.map((row) => row.id),
@@ -1379,6 +1416,94 @@ function CalculationEditor({
                 Расчёт остаётся привязан к волне, но все её общие расходы и таможенный сбор ложатся
                 только на этот расчёт: другие заказы и плановый объём волны их не делят.
               </p>
+            </section>
+          )}
+          {volumeShown && (
+            <section className="calculation-section">
+              <div className="section-heading">
+                <div>
+                  <h3>Плановый объём волны</h3>
+                  <p>
+                    На этот объём делятся общие расходы волны. Можно указать свой объём для этого
+                    расчёта — он сохранится только с комментарием. Сама волна{' '}
+                    {plannedRows[0].plan_number ? `«${plannedRows[0].plan_number}» ` : ''}не
+                    меняется.
+                  </p>
+                </div>
+              </div>
+              <div className="table-scroll">
+                <table className="data-table planned-volume">
+                  <thead>
+                    <tr>
+                      <th>Товарная группа</th>
+                      <th>В волне, шт.</th>
+                      <th>В расчёте, шт.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {plannedRows.map((row) => (
+                      <tr key={row.product_group_id}>
+                        <td>{row.product_group_name}</td>
+                        <td>{decimal(row.wave_quantity)}</td>
+                        <td>
+                          <input
+                            aria-label={`Плановый объём в расчёте: ${row.product_group_name}`}
+                            inputMode="numeric"
+                            value={
+                              plannedVolume[row.product_group_id] ??
+                              plainQuantity(row.wave_quantity)
+                            }
+                            aria-invalid={serverError?.field?.startsWith('planned_volume.')}
+                            onChange={(event) => {
+                              const value = event.target.value.replace(/\s/g, '');
+                              setPlannedVolume((current) => ({
+                                ...current,
+                                [row.product_group_id]: value,
+                              }));
+                              invalidate();
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {volumeChanged && (
+                <label className="field">
+                  Комментарий к плановому объёму
+                  <textarea
+                    value={plannedComment}
+                    required
+                    aria-invalid={
+                      (attempted && plannedComment.trim().length < 3) ||
+                      serverError?.field === 'planned_volume_comment'
+                    }
+                    placeholder="Например: клиент подтвердил ещё 10 шт. в ноябре"
+                    onChange={(event) => {
+                      setPlannedComment(event.target.value);
+                      invalidate();
+                    }}
+                  />
+                  <small>Обязателен: без комментария объём не сохранится.</small>
+                </label>
+              )}
+              {volumeChanged && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setPlannedVolume({});
+                    setPlannedComment('');
+                    invalidate();
+                  }}
+                >
+                  Вернуть объём волны
+                </Button>
+              )}
+              {serverError?.field?.startsWith('planned_volume') && (
+                <p className="field-error">{serverError.message}</p>
+              )}
             </section>
           )}
           {Boolean(request.wave_id) && auth.can('waves.write') && Boolean(profileId) && (

@@ -337,6 +337,7 @@ export function RecordForm({
   onClose,
   onSuccess,
   transform,
+  validate,
   deriveValues,
   submitLabel = 'Сохранить',
   note,
@@ -351,6 +352,8 @@ export function RecordForm({
   onClose: () => void;
   onSuccess: (result: Entity) => void;
   transform?: (values: Record<string, unknown>) => Record<string, unknown>;
+  /** Checks that depend on several fields; returns messages by field name. */
+  validate?: (values: Record<string, unknown>) => Record<string, string>;
   deriveValues?: (values: Record<string, unknown>, changedField: string) => Record<string, unknown>;
   submitLabel?: string;
   note?: React.ReactNode;
@@ -385,7 +388,7 @@ export function RecordForm({
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     event.stopPropagation();
-    const validation = validateFields(fields, values);
+    const validation = { ...(validate ? validate(values) : {}), ...validateFields(fields, values) };
     setErrors(validation);
     if (Object.keys(validation).length) {
       document.getElementById(`field-${Object.keys(validation)[0]}`)?.focus();

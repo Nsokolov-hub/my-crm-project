@@ -48,6 +48,18 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
         {decimal(distribution.forecast_quantity || 0)} шт. прогноза). Доставка клиенту делится на{' '}
         {decimal(distribution.selected_quantity || 0)} шт. этого расчёта.
       </p>
+      {Boolean(wave.planned_volume) && (
+        <p className="info-note">
+          Плановый объём изменён в расчёте:{' '}
+          {(((wave.planned_volume as Entity).rows || []) as Entity[])
+            .map(
+              (row) =>
+                `${String(row.product_group_name)} — ${decimal(row.quantity)} шт. (в волне ${decimal(row.wave_quantity)} шт.)`,
+            )
+            .join('; ')}
+          . Комментарий: {String((wave.planned_volume as Entity).comment || '')}
+        </p>
+      )}
       <DataTable<Entity>
         className="calculation-overview"
         rows={rows}

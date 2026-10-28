@@ -14,7 +14,7 @@ All paths start with `/api/v1`. Command bodies carry `idempotency_key`; mutable 
 | Proposal | GET/POST /requests/{id}/proposals; POST /proposals/{id}/accept; POST /proposals/{id}/sent |
 | Invoice | GET/POST /requests/{id}/invoices; GET /documents/{id}/file?format=pdf or xlsx |
 | Payments | GET/POST /requests/{id}/payments; POST /payments/{id}/confirm; POST /payments/{id}/allocate; POST /payments/{id}/reverse |
-| Execution | GET /requests/{id}/executions; GET/POST /requests/{id}/approvals; POST /approvals/{id}/decision |
+| Execution | GET /requests/{id}/executions; GET/POST /requests/{id}/approvals; GET /approvals/{id}/waves; POST /approvals/{id}/decision (`wave_id`) |
 | Waves | GET/POST /waves; GET/PATCH /waves/{id}; POST /waves/{id}/archive; POST /waves/{id}/allocations; POST /allocations/{id}/transfer; POST /allocations/{id}/events |
 
 Profiles contain versioned safe arithmetic formulas (`+ - * /`, Decimal constants, named previous outputs; no calls, attributes or arbitrary code), explicit currency precision, rounding, validity dates, tax profile fields, funding ratio and document template. Exact settings schema is published in OpenAPI. Calculations snapshot all inputs and results. Profile examples are arithmetic demonstrations only; operational use requires the user to create their own profile.
