@@ -2999,3 +2999,19 @@ tr.clickable-row {
     font-size: 13px;
   }
 }
+
+// Business remark of 30 October 2026: the planned volume of the wave must be easy to find in a calculation.
+.planned-volume-section {
+  background: #faf8fd;
+  border: 2px solid #7c5cbf;
+  border-radius: 8px;
+  padding: 16px 18px;
+}
+
+.planned-volume-section h3 {
+  color: #5b3f99;
+}
+
+.planned-volume input {
+  max-width: 140px;
+}

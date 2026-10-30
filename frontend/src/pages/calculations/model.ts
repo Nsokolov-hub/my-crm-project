@@ -152,7 +152,29 @@ export type PlannedVolumeRow = {
   product_group_name: string;
   wave_quantity: string;
   plan_number?: string;
+  /** False for a group of the calculation the planned wave has no volume for. */
+  in_plan?: boolean;
 };
+
+/** The plan's groups and, after them, the import groups of the calculation the plan has no volume for. */
+export function withCalculationGroups(
+  rows: PlannedVolumeRow[],
+  selected: Record<string, unknown>[],
+): PlannedVolumeRow[] {
+  const result = [...rows];
+  for (const row of selected) {
+    const id = row.product_group_id ? String(row.product_group_id) : '';
+    if (!id || (row.calculation_type && row.calculation_type !== 'IMPORT')) continue;
+    if (result.some((known) => known.product_group_id === id)) continue;
+    result.push({
+      product_group_id: id,
+      product_group_name: String(row.product_group_name || 'Без названия группы'),
+      wave_quantity: '0',
+      in_plan: false,
+    });
+  }
+  return result;
+}
 
 const plannedValue = (row: PlannedVolumeRow, values: Record<string, string>) =>
   values[row.product_group_id] ?? plainQuantity(row.wave_quantity);

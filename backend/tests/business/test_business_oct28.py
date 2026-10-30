@@ -138,3 +138,35 @@ def test_the_wave_of_an_approval_must_be_open_and_of_the_supplier(crm):  # noqa:
     [working] = wave_row(crm, plan["id"])["working_waves"]
     assert len(wave_row(crm, working["id"])["allocations"]) == 1
     assert crm["client"].get(f"/api/v1/requests/{req['id']}").json()["wave_id"] == plan["id"]
+
+
+def test_a_group_the_plan_has_no_volume_for_gets_one_inside_the_calculation(crm):  # noqa: F811
+    """Remark of 30 October 2026: a plan without planned volume (Asnail) — the volume is typed in the calculation;
+    the planned pieces are priced and weighed like the calculation's position."""
+    req, data, _, _ = structured(crm, mode="IMPORT", wave_kind="plan")
+    with crm["sessions"]() as db:
+        quote = db.get(QuoteItem, data["selections"][0]["quote_item_id"])
+        group_id = db.get(RequestItem, quote.source_request_item_id).product_group_id
+    plan = wave_row(crm, req["wave_id"])
+    cmd(crm, f"/waves/{plan['id']}/budget", {"version": plan["version"], "profile_id": data["profile_id"],
+        "expenses": LOGISTICS, "reason": "Бюджет запуска"}, method="put")
+    assert crm["client"].get(f"/api/v1/requests/{req['id']}/wave-expenses").json()["planned_volume"] == []
+    current = crm["client"].get(f"/api/v1/requests/{req['id']}").json()
+    data.update(request_version=current["version"], expenses=LOGISTICS)
+    data["selections"][0]["quantity"] = "2"
+    alone = cmd(crm, f"/requests/{req['id']}/calculations/preview", data)["snapshot"]
+    assert Decimal(alone["totals"]["international_logistics"]) == 1000
+
+    volume = {"planned_volume": [{"product_group_id": group_id, "quantity": "10"}]}
+    assert cmd(crm, f"/requests/{req['id']}/calculations/preview", {**data, **volume},
+               status=422)["code"] == "PLANNED_VOLUME_COMMENT"
+    saved = cmd(crm, f"/requests/{req['id']}/calculations", {
+        **data, **volume, "planned_volume_comment": "План Asnail на ноябрь"})["snapshot"]
+    assert Decimal(saved["wave_distribution"]["total_quantity"]) == 10
+    assert Decimal(saved["wave_distribution"]["forecast_quantity"]) == 8
+    assert Decimal(saved["totals"]["international_logistics"]) == 200
+    assert saved["wave"]["planned_volume"]["rows"] == [{
+        "product_group_id": group_id, "product_group_name": "Стандартные образцы", "wave_quantity": "0",
+        "quantity": "10", "in_plan": False}]
+    # The wave itself still has no planned volume.
+    assert wave_row(crm, plan["id"])["forecasts"] == []

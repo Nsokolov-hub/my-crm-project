@@ -832,12 +832,14 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
                     error("WAVE_BASIS_REQUIRED", "Для прогноза необходимо восстановить группы ранее принятых позиций")
                 # Business remark of 22 October 2026: requests gathered into a working wave still assembled
                 # share its costs with its orders and with the rest of its plan, as the wave counts itself.
-                volume_targets, planned_volume = calculation_planned_volume(db, wave, data)
-                peer_selections += (planned_rest(db, wave, [*selections, *peer_selections], volume_targets)
+                volume_targets, extra_volume, planned_volume = calculation_planned_volume(db, wave, data, selections)
+                counted = [*selections, *peer_selections]
+                peer_selections += (planned_rest(db, wave, counted, volume_targets)
                                     if wave.kind == "work" and wave.plan_id
-                                    else forecast_selections(db, wave, [*selections, *peer_selections], volume_targets))
+                                    else forecast_selections(db, wave, counted, volume_targets))
+                peer_selections += manual_forecasts(selections, counted, extra_volume)
             elif data.planned_volume is not None:
-                calculation_planned_volume(db, wave, data)
+                calculation_planned_volume(db, wave, data, selections)
             wave_expenses, wave_expense_source = latest_wave_expenses(db, wave.id)
         missing_basis = existing_quantity
         if data.expenses is not None:
@@ -1261,19 +1263,27 @@ def planned_volume_rows(db, wave: Wave) -> list[dict]:
     return rows
 
 
-def calculation_planned_volume(db, wave: Wave, data: CalculationIn) -> tuple[dict | None, dict | None]:
+def calculation_planned_volume(db, wave: Wave, data: CalculationIn, selections: list[dict]) -> tuple:
     """Business remark of 28 October 2026: the planned volume of the wave is changed by hand inside a
     calculation. It changes only this calculation, never the wave, and is kept only with a comment.
 
-    Returns the pieces by product group to divide by and what the snapshot records."""
-    rows = planned_volume_rows(db, wave)
+    A product group of the calculation the plan has no volume for may get one too (remark of 30 October):
+    its planned pieces are priced and weighed like the calculation's own position of that group.
+
+    Returns the pieces by product group of the plan, the pieces of groups outside the plan, and what the
+    snapshot records."""
     if data.planned_volume is None:
-        return None, None
-    known = {row["product_group_id"]: row for row in rows}
+        return None, None, None
+    known = {row["product_group_id"]: row for row in planned_volume_rows(db, wave)}
+    for row in selections:
+        group = row["product_group"]
+        if row.get("calculation_type", "IMPORT") == "IMPORT" and group["id"] not in known:
+            known[group["id"]] = {"product_group_id": group["id"], "product_group_name": group["name"],
+                                  "wave_quantity": "0", "in_plan": False}
     targets = {}
     for index, row in enumerate(data.planned_volume):
         if row.product_group_id not in known:
-            error("PLANNED_VOLUME_GROUP", "В плановой волне нет планового объёма этой товарной группы",
+            error("PLANNED_VOLUME_GROUP", "Этой товарной группы нет ни в плановой волне, ни в позициях расчёта",
                   field=f"planned_volume.{index}.product_group_id")
         if row.product_group_id in targets:
             error("PLANNED_VOLUME_GROUP", "Товарная группа указана повторно", field=f"planned_volume.{index}.product_group_id")
@@ -1281,7 +1291,7 @@ def calculation_planned_volume(db, wave: Wave, data: CalculationIn) -> tuple[dic
     changed = {group_id: quantity for group_id, quantity in targets.items()
                if quantity != dec(known[group_id]["wave_quantity"])}
     if not changed:
-        return None, None
+        return None, None, None
     if not data.divide_wave_expenses:
         error("PLANNED_VOLUME_UNDIVIDED", "Плановый объём не учитывается, когда расходы волны не делятся",
               field="planned_volume")
@@ -1291,8 +1301,34 @@ def calculation_planned_volume(db, wave: Wave, data: CalculationIn) -> tuple[dic
               "укажите, почему он отличается от волны", field="planned_volume_comment")
     record = {"comment": comment, "rows": [
         {**{key: known[group_id][key] for key in ("product_group_id", "product_group_name", "wave_quantity")},
-         "quantity": str(quantity)} for group_id, quantity in changed.items()]}
-    return changed, record
+         "quantity": str(quantity), **({"in_plan": False} if known[group_id].get("in_plan") is False else {})}
+        for group_id, quantity in changed.items()]}
+    in_plan = {group_id: quantity for group_id, quantity in changed.items() if known[group_id].get("in_plan") is not False}
+    extra = {group_id: quantity for group_id, quantity in changed.items() if known[group_id].get("in_plan") is False}
+    return in_plan, extra, record
+
+
+def manual_forecasts(selections: list[dict], counted: list[dict], extra: dict | None) -> list[dict]:
+    """Planned pieces of a group outside the plan: the rest of the entered volume, priced and weighed per piece
+    like the calculation's first position of that group."""
+    result = []
+    for group_id, target in (extra or {}).items():
+        model = next(row for row in selections if row["product_group"]["id"] == group_id)
+        ordered = sum((dec(row["quote_item"]["quantity"]) for row in counted
+                       if row["product_group"]["id"] == group_id), dec("0"))
+        rest = target - ordered
+        if rest <= 0:
+            continue
+        row = deepcopy(model)
+        quantity = dec(model["quote_item"]["quantity"])
+        row["quote_item"].update(id="planned:" + group_id, quote_id="planned:" + group_id, quantity=str(rest))
+        row["nomenclature"] = {**row["nomenclature"], "name": "План в расчёте — " + row["product_group"]["name"]}
+        row["packing"] = {**row["packing"], "display_name": "плановые единицы"}
+        row["_forecast"] = True
+        if row.get("weight") is not None:
+            row["weight"] = str(dec(row["weight"]) * rest / quantity)
+        result.append(row)
+    return result
 
 
 def accepted_costs(accepted: list[tuple], calculated: dict) -> Decimal:

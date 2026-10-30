@@ -21,6 +21,7 @@ import {
   plainQuantity,
   plannedVolumeChanged,
   plannedVolumeErrors,
+  withCalculationGroups,
   standardExpenses,
   validMarkup,
   type Expense,
@@ -277,9 +278,11 @@ function CalculationEditor({
   const serverSelectionId = Number.isInteger(serverSelectionIndex)
     ? Object.values(selections)[serverSelectionIndex]?.quote_item_id
     : undefined;
-  const plannedRows = waveExpenses.data?.planned_volume || [];
-  const volumeShown =
-    Boolean(request.wave_id) && hasImportSelections && divideWaveExpenses && plannedRows.length > 0;
+  // Business remark of 30 October 2026: the block is always there for an import, right under the positions;
+  // a product group of the calculation the plan has no volume for can get one here too.
+  const plannedRows = withCalculationGroups(waveExpenses.data?.planned_volume || [], selectedRows);
+  const volumeVisible = hasImportSelections;
+  const volumeShown = Boolean(request.wave_id) && volumeVisible && divideWaveExpenses;
   const volumeChanged = plannedVolumeChanged(plannedRows, plannedVolume);
   const volumeErrors = volumeShown
     ? plannedVolumeErrors(plannedRows, plannedVolume, plannedComment)
@@ -918,6 +921,130 @@ function CalculationEditor({
               </Button>
             </div>
           </section>
+          {volumeVisible && (
+            <section className="calculation-section planned-volume-section" id="planned-volume">
+              <div className="section-heading">
+                <div>
+                  <h3>Плановый объём волны</h3>
+                  <p>
+                    Общие расходы волны (логистика, декларант и т. п.) делятся на этот объём.
+                    Впишите свой объём для этого расчёта — он сохранится только с комментарием. Сама
+                    волна
+                    {plannedRows[0]?.plan_number ? ` «${plannedRows[0].plan_number}»` : ''} не
+                    меняется.
+                  </p>
+                </div>
+              </div>
+              {!request.wave_id ? (
+                <p className="info-note">
+                  Заявке не назначена волна. Выберите её внизу вкладки «Расчёты», в разделе «Волна
+                  поставки», и откройте расчёт снова.
+                </p>
+              ) : waveExpenses.loading ? (
+                <p className="muted">Загрузка планового объёма…</p>
+              ) : (
+                <>
+                  {!divideWaveExpenses && (
+                    <p className="info-note">
+                      Включено «Не делить расходы»: все расходы волны на этом расчёте, плановый
+                      объём не используется.
+                    </p>
+                  )}
+                  <div className="table-scroll">
+                    <table className="data-table planned-volume">
+                      <thead>
+                        <tr>
+                          <th>Товарная группа</th>
+                          <th>В плановой волне, шт.</th>
+                          <th>В этом расчёте, шт.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {plannedRows.map((row) => (
+                          <tr key={row.product_group_id}>
+                            <td>{row.product_group_name}</td>
+                            <td>
+                              {row.in_plan === false ? 'нет в плане' : decimal(row.wave_quantity)}
+                            </td>
+                            <td>
+                              <input
+                                aria-label={`Плановый объём в расчёте: ${row.product_group_name}`}
+                                inputMode="numeric"
+                                disabled={!divideWaveExpenses}
+                                value={
+                                  plannedVolume[row.product_group_id] ??
+                                  plainQuantity(row.wave_quantity)
+                                }
+                                aria-invalid={serverError?.field?.startsWith('planned_volume.')}
+                                onChange={(event) => {
+                                  const value = event.target.value.replace(/\s/g, '');
+                                  setPlannedVolume((current) => ({
+                                    ...current,
+                                    [row.product_group_id]: value,
+                                  }));
+                                  invalidate();
+                                }}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {plannedRows.some((row) => row.in_plan === false) && (
+                    <small className="muted">
+                      «Нет в плане» — у плановой волны нет объёма по этой группе. Объём, указанный
+                      здесь, считается по цене и весу позиции этого расчёта.
+                    </small>
+                  )}
+                  {preview && divideWaveExpenses && (
+                    <p className="info-note">
+                      Расходы волны сейчас делятся на{' '}
+                      <strong>{decimal(waveDistribution.total_quantity || 0)} шт.</strong>: в этом
+                      расчёте {decimal(waveDistribution.selected_quantity || 0)}, в закупках{' '}
+                      {decimal(waveDistribution.existing_quantity || 0)}, по плану{' '}
+                      {decimal(waveDistribution.forecast_quantity || 0)}.
+                    </p>
+                  )}
+                  {volumeShown && volumeChanged && (
+                    <label className="field">
+                      Комментарий к плановому объёму
+                      <textarea
+                        value={plannedComment}
+                        required
+                        aria-invalid={
+                          (attempted && plannedComment.trim().length < 3) ||
+                          serverError?.field === 'planned_volume_comment'
+                        }
+                        placeholder="Например: клиент подтвердил ещё 10 шт. в ноябре"
+                        onChange={(event) => {
+                          setPlannedComment(event.target.value);
+                          invalidate();
+                        }}
+                      />
+                      <small>Обязателен: без комментария объём не сохранится.</small>
+                    </label>
+                  )}
+                  {volumeShown && volumeChanged && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => {
+                        setPlannedVolume({});
+                        setPlannedComment('');
+                        invalidate();
+                      }}
+                    >
+                      Вернуть объём волны
+                    </Button>
+                  )}
+                  {serverError?.field?.startsWith('planned_volume') && (
+                    <p className="field-error">{serverError.message}</p>
+                  )}
+                </>
+              )}
+            </section>
+          )}
           <section className="calculation-section">
             <div className="section-heading">
               <div>
@@ -1416,94 +1543,6 @@ function CalculationEditor({
                 Расчёт остаётся привязан к волне, но все её общие расходы и таможенный сбор ложатся
                 только на этот расчёт: другие заказы и плановый объём волны их не делят.
               </p>
-            </section>
-          )}
-          {volumeShown && (
-            <section className="calculation-section">
-              <div className="section-heading">
-                <div>
-                  <h3>Плановый объём волны</h3>
-                  <p>
-                    На этот объём делятся общие расходы волны. Можно указать свой объём для этого
-                    расчёта — он сохранится только с комментарием. Сама волна{' '}
-                    {plannedRows[0].plan_number ? `«${plannedRows[0].plan_number}» ` : ''}не
-                    меняется.
-                  </p>
-                </div>
-              </div>
-              <div className="table-scroll">
-                <table className="data-table planned-volume">
-                  <thead>
-                    <tr>
-                      <th>Товарная группа</th>
-                      <th>В волне, шт.</th>
-                      <th>В расчёте, шт.</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {plannedRows.map((row) => (
-                      <tr key={row.product_group_id}>
-                        <td>{row.product_group_name}</td>
-                        <td>{decimal(row.wave_quantity)}</td>
-                        <td>
-                          <input
-                            aria-label={`Плановый объём в расчёте: ${row.product_group_name}`}
-                            inputMode="numeric"
-                            value={
-                              plannedVolume[row.product_group_id] ??
-                              plainQuantity(row.wave_quantity)
-                            }
-                            aria-invalid={serverError?.field?.startsWith('planned_volume.')}
-                            onChange={(event) => {
-                              const value = event.target.value.replace(/\s/g, '');
-                              setPlannedVolume((current) => ({
-                                ...current,
-                                [row.product_group_id]: value,
-                              }));
-                              invalidate();
-                            }}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {volumeChanged && (
-                <label className="field">
-                  Комментарий к плановому объёму
-                  <textarea
-                    value={plannedComment}
-                    required
-                    aria-invalid={
-                      (attempted && plannedComment.trim().length < 3) ||
-                      serverError?.field === 'planned_volume_comment'
-                    }
-                    placeholder="Например: клиент подтвердил ещё 10 шт. в ноябре"
-                    onChange={(event) => {
-                      setPlannedComment(event.target.value);
-                      invalidate();
-                    }}
-                  />
-                  <small>Обязателен: без комментария объём не сохранится.</small>
-                </label>
-              )}
-              {volumeChanged && (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => {
-                    setPlannedVolume({});
-                    setPlannedComment('');
-                    invalidate();
-                  }}
-                >
-                  Вернуть объём волны
-                </Button>
-              )}
-              {serverError?.field?.startsWith('planned_volume') && (
-                <p className="field-error">{serverError.message}</p>
-              )}
             </section>
           )}
           {Boolean(request.wave_id) && auth.can('waves.write') && Boolean(profileId) && (
