@@ -498,7 +498,7 @@ function CalculationEditor({
               expenseTypes.error
             }
           />
-          {attempted && errors.length > 0 && (
+          {(attempted || Object.keys(selections).length > 0) && errors.length > 0 && (
             <div className="validation-summary" role="alert">
               <strong>Расчёт пока нельзя выполнить:</strong>
               <ul>
@@ -1756,7 +1756,7 @@ export function RequestCalculations({
     setAssignedWaveId(String(request.wave_id || ''));
     setWaveId(String(request.wave_id || ''));
   }, [request.version, request.wave_id]);
-  async function saveWave() {
+  async function saveWave(): Promise<boolean> {
     const path = '/requests/' + request.id + '/wave';
     const save = (version: number) =>
       waveCommand.run<Entity>(
@@ -1769,15 +1769,15 @@ export function RequestCalculations({
     try {
       result = await save(requestVersion);
     } catch (cause) {
-      if (!(cause instanceof ApiError && cause.code === 'VERSION_CONFLICT')) return;
+      if (!(cause instanceof ApiError && cause.code === 'VERSION_CONFLICT')) return false;
       // Quotes, items or stages also change the request version. If the wave itself was not
       // reassigned by someone else, repeat the assignment on the current version.
       const fresh = await api<Entity>('/requests/' + request.id).catch(() => undefined);
-      if (!fresh) return;
+      if (!fresh) return false;
       setRequestVersion(Number(fresh.version));
       if (String(fresh.wave_id || '') !== assignedWaveId) {
         setAssignedWaveId(String(fresh.wave_id || ''));
-        return;
+        return false;
       }
       result = await save(Number(fresh.version)).catch(() => undefined);
     }
@@ -1785,6 +1785,14 @@ export function RequestCalculations({
       setRequestVersion(Number(result.version));
       setAssignedWaveId(String(result.wave_id || ''));
     }
+    return Boolean(result);
+  }
+  // Business remark of 30 October 2026: a wave picked but not saved left the request without a wave, and
+  // the calculation silently did not compute. Opening a calculation saves the picked wave first.
+  const waveUnsaved = auth.can('waves.write') && waveId !== assignedWaveId;
+  async function withSavedWave(open: () => void) {
+    if (waveUnsaved && !(await saveWave())) return;
+    open();
   }
   const openWaves = waves.data?.items || [];
   // A closed or archived wave is no longer offered, but the request may still name it.
@@ -1803,6 +1811,9 @@ export function RequestCalculations({
   const [previous, setPrevious] = useState<Entity>();
   const [revision, setRevision] = useState(0);
   function copy(row: Entity) {
+    void withSavedWave(() => openCopy(row));
+  }
+  function openCopy(row: Entity) {
     setPrevious(row);
     setSelected(undefined);
     setInitialIds(
@@ -1875,6 +1886,12 @@ export function RequestCalculations({
             </Button>
           )}
         </div>
+        {waveUnsaved && (
+          <p className="field-error" role="status">
+            Волна выбрана, но не сохранена в заявке. Нажмите «Сохранить волну» — или она сохранится
+            сама, когда вы откроете новый расчёт.
+          </p>
+        )}
         {Boolean(assignedWave?.archived) && (
           <p className="field-error">
             Назначенная волна в архиве. Выберите действующую волну перед расчётом.
@@ -1891,11 +1908,14 @@ export function RequestCalculations({
       </section>
       <div className="tab-actions">
         <Button
-          onClick={() => {
-            setPrevious(undefined);
-            setInitialIds([]);
-            setEditing(true);
-          }}
+          busy={waveCommand.busy}
+          onClick={() =>
+            void withSavedWave(() => {
+              setPrevious(undefined);
+              setInitialIds([]);
+              setEditing(true);
+            })
+          }
         >
           <Plus size={16} /> Новый расчёт
         </Button>

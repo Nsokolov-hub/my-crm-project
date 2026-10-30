@@ -268,3 +268,45 @@ it('tells where to assign a wave when the request has none', async () => {
   expect(await screen.findByRole('heading', { name: 'Плановый объём волны' })).toBeVisible();
   expect(screen.getByText(/Заявке не назначена волна/)).toBeVisible();
 });
+
+it('saves a picked but unsaved wave when a new calculation is opened', async () => {
+  // Remark of 30 October 2026 (video): the wave was picked, «Сохранить волну» was not pressed, and the
+  // calculation silently did not compute without a wave.
+  vi.mocked(api).mockImplementation(async (path, options) => {
+    if (path === '/waves?open=true')
+      return {
+        items: [
+          {
+            id: 'asnail-plan',
+            kind: 'plan',
+            number: 'Плановая Аснаил',
+            supplier_name: 'Beijing Asnail',
+            status: 'planned',
+            archived: false,
+          },
+        ],
+      };
+    if (path === '/requests/request/wave' && options?.method === 'PUT')
+      return { wave_id: 'asnail-plan', version: 5 };
+    return { items: [] };
+  });
+  render(
+    <MemoryRouter>
+      <RequestCalculations request={{ id: 'request', version: 4 }} />
+    </MemoryRouter>,
+  );
+  const picker = screen.getByLabelText('Волна поставки');
+  await waitFor(() => expect(picker).toHaveTextContent('Плановая Аснаил'));
+  fireEvent.change(picker, { target: { value: 'asnail-plan' } });
+  expect(screen.getByText(/Волна выбрана, но не сохранена/)).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: /Новый расчёт/ }));
+  expect(await screen.findByRole('heading', { name: 'Новый расчёт' })).toBeVisible();
+  expect(api).toHaveBeenCalledWith(
+    '/requests/request/wave',
+    expect.objectContaining({
+      method: 'PUT',
+      body: expect.objectContaining({ request_version: 4, wave_id: 'asnail-plan' }),
+    }),
+  );
+  expect(screen.queryByText(/Волна выбрана, но не сохранена/)).not.toBeInTheDocument();
+});
