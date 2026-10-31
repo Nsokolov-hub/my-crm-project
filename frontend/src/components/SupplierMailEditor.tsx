@@ -100,9 +100,13 @@ export function SupplierMailEditor({
               key: 'email',
               label: 'Почта',
               render: (row) =>
-                String(
-                  (row.details as Entity)?.rfq_email || row.email || 'Укажите почту в карточке',
-                ),
+                [
+                  (row.details as Entity)?.rfq_email || row.email,
+                  (row.details as Entity)?.rfq_email_manager,
+                ]
+                  .filter(Boolean)
+                  .map(String)
+                  .join(', ') || 'Укажите почту в карточке',
             },
             {
               key: 'remove',

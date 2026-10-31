@@ -1,14 +1,17 @@
 """Requests, their lines, sharing and history."""
 
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header
 from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.db import get_db, utcnow
+from app.core.config import settings
+from app.core.db import as_utc, get_db, utcnow
 from app.core.errors import DomainError
 from app.core.models import AppSetting, AuditEvent, User
 from app.core.security import (
@@ -126,10 +129,36 @@ def structured_item_fields(db: Session, data: dict[str, Any], previous: RequestI
     return data
 
 
+def last_proposals() -> Any:
+    """Per request: when its latest commercial proposal was issued (cancelled ones are not counted)."""
+    from app.commerce.models import CommercialDocument
+
+    return (select(CommercialDocument.request_id.label('request_id'),
+                   sa.func.max(CommercialDocument.created_at).label('last_proposal_at'))
+            .where(CommercialDocument.kind == 'proposal', CommercialDocument.status != 'cancelled')
+            .group_by(CommercialDocument.request_id).subquery('last_proposals'))
+
+
+def local_day_start(day: date) -> datetime:
+    """Midnight of `day` in the company's time zone, as an aware moment."""
+    return datetime.combine(day, time.min, ZoneInfo(settings.company_timezone))
+
+
 @router.get('/requests')
-def requests(q: str = '', stage: str | None = None, client_id: str | None = None, owner_id: str | None = None, page: int = 1, page_size: int = 25, sort: str = 'created_at', direction: str = 'desc', user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
+def requests(q: str = '', stage: str | None = None, client_id: str | None = None, owner_id: str | None = None,
+             proposal_from: date | None = None, proposal_to: date | None = None, with_proposal: bool = False,
+             page: int = 1, page_size: int = 25, sort: str = 'created_at', direction: str = 'desc',
+             user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
+    """Requests visible to the user.
+
+    Business remark of 31 October 2026: the date and time of the latest proposal of each request, a filter by it
+    (`proposal_from`/`proposal_to`, days in the company's time zone, both included) and sorting by it
+    (`sort=last_proposal_at`), so the proposals issued lately can be checked one by one.
+    """
     require_permission(db, user, 'requests.read')
-    stmt = select(Request).where(request_predicate(db, user), Request.archived.is_(False))
+    latest = last_proposals()
+    stmt = (select(Request).outerjoin(latest, latest.c.request_id == Request.id)
+            .where(request_predicate(db, user), Request.archived.is_(False)))
     if q:
         stmt = stmt.where(or_(Request.title.ilike(f'%{q}%'), Request.number.ilike(f'%{q}%')))
     if client_id:
@@ -138,14 +167,31 @@ def requests(q: str = '', stage: str | None = None, client_id: str | None = None
         stmt = stmt.where(Request.commercial_stage == stage)
     if owner_id:
         stmt = stmt.where(Request.owner_id == owner_id)
-    col = {'created_at': Request.created_at, 'title': Request.title, 'number': Request.number, 'due_at': Request.due_at}.get(sort, Request.created_at)
-    result = paginate(db, stmt.order_by(col.desc() if direction == 'desc' else col, Request.id), page, page_size)
+    if proposal_from and proposal_to and proposal_from > proposal_to:
+        raise DomainError('PERIOD_INVALID', 'Начало периода позже его конца', 422, 'proposal_from')
+    if with_proposal or proposal_from or proposal_to:
+        stmt = stmt.where(latest.c.last_proposal_at.is_not(None))
+    if proposal_from:
+        stmt = stmt.where(latest.c.last_proposal_at >= local_day_start(proposal_from))
+    if proposal_to:
+        stmt = stmt.where(latest.c.last_proposal_at < local_day_start(proposal_to + timedelta(days=1)))
+    columns = {'created_at': Request.created_at, 'title': Request.title, 'number': Request.number,
+               'due_at': Request.due_at, 'last_proposal_at': latest.c.last_proposal_at}
+    col = columns.get(sort, Request.created_at)
+    order = col.desc() if direction == 'desc' else col.asc()
+    if sort == 'last_proposal_at':
+        order = order.nulls_last()
+    result = paginate(db, stmt.order_by(order, Request.id), page, page_size)
     clients = prefetch(db, Counterparty, (item['client_id'] for item in result['items']))
     owners = prefetch(db, User, (item['owner_id'] for item in result['items']))
     counts = supplier_counts(db, [item['id'] for item in result['items']])
+    proposals = dict(db.execute(select(latest.c.request_id, latest.c.last_proposal_at).where(
+        latest.c.request_id.in_([item['id'] for item in result['items']]))).tuples().all()) if result['items'] else {}
     for item in result['items']:
         item['client_name'] = clients[item['client_id']].name
         item['owner_name'] = owners[item['owner_id']].name
+        moment = proposals.get(item['id'])
+        item['last_proposal_at'] = as_utc(moment).isoformat() if moment else None
         item.update(counts.get(item['id'], {'quoted_suppliers': 0, 'answered_suppliers': 0, 'asked_suppliers': 0}))
     return result
 

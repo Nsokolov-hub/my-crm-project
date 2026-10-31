@@ -3015,3 +3015,53 @@ tr.clickable-row {
 .planned-volume input {
   max-width: 140px;
 }
+
+/* Business remark of 31 October 2026: the date of the latest proposal and saved filters of the requests list. */
+.requests-filter-bar {
+  flex-wrap: wrap;
+  padding: 12px 23px;
+  color: $muted;
+}
+
+.requests-filter-bar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.requests-filter-bar input[type='date'] {
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 1px solid $border;
+  border-radius: 8px;
+  color: $ink;
+}
+
+.requests-filter-bar .filter-label {
+  color: $ink;
+  font-weight: 600;
+}
+
+.requests-filter-bar .filter-spacer {
+  flex: 1;
+}
+
+.chip-button {
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 1px solid $border;
+  border-radius: 999px;
+  background: #fff;
+  color: $ink;
+}
+
+.chip-button:hover {
+  border-color: $purple;
+  color: $purple;
+}
+
+.filter-notice {
+  margin: 0;
+  padding: 0 23px 12px;
+  color: $purple;
+}

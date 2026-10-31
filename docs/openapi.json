@@ -82,6 +82,150 @@
         }
       }
     },
+    "/api/v1/me/preferences/{key}": {
+      "get": {
+        "tags": [
+          "Доступ и настройки"
+        ],
+        "summary": "Get Preference",
+        "operationId": "get_preference_api_v1_me_preferences__key__get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Preference Api V1 Me Preferences  Key  Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Доступ и настройки"
+        ],
+        "summary": "Save Preference",
+        "operationId": "save_preference_api_v1_me_preferences__key__put",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreferenceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Save Preference Api V1 Me Preferences  Key  Put"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Доступ и настройки"
+        ],
+        "summary": "Delete Preference",
+        "operationId": "delete_preference_api_v1_me_preferences__key__delete",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Preference Api V1 Me Preferences  Key  Delete"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/auth/logout": {
       "post": {
         "tags": [
@@ -256,15 +400,34 @@
           "Доступ и настройки"
         ],
         "summary": "Directory",
+        "description": "Active employees; `permission` keeps those holding it (e.g. leaders: approvals.decide).",
         "operationId": "directory_api_v1_users_get",
+        "parameters": [
+          {
+            "name": "permission",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Permission"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Directory Api V1 Users Get"
                 }
               }
@@ -3953,6 +4116,7 @@
           "CRM"
         ],
         "summary": "Requests",
+        "description": "Requests visible to the user.\n\nBusiness remark of 31 October 2026: the date and time of the latest proposal of each request, a filter by it\n(`proposal_from`/`proposal_to`, days in the company's time zone, both included) and sorting by it\n(`sort=last_proposal_at`), so the proposals issued lately can be checked one by one.",
         "operationId": "requests_api_v1_requests_get",
         "parameters": [
           {
@@ -4011,6 +4175,50 @@
                 }
               ],
               "title": "Owner Id"
+            }
+          },
+          {
+            "name": "proposal_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Proposal From"
+            }
+          },
+          {
+            "name": "proposal_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Proposal To"
+            }
+          },
+          {
+            "name": "with_proposal",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "With Proposal"
             }
           },
           {
@@ -8206,6 +8414,82 @@
         "summary": "Wave Board",
         "description": "Waves in use for the board, earliest arrival first.\n\nQuantities need every request of the wave to be visible, amounts also the purchase and calculation rights\non each of them, and profitability the profit right.",
         "operationId": "wave_board_api_v1_waves_board_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/waves/positions": {
+      "get": {
+        "tags": [
+          "Согласования и поставки"
+        ],
+        "summary": "Wave Positions",
+        "description": "Positions of the waves in use, newest calculation first.\n\nRows need the request to be readable; amounts also the purchase and calculation rights on it, and\nprofitability the profit right.",
+        "operationId": "wave_positions_api_v1_waves_positions_get",
+        "parameters": [
+          {
+            "name": "wave_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Wave Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Q"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -18055,6 +18339,34 @@
           "quantity"
         ],
         "title": "PlannedVolumeIn"
+      },
+      "PreferenceInput": {
+        "properties": {
+          "value": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "maxProperties": 30,
+            "title": "Value"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "PreferenceInput"
       },
       "ProductGroupInput": {
         "properties": {

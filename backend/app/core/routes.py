@@ -25,6 +25,7 @@ from app.core.models import (
     PermissionGrant,
     Role,
     User,
+    UserPreference,
     UserRole,
 )
 from app.core.schemas import Input, SessionView, UserPage, UserView
@@ -37,6 +38,7 @@ from app.core.security import (
     preload_permissions,
     require_permission,
     scope_for,
+    users_with_permission,
 )
 from app.core.service import advisory, audit, check_version, lock, serialize
 from app.core.service import page as paginate
@@ -171,6 +173,54 @@ def me(request: Request, user: User = Depends(current_user), db: Session = Depen
     }
 
 
+# Business remark of 31 October 2026: an employee saves the filters of the requests list; the list opens with them.
+PREFERENCE_KEYS = ("requests.filters",)
+
+
+class PreferenceInput(Input):
+    value: dict[str, str | bool | None] = Field(max_length=30)
+
+
+def preference_key(key: str) -> str:
+    if key not in PREFERENCE_KEYS:
+        raise DomainError("PREFERENCE_UNKNOWN", "Такой настройки нет", 404)
+    return key
+
+
+@router.get("/me/preferences/{key}")
+def get_preference(key: str, user: User = Depends(current_user),
+                   db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
+    row = db.scalar(select(UserPreference).where(UserPreference.user_id == user.id,
+                                                 UserPreference.key == preference_key(key)))
+    return {"key": key, "value": row.value if row else None,
+            "updated_at": row.updated_at.isoformat() if row and row.updated_at else None}
+
+
+@router.put("/me/preferences/{key}")
+def save_preference(key: str, body: PreferenceInput, user: User = Depends(current_user),
+                    db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
+    if any(len(name) > 60 or (isinstance(value, str) and len(value) > 300) for name, value in body.value.items()):
+        raise DomainError("PREFERENCE_TOO_LONG", "Слишком длинное значение настройки", 422, "value")
+    row = db.scalar(select(UserPreference).where(UserPreference.user_id == user.id,
+                                                 UserPreference.key == preference_key(key)))
+    if row is None:
+        row = UserPreference(user_id=user.id, key=key, value=body.value, updated_at=utcnow())
+        db.add(row)
+    else:
+        row.value, row.updated_at = body.value, utcnow()
+        row.version += 1
+    db.flush()
+    return {"key": key, "value": row.value, "updated_at": row.updated_at.isoformat()}
+
+
+@router.delete("/me/preferences/{key}")
+def delete_preference(key: str, user: User = Depends(current_user),
+                      db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
+    db.execute(delete(UserPreference).where(UserPreference.user_id == user.id,
+                                            UserPreference.key == preference_key(key)))
+    return {"key": key, "value": None, "updated_at": None}
+
+
 @router.post("/auth/logout")
 def logout(
     request: Request, response: Response, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")
@@ -261,8 +311,18 @@ class UserPatch(Input):
 
 
 @router.get("/users")
-def directory(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
-    rows = db.scalars(select(User).where(User.active.is_(True)).order_by(User.name)).all()
+def directory(
+    permission: str | None = None,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db, scope="function"),
+) -> dict[str, Any]:
+    """Active employees; `permission` keeps those holding it (e.g. leaders: approvals.decide)."""
+    if permission is not None:
+        if permission not in PERMISSIONS:
+            raise DomainError("PERMISSION_INVALID", "Неизвестное право", 422, "permission")
+        rows = users_with_permission(db, permission)
+    else:
+        rows = db.scalars(select(User).where(User.active.is_(True)).order_by(User.name)).all()
     return {
         "items": [{"id": r.id, "name": r.name} for r in rows],
         "total": len(rows),

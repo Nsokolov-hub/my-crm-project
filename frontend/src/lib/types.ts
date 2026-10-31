@@ -36,6 +36,8 @@ export type Field = {
     | 'number'
     | 'checkbox'
     | 'json'
+    | 'tel'
+    | 'week'
     | 'counterparty-details';
   required?: boolean;
   placeholder?: string;
@@ -49,6 +51,8 @@ export type Field = {
   min?: string | number;
   max?: string | number;
   wide?: boolean;
+  /** For a 'week' field: the field of its ISO year, set together with the week from the calendar. */
+  yearField?: string;
 };
 export type Column<T = Entity> = {
   key: string;

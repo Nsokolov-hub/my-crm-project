@@ -10,6 +10,7 @@ import {
   ErrorBox,
   Modal,
   PageHeading,
+  TextLink,
 } from '../components/ui';
 import { api } from '../lib/api';
 import { date, decimal, nowLocal, metric } from '../lib/format';
@@ -17,11 +18,14 @@ import { useApi, useCommand } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
 import { waveKindLabel, waveKindOptions, waveWeekInitial, waveWeekLabel } from '../lib/waves';
 import { WaveBoard } from './WaveBoard';
+import { WavePositions } from './WavePositions';
 
 const VIEW_KEY = 'waves:view';
-function savedView(): 'board' | 'table' {
+type WaveView = 'board' | 'table' | 'positions';
+function savedView(): WaveView {
   try {
-    return localStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'board';
+    const saved = localStorage.getItem(VIEW_KEY);
+    return saved === 'table' || saved === 'positions' ? saved : 'board';
   } catch {
     return 'board';
   }
@@ -85,7 +89,8 @@ export function RequestFulfillment({ requestId }: { requestId: string }) {
             label: 'Руководитель',
             required: true,
             type: 'select',
-            source: '/users',
+            // Business remark of 31 October 2026: only those who may decide, not every employee.
+            source: '/users?permission=approvals.decide',
           },
         ]}
         command
@@ -96,7 +101,11 @@ export function RequestFulfillment({ requestId }: { requestId: string }) {
           { key: 'id', label: 'Согласование', render: (r) => `Решение · ${r.id.slice(0, 8)}` },
           { key: 'status', label: 'Состояние', render: (r) => <Badge value={r.status} /> },
           { key: 'created_at', label: 'Передано', render: (r) => date(r.created_at, true) },
-          { key: 'reviewer_id', label: 'Руководитель' },
+          {
+            key: 'reviewer_id',
+            label: 'Руководитель',
+            render: (r) => String(r.reviewer_name || '—'),
+          },
           { key: 'reason', label: 'Комментарий' },
         ]}
       />
@@ -354,9 +363,10 @@ const waveFields: Field[] = [
   {
     name: 'close_week',
     label: 'Неделя закрытия',
-    type: 'number',
+    type: 'week',
+    yearField: 'close_year',
     required: true,
-    help: 'Номер недели ISO: от 1 до 53.',
+    help: 'Номер недели ISO от 1 до 53 — введите или выберите в календаре.',
   },
   {
     name: 'close_year',
@@ -365,7 +375,13 @@ const waveFields: Field[] = [
     required: true,
     value: new Date().getFullYear(),
   },
-  { name: 'departure_week', label: 'Неделя отправки', type: 'number', required: true },
+  {
+    name: 'departure_week',
+    label: 'Неделя отправки',
+    type: 'week',
+    yearField: 'departure_year',
+    required: true,
+  },
   {
     name: 'departure_year',
     label: 'Год отправки',
@@ -373,7 +389,13 @@ const waveFields: Field[] = [
     required: true,
     value: new Date().getFullYear(),
   },
-  { name: 'arrival_week', label: 'Неделя прибытия', type: 'number', required: true },
+  {
+    name: 'arrival_week',
+    label: 'Неделя прибытия',
+    type: 'week',
+    yearField: 'arrival_year',
+    required: true,
+  },
   {
     name: 'arrival_year',
     label: 'Год прибытия',
@@ -592,7 +614,7 @@ function WaveFinancialSummary({ summary }: { summary: Entity }) {
 export function Waves() {
   const auth = useAuth();
   const [archive, setArchive] = useState(false);
-  const [view, setView] = useState<'board' | 'table'>(savedView);
+  const [view, setView] = useState<WaveView>(savedView);
   const [creating, setCreating] = useState(false);
   const [forecast, setForecast] = useState<Entity>();
   const [addingForecast, setAddingForecast] = useState(false);
@@ -622,7 +644,7 @@ export function Waves() {
     setOpenError(undefined);
     api<Entity>(`/waves/${id}`).then(setSelected, setOpenError);
   }
-  function chooseView(next: 'board' | 'table') {
+  function chooseView(next: WaveView) {
     setView(next);
     try {
       localStorage.setItem(VIEW_KEY, next);
@@ -671,6 +693,15 @@ export function Waves() {
         >
           Таблица
         </button>
+        <button
+          className={!archive && view === 'positions' ? 'active' : ''}
+          onClick={() => {
+            setArchive(false);
+            chooseView('positions');
+          }}
+        >
+          Позиции
+        </button>
         <button className={archive ? 'active' : ''} onClick={() => setArchive(true)}>
           Архив
         </button>
@@ -698,6 +729,7 @@ export function Waves() {
           )}
         </>
       )}
+      {!archive && view === 'positions' && <WavePositions />}
       {(archive || view === 'table') && (
         <Collection
           title={archive ? 'Архив волн' : 'Расписание волн'}
@@ -942,7 +974,42 @@ export function Waves() {
                       setAllocationAction('event');
                     }}
                     columns={[
-                      { key: 'execution_id', label: 'Позиция' },
+                      {
+                        // Business remark of 31 October 2026: the position, not its id.
+                        key: 'position',
+                        label: 'Позиция',
+                        render: (r) => (
+                          <span className="stacked">
+                            <strong>{String(r.position || 'Позиция без названия')}</strong>
+                            <small>
+                              {[
+                                r.article ? `Арт. ${String(r.article)}` : '',
+                                r.packaging ? `Фасовка: ${String(r.packaging)}` : '',
+                                r.manufacturer ? String(r.manufacturer) : '',
+                              ]
+                                .filter(Boolean)
+                                .join(' · ') || '—'}
+                            </small>
+                          </span>
+                        ),
+                      },
+                      {
+                        key: 'client_name',
+                        label: 'Клиент',
+                        render: (r) => String(r.client_name || '—'),
+                      },
+                      {
+                        key: 'request_number',
+                        label: 'Заявка',
+                        render: (r) =>
+                          r.request_id ? (
+                            <TextLink to={`/requests/${String(r.request_id)}`}>
+                              №{String(r.request_number || '')}
+                            </TextLink>
+                          ) : (
+                            '—'
+                          ),
+                      },
                       { key: 'quantity', label: 'Количество', render: (r) => decimal(r.quantity) },
                       { key: 'shipped', label: 'Отправлено', render: (r) => decimal(r.shipped) },
                       {

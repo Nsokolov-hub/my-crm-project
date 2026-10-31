@@ -58,7 +58,7 @@ function mergeNotice(moved: Record<string, number>) {
 const callProspectFields: Field[] = [
   { name: 'name', label: 'Название', required: true, wide: true },
   { name: 'tax_id', label: 'ИНН', required: true },
-  { name: 'phone', label: 'Телефон' },
+  { name: 'phone', label: 'Телефон', type: 'tel' },
   { name: 'email', label: 'E-mail', type: 'email' },
 ];
 

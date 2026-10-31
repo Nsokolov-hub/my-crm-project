@@ -39,6 +39,27 @@ def mail_items(request_id: str, db: DB, user: Actor):
     return {"items": [{"id": entity_id} for entity_id in ids], "total": len(ids)}
 
 
+def supplier_recipients(party) -> list[str]:
+    """The supplier's shared address for requests (or its card address) and its manager's, if given.
+
+    Business remark of 31 October 2026: a request for quotes goes to both.
+    """
+    details = party.details or {}
+    found = []
+    for raw in (details.get("rfq_email") or party.email, details.get("rfq_email_manager")):
+        if raw is None or not str(raw).strip():
+            continue
+        try:
+            address = str(TypeAdapter(EmailStr).validate_python(str(raw).strip()))
+        except ValidationError:
+            error("SUPPLIER_EMAIL", f"Исправьте почту для запросов в карточке {party.name}")
+        if address.casefold() not in {row.casefold() for row in found}:
+            found.append(address)
+    if not found:
+        error("SUPPLIER_EMAIL", f"Укажите почту для запросов в карточке {party.name}")
+    return found
+
+
 class MailPreviewIn(Command):
     supplier_ids: list[str] = Field(min_length=1, max_length=100)
     item_ids: list[str] = Field(min_length=1, max_length=10000)
@@ -70,19 +91,15 @@ def mail_preview(request_id: str, data: MailPreviewIn, db: DB, user: Actor):
     drafts = []
     for supplier_id in dict.fromkeys(data.supplier_ids):
         party = supplier(db, supplier_id)
-        email = (party.details or {}).get("rfq_email") or party.email
-        if not email:
-            error("SUPPLIER_EMAIL", f"Укажите почту для запросов в карточке {party.name}")
-        try:
-            email = str(TypeAdapter(EmailStr).validate_python(email))
-        except ValidationError:
-            error("SUPPLIER_EMAIL", f"Исправьте почту для запросов в карточке {party.name}")
+        recipients = supplier_recipients(party)
+        taken = {address.casefold() for address in recipients}
         drafts.append(
             {
                 "supplier_id": party.id,
                 "supplier_name": party.name,
-                "recipient": email,
-                "cc": list(dict.fromkeys(str(address) for address in data.cc if str(address).casefold() != email.casefold())),
+                "recipient": ", ".join(recipients),
+                "recipients": recipients,
+                "cc": list(dict.fromkeys(str(address) for address in data.cc if str(address).casefold() not in taken)),
                 "subject": f"Request {request.number}",
                 "body": body,
                 "table_html": table,

@@ -127,3 +127,14 @@ class AppSetting(Entity):
     value: Mapped[dict[str, Any]] = mapped_column(JSON)
     reason: Mapped[str | None] = mapped_column(Text)
     author_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+
+
+class UserPreference(Entity):
+    """A setting an employee keeps for themself, e.g. the saved filters of the requests list."""
+
+    __tablename__ = 'user_preferences'
+    __table_args__ = (UniqueConstraint('user_id', 'key'),)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    key: Mapped[str] = mapped_column(String(100))
+    value: Mapped[dict[str, Any]] = mapped_column(JSON)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

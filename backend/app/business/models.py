@@ -123,7 +123,8 @@ class SupplierMail(Entity):
     __tablename__ = "supplier_mails"
     request_id: Mapped[str] = mapped_column(ForeignKey("requests.id"), index=True)
     supplier_id: Mapped[str] = mapped_column(ForeignKey("counterparties.id"))
-    recipient: Mapped[str] = mapped_column(String(254))
+    # One address or several separated by «, »: the supplier's shared address and its manager's.
+    recipient: Mapped[str] = mapped_column(String(1000))
     cc: Mapped[list[str]] = mapped_column(JSON, default=list)
     subject: Mapped[str] = mapped_column(String(250))
     body: Mapped[str] = mapped_column(Text)

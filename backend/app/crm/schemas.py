@@ -35,13 +35,50 @@ def checked_details(details: dict[str, Any] | None) -> dict[str, Any] | None:
     currency = details.get('Валюта логистики')
     if currency not in (None, '') and not re.fullmatch(r'[A-Za-z]{3}', str(currency).strip()):
         raise ValueError('Валюта логистики: трёхбуквенный код, например USD')
-    email = details.get('rfq_email')
-    if email not in (None, ''):
-        try:
-            TypeAdapter(EmailStr).validate_python(str(email).strip())
-        except ValidationError:
-            raise ValueError('Почта для запросов поставщику указана неверно') from None
+    # Business remark of 31 October 2026: a supplier's shared address and its manager's, both get the request.
+    for key, label in (('rfq_email', 'Общая почта для запросов поставщику'),
+                       ('rfq_email_manager', 'Почта менеджера поставщика')):
+        email = details.get(key)
+        if email not in (None, ''):
+            try:
+                TypeAdapter(EmailStr).validate_python(str(email).strip())
+            except ValidationError:
+                raise ValueError(f'{label}: адрес указан неверно') from None
     return details
+
+
+PHONE_EXTENSION = re.compile(r'\s*(?:доб\.?|вн\.?|ext\.?|x|#)\s*\d{1,6}\s*$', re.IGNORECASE)
+PHONE_CHARS = re.compile(r'\+?[\d\s().\-]+')
+# Digits of a whole international number for countries with one fixed length (Russia and Kazakhstan, the CIS,
+# North America); other countries are checked by the general 10–15 digits only.
+PHONE_LENGTHS = {'375': 12, '374': 11, '373': 11, '380': 12, '992': 12, '993': 11, '994': 12, '995': 12, '996': 12,
+                 '998': 12, '7': 11, '1': 11}
+PHONE_MESSAGE = ('Телефон указан неверно: 10–15 цифр с кодом города или страны, например +7 495 123-45-67. '
+                 'Добавочный — «доб. 123», несколько номеров — через запятую')
+
+
+def checked_phone(value: str | None) -> str | None:
+    """Business remark of 31 October 2026: no more words or half numbers in the phone fields.
+
+    Each number of the field (separated by «,» or «;») has 10 to 15 digits with its city or country code and only
+    digits, «+», spaces, brackets, dots and dashes; an extension («доб. 12», «ext 12») may follow. The text is
+    kept as entered.
+    """
+    if value is None or not value.strip():
+        return None
+    value = value.strip()
+    for part in re.split(r'[,;]', value):
+        number = PHONE_EXTENSION.sub('', part.strip())
+        if not number or not PHONE_CHARS.fullmatch(number) or '+' in number[1:]:
+            raise ValueError(PHONE_MESSAGE)
+        digits = re.sub(r'\D', '', number)
+        if not 10 <= len(digits) <= 15 or len(set(digits)) == 1:
+            raise ValueError(PHONE_MESSAGE)
+        if number.startswith('+'):
+            code = next((code for code in PHONE_LENGTHS if digits.startswith(code)), None)
+            if code and len(digits) != PHONE_LENGTHS[code]:
+                raise ValueError(PHONE_MESSAGE)
+    return value
 
 
 class ClientInput(Input):
@@ -56,6 +93,11 @@ class ClientInput(Input):
     owner_id: str | None = None
     details: dict[str, Any] = {}
     source: str | None = Field(default=None, max_length=250)
+
+    @field_validator('phone')
+    @classmethod
+    def phone_format(cls, value):
+        return checked_phone(value)
 
     @field_validator('details')
     @classmethod
@@ -91,6 +133,11 @@ class ClientPatch(Input):
     details: dict[str, Any] = Field(default=None)
     reason: str | None = None
 
+    @field_validator('phone')
+    @classmethod
+    def phone_format(cls, value):
+        return checked_phone(value)
+
     @field_validator('details')
     @classmethod
     def known_details(cls, value):
@@ -120,6 +167,12 @@ class ContactInput(Input):
     email: EmailStr | None = None
     phone: str | None = Field(default=None, max_length=100)
 
+    @field_validator('phone')
+    @classmethod
+    def phone_format(cls, value):
+        return checked_phone(value)
+
+
 class ContactPatch(Input):
     version: int
     name: str = Field(default=None, min_length=1, max_length=250)
@@ -131,6 +184,11 @@ class ContactPatch(Input):
     phone: str | None = None
     archived: bool = Field(default=None)
     reason: str | None = None
+
+    @field_validator('phone')
+    @classmethod
+    def phone_format(cls, value):
+        return checked_phone(value)
 
 
 class ContactCreateInput(ContactInput):

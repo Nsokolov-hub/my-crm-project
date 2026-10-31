@@ -8,7 +8,9 @@ const legalFields = [
   'Корреспондентский счёт',
 ];
 const supplierFields: Record<string, string> = {
-  rfq_email: 'Почта для запросов поставщику',
+  // Business remark of 31 October 2026: requests for quotes go to both addresses.
+  rfq_email: 'Общая почта для запросов поставщику',
+  rfq_email_manager: 'Почта менеджера поставщика',
   contract: 'Контракт по умолчанию',
   payment_terms: 'Условия оплаты',
   delivery_terms: 'Условия доставки',

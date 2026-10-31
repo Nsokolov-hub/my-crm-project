@@ -7,7 +7,42 @@ import { useApi, useCommand, useDebounced, useDirtyProtection } from '../lib/hoo
 import type { Entity, Field, Page } from '../lib/types';
 import { Button, ErrorBox, Modal } from './ui';
 import { CounterpartyDetailsEditor } from './CounterpartyDetailsEditor';
+import { WeekPicker } from './WeekPicker';
 import '../styles/forms-v2.scss';
+/**
+ * Business remark of 31 October 2026: phone numbers with 10–15 digits and their city or country code; several
+ * numbers separated by «,» or «;», an extension as «доб. 12». The same rule as the API's.
+ */
+// Digits of a whole international number where a country has one length (as in the API, longest codes first).
+const PHONE_LENGTHS: Record<string, number> = {
+  '375': 12,
+  '374': 11,
+  '373': 11,
+  '380': 12,
+  '992': 12,
+  '993': 11,
+  '994': 12,
+  '995': 12,
+  '996': 12,
+  '998': 12,
+  '7': 11,
+  '1': 11,
+};
+export function phoneError(value: string): string | undefined {
+  const message =
+    'Укажите телефон с кодом города или страны: 10–15 цифр, например +7 495 123-45-67. Добавочный — «доб. 123», несколько номеров — через запятую';
+  for (const part of value.split(/[,;]/)) {
+    const number = part.trim().replace(/\s*(?:доб\.?|вн\.?|ext\.?|x|#)\s*\d{1,6}\s*$/i, '');
+    if (!number || !/^\+?[\d\s().-]+$/.test(number)) return message;
+    const digits = number.replace(/\D/g, '');
+    if (digits.length < 10 || digits.length > 15 || new Set(digits).size === 1) return message;
+    const code = number.startsWith('+')
+      ? Object.keys(PHONE_LENGTHS).find((prefix) => digits.startsWith(prefix))
+      : undefined;
+    if (code && digits.length !== PHONE_LENGTHS[code]) return message;
+  }
+  return undefined;
+}
 export function validateFields(fields: Field[], values: Record<string, unknown>) {
   const errors: Record<string, string> = {};
   for (const field of fields) {
@@ -29,8 +64,17 @@ export function validateFields(fields: Field[], values: Record<string, unknown>)
         (field.max !== undefined && String(value) > String(field.max)))
     )
       errors[field.name] = 'Выберите дату в допустимом диапазоне';
-    if (field.type === 'email' && !z.email().safeParse(value).success)
-      errors[field.name] = 'Укажите корректную электронную почту';
+    if (field.type === 'email' && !z.email().safeParse(String(value).trim()).success)
+      errors[field.name] = 'Укажите корректную электронную почту, например name@company.ru';
+    if (field.type === 'tel' && typeof value === 'string' && value.trim()) {
+      const message = phoneError(value);
+      if (message) errors[field.name] = message;
+    }
+    if (
+      field.type === 'week' &&
+      (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 53)
+    )
+      errors[field.name] = 'Номер недели ISO: от 1 до 53';
     if (field.type === 'decimal' && !/^\d+(?:\.\d{1,8})?$/.test(String(value)))
       errors[field.name] = 'Введите неотрицательное число, до 8 знаков после точки';
     if (field.minLength && String(value).length < field.minLength)
@@ -209,11 +253,15 @@ function FieldControl({
   value,
   error,
   onChange,
+  values = {},
+  onChangeMany,
 }: {
   field: Field;
   value: unknown;
   error?: string;
   onChange: (value: unknown) => void;
+  values?: Record<string, unknown>;
+  onChangeMany?: (patch: Record<string, unknown>) => void;
 }) {
   const source = useApi<Page>(
     field.source && field.type !== 'select'
@@ -255,6 +303,23 @@ function FieldControl({
         />
       ) : field.type === 'counterparty-details' ? (
         <CounterpartyDetailsEditor kind={field.placeholder} value={value} onChange={onChange} />
+      ) : field.type === 'week' ? (
+        <WeekPicker
+          id={common.id}
+          week={value}
+          year={field.yearField ? values[field.yearField] : undefined}
+          invalid={Boolean(error)}
+          describedBy={common['aria-describedby']}
+          onWeek={(next) => onChange(next)}
+          onPick={(week, year) =>
+            onChangeMany
+              ? onChangeMany({
+                  [field.name]: week,
+                  ...(field.yearField ? { [field.yearField]: year } : {}),
+                })
+              : onChange(week)
+          }
+        />
       ) : field.type === 'select' && field.source ? (
         <DirectorySelect field={field} value={value} error={error} onChange={onChange} />
       ) : field.type === 'select' || field.type === 'multiselect' ? (
@@ -301,10 +366,12 @@ function FieldControl({
           type={field.type === 'decimal' ? 'text' : field.type || 'text'}
           min={field.min}
           max={field.max}
-          inputMode={field.type === 'decimal' ? 'decimal' : undefined}
+          inputMode={
+            field.type === 'decimal' ? 'decimal' : field.type === 'tel' ? 'tel' : undefined
+          }
           autoComplete={field.type === 'password' ? 'new-password' : undefined}
+          placeholder={field.placeholder ?? (field.type === 'tel' ? '+7 495 123-45-67' : undefined)}
           value={String(value ?? '')}
-          placeholder={field.placeholder}
           onChange={(e) =>
             onChange(field.type === 'decimal' ? e.target.value.replace(',', '.') : e.target.value)
           }
@@ -401,7 +468,7 @@ export function RecordForm({
       body[field.name] =
         field.type === 'json' && typeof value === 'string'
           ? JSON.parse(value)
-          : field.type === 'number'
+          : field.type === 'number' || field.type === 'week'
             ? Number(value)
             : field.type === 'datetime-local' && value
               ? (() => {
@@ -460,6 +527,20 @@ export function RecordForm({
                 }
                 value={values[field.name]}
                 error={errors[field.name]}
+                values={values}
+                onChangeMany={(patch) => {
+                  setValues((v) => {
+                    let next = { ...v, ...patch };
+                    for (const name of Object.keys(patch))
+                      next = deriveValues ? deriveValues(next, name) : next;
+                    return next;
+                  });
+                  setDirty(true);
+                  setErrors((e) => ({
+                    ...e,
+                    ...Object.fromEntries(Object.keys(patch).map((k) => [k, ''])),
+                  }));
+                }}
                 onChange={(value) => {
                   setValues((v) => {
                     const next = { ...v, [field.name]: value };

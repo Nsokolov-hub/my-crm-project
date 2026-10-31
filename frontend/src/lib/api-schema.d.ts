@@ -38,6 +38,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/preferences/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Preference */
+        get: operations["get_preference_api_v1_me_preferences__key__get"];
+        /** Save Preference */
+        put: operations["save_preference_api_v1_me_preferences__key__put"];
+        post?: never;
+        /** Delete Preference */
+        delete: operations["delete_preference_api_v1_me_preferences__key__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/logout": {
         parameters: {
             query?: never;
@@ -113,7 +132,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Directory */
+        /**
+         * Directory
+         * @description Active employees; `permission` keeps those holding it (e.g. leaders: approvals.decide).
+         */
         get: operations["directory_api_v1_users_get"];
         put?: never;
         post?: never;
@@ -896,7 +918,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Requests */
+        /**
+         * Requests
+         * @description Requests visible to the user.
+         *
+         *     Business remark of 31 October 2026: the date and time of the latest proposal of each request, a filter by it
+         *     (`proposal_from`/`proposal_to`, days in the company's time zone, both included) and sorting by it
+         *     (`sort=last_proposal_at`), so the proposals issued lately can be checked one by one.
+         */
         get: operations["requests_api_v1_requests_get"];
         put?: never;
         /** Create Request */
@@ -1972,6 +2001,29 @@ export interface paths {
          *     on each of them, and profitability the profit right.
          */
         get: operations["wave_board_api_v1_waves_board_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/waves/positions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Wave Positions
+         * @description Positions of the waves in use, newest calculation first.
+         *
+         *     Rows need the request to be readable; amounts also the purchase and calculation rights on it, and
+         *     profitability the profit right.
+         */
+        get: operations["wave_positions_api_v1_waves_positions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4860,6 +4912,13 @@ export interface components {
             /** Quantity */
             quantity: number | string;
         };
+        /** PreferenceInput */
+        PreferenceInput: {
+            /** Value */
+            value: {
+                [key: string]: string | boolean | null;
+            };
+        };
         /** ProductGroupInput */
         ProductGroupInput: {
             /** Name */
@@ -6226,6 +6285,166 @@ export interface operations {
             };
         };
     };
+    get_preference_api_v1_me_preferences__key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    save_preference_api_v1_me_preferences__key__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreferenceInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    delete_preference_api_v1_me_preferences__key__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     logout_api_v1_auth_logout_post: {
         parameters: {
             query?: never;
@@ -6436,7 +6655,9 @@ export interface operations {
     };
     directory_api_v1_users_get: {
         parameters: {
-            query?: never;
+            query?: {
+                permission?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -9910,6 +10131,9 @@ export interface operations {
                 stage?: string | null;
                 client_id?: string | null;
                 owner_id?: string | null;
+                proposal_from?: string | null;
+                proposal_to?: string | null;
+                with_proposal?: boolean;
                 page?: number;
                 page_size?: number;
                 sort?: string;
@@ -13854,6 +14078,58 @@ export interface operations {
     wave_board_api_v1_waves_board_get: {
         parameters: {
             query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    wave_positions_api_v1_waves_positions_get: {
+        parameters: {
+            query?: {
+                wave_id?: string | null;
+                status?: string | null;
+                q?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;

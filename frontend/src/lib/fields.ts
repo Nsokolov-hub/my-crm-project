@@ -24,7 +24,7 @@ export const clientFields: Field[] = [
     wide: true,
     help: 'КП и счета — с НДС 0 % и надписью о Приложении № 18 к Договору о ЕАЭС; расчёт с вычетом НДС недоступен.',
   },
-  { name: 'phone', label: 'Телефон' },
+  { name: 'phone', label: 'Телефон', type: 'tel' },
   { name: 'email', label: 'Электронная почта', type: 'email' },
   { name: 'owner_id', label: 'Ответственный', type: 'select', source: '/counterparty-owners' },
   {
@@ -41,7 +41,7 @@ export const contactFields: Field[] = [
   { name: 'position', label: 'Должность' },
   { name: 'department', label: 'Отдел' },
   { name: 'purchase_area', label: 'Направление закупок', wide: true },
-  { name: 'phone', label: 'Телефон' },
+  { name: 'phone', label: 'Телефон', type: 'tel' },
   { name: 'email', label: 'Электронная почта', type: 'email' },
   { name: 'comment', label: 'Комментарий', type: 'textarea' },
 ];

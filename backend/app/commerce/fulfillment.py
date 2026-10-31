@@ -17,7 +17,7 @@ from app.core.security import (
     request_predicate,
     require_permission,
 )
-from app.core.service import advisory, audit, check_version, idem, lock, notify, serialize
+from app.core.service import advisory, audit, check_version, idem, lock, notify, prefetch, serialize
 from app.crm.models import Counterparty, Nomenclature, ProductGroup, QuoteItem, RequestItem, Task
 from app.crm.models import Request as CRMRequest
 
@@ -122,6 +122,40 @@ def allocation_view(db, allocation: WaveAllocation) -> dict:
             ).all()
         ],
     }
+
+
+def allocation_positions(db, allocations: list[WaveAllocation]) -> dict[str, dict]:
+    """What each allocation holds, for people: position, article, packaging, client and request.
+
+    Business remark of 31 October 2026: the wave listed the allocations by their execution ids.
+    """
+    from .wave_positions import product_of
+
+    executions = prefetch(db, Execution, (row.execution_id for row in allocations))
+    requests = prefetch(db, CRMRequest, (row.request_id for row in executions.values()))
+    clients = prefetch(db, Counterparty, (row.client_id for row in requests.values()))
+    items = prefetch(db, RequestItem, (row.item_id for row in executions.values()))
+    documents = prefetch(db, CommercialDocument, (row.proposal_id for row in executions.values()))
+    calculations = prefetch(db, Calculation, (row.calculation_id for row in documents.values()))
+    result = {}
+    for allocation in allocations:
+        execution = executions.get(allocation.execution_id)
+        if not execution:
+            continue
+        document = documents.get(execution.proposal_id)
+        calculation = calculations.get(document.calculation_id) if document else None
+        line = next((row for row in (calculation.snapshot.get("lines", []) if calculation else [])
+                     if row.get("line_id") == execution.line_id), None)
+        request = requests.get(execution.request_id)
+        client = clients.get(request.client_id) if request else None
+        product = product_of(line, items.get(execution.item_id), str(execution.snapshot.get("description") or ""))
+        result[allocation.id] = {
+            "position": product["name"], "article": product["article"], "packaging": product["packaging"],
+            "manufacturer": product["manufacturer"], "request_id": execution.request_id,
+            "request_number": request.number if request else None,
+            "client_name": client.name if client else None, "unit": execution.unit,
+        }
+    return result
 
 
 def execution_view(db, execution: Execution) -> dict:
@@ -429,12 +463,14 @@ def list_executions(request_id: str, db: DB, user: Actor):
 @router.get("/requests/{request_id}/approvals")
 def list_approvals(request_id: str, db: DB, user: Actor):
     check_request(db, user, request_id)
+    rows = db.scalars(
+        select(Approval).where(Approval.request_id == request_id).order_by(Approval.created_at.desc())
+    ).all()
+    people = prefetch(db, User, (row.reviewer_id for row in rows))
     return {
         "items": [
-            serialize(row)
-            for row in db.scalars(
-                select(Approval).where(Approval.request_id == request_id).order_by(Approval.created_at.desc())
-            ).all()
+            {**serialize(row), "reviewer_name": people[row.reviewer_id].name if row.reviewer_id in people else None}
+            for row in rows
         ]
     }
 
@@ -793,9 +829,10 @@ def wave_view(db, user, wave: Wave) -> dict:
         ]
     plan = db.get(Wave, wave.plan_id) if wave.plan_id else None
     value["order_lines"] = wave_order_lines(db, wave)
+    positions = allocation_positions(db, list(allocations))
     return {**value, "supplier_name": supplier.name if supplier else None,
             "plan_number": plan.number if plan else None,
-            "allocations": [allocation_view(db, row) for row in allocations]}
+            "allocations": [{**allocation_view(db, row), **positions.get(row.id, {})} for row in allocations]}
 
 
 @router.get("/waves")

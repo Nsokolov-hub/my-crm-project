@@ -8,12 +8,12 @@ from app.core.service import serialize
 from app.crm.models import Counterparty
 from app.crm.models import Request as CRMRequest
 
-from . import documents, financial, fulfillment, payments, procurement, wave_board
+from . import documents, financial, fulfillment, payments, procurement, wave_board, wave_positions
 from .models import Approval, CommercialDocument, Execution, Payment
 
 router = APIRouter()
-# The board comes before fulfillment, whose /waves/{wave_id} would otherwise take /waves/board.
-for domain in (procurement, financial, documents, payments, wave_board, fulfillment):
+# The board and the positions come before fulfillment, whose /waves/{wave_id} would otherwise take them.
+for domain in (procurement, financial, documents, payments, wave_board, wave_positions, fulfillment):
     router.include_router(domain.router)
 
 

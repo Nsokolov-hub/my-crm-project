@@ -146,3 +146,161 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Business remark of 31 October 2026: ISO week fields with a calendar of the production calendar. */
+.week-picker {
+  position: relative;
+  min-width: 0;
+}
+
+.week-picker-input {
+  display: flex;
+  gap: 6px;
+}
+
+.week-picker-input > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.week-picker-toggle {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  border: 1px solid #dedfe8;
+  border-radius: 9px;
+  background: #fff;
+  color: #7960d6;
+}
+
+.week-picker-toggle:hover,
+.week-picker-toggle[aria-expanded='true'] {
+  border-color: #7960d6;
+  background: #f3f0ff;
+}
+
+.week-picker-summary {
+  display: block;
+  margin-top: 4px;
+  color: #6b6f80;
+}
+
+.week-picker-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  padding: 10px;
+  border: 1px solid #dedfe8;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgb(31 26 53 / 16%);
+}
+
+.week-picker-popover header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  text-transform: capitalize;
+}
+
+.week-picker-popover header button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.week-picker-popover header button:hover {
+  background: #f3f0ff;
+}
+
+.week-picker-popover table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.week-picker-popover th {
+  padding: 2px 0;
+  color: #6b6f80;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.week-picker-popover tbody th button {
+  width: 100%;
+  padding: 5px 0;
+  border: 0;
+  border-radius: 6px;
+  background: #f1f2f6;
+  color: #4a4f63;
+  font-weight: 650;
+}
+
+.week-picker-popover td button {
+  width: 100%;
+  padding: 5px 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #1f1a35;
+}
+
+.week-picker-popover tbody tr:hover td button,
+.week-picker-popover tbody tr:hover th button {
+  background: #f3f0ff;
+}
+
+.week-picker-popover tbody tr.selected td button,
+.week-picker-popover tbody tr.selected th button {
+  background: #7960d6;
+  color: #fff;
+}
+
+.week-picker-popover .day-weekend {
+  color: #c0392b;
+}
+
+.week-picker-popover .day-holiday {
+  color: #c0392b;
+  font-weight: 750;
+  text-decoration: underline;
+}
+
+.week-picker-popover .day-short {
+  color: #b7791f;
+}
+
+.week-picker-popover td button.outside {
+  opacity: 0.45;
+}
+
+.week-picker-popover td button.today {
+  box-shadow: inset 0 0 0 1px #7960d6;
+}
+
+.week-picker-popover footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 8px;
+  color: #6b6f80;
+  font-size: 12px;
+}
+
+.week-picker-popover .legend::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: currentcolor;
+}
