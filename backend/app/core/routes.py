@@ -203,14 +203,15 @@ def save_preference(key: str, body: PreferenceInput, user: User = Depends(curren
         raise DomainError("PREFERENCE_TOO_LONG", "Слишком длинное значение настройки", 422, "value")
     row = db.scalar(select(UserPreference).where(UserPreference.user_id == user.id,
                                                  UserPreference.key == preference_key(key)))
+    now = utcnow()
     if row is None:
-        row = UserPreference(user_id=user.id, key=key, value=body.value, updated_at=utcnow())
+        row = UserPreference(user_id=user.id, key=key, value=body.value, updated_at=now)
         db.add(row)
     else:
-        row.value, row.updated_at = body.value, utcnow()
+        row.value, row.updated_at = body.value, now
         row.version += 1
     db.flush()
-    return {"key": key, "value": row.value, "updated_at": row.updated_at.isoformat()}
+    return {"key": key, "value": row.value, "updated_at": now.isoformat()}
 
 
 @router.delete("/me/preferences/{key}")
@@ -322,7 +323,7 @@ def directory(
             raise DomainError("PERMISSION_INVALID", "Неизвестное право", 422, "permission")
         rows = users_with_permission(db, permission)
     else:
-        rows = db.scalars(select(User).where(User.active.is_(True)).order_by(User.name)).all()
+        rows = list(db.scalars(select(User).where(User.active.is_(True)).order_by(User.name)))
     return {
         "items": [{"id": r.id, "name": r.name} for r in rows],
         "total": len(rows),
