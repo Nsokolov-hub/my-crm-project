@@ -65,7 +65,7 @@ defusedxml==0.7.1
     #   -c requirements.lock
     #   reaktiv-crm-backend (pyproject.toml)
     #   py-serializable
-dnspython==2.8.0
+dnspython==2.9.1
     # via
     #   -c requirements.lock
     #   email-validator
@@ -129,7 +129,7 @@ markupsafe==3.0.3
     #   mako
 mdurl==0.1.2
     # via markdown-it-py
-msgpack==1.2.2
+msgpack==1.2.4
     # via cachecontrol
 mypy==1.20.2
     # via reaktiv-crm-backend (pyproject.toml:dev)

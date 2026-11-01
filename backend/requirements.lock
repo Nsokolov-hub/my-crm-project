@@ -31,7 +31,7 @@ cryptography==50.0.1
     # via reaktiv-crm-backend (pyproject.toml)
 defusedxml==0.7.1
     # via reaktiv-crm-backend (pyproject.toml)
-dnspython==2.8.0
+dnspython==2.9.1
     # via email-validator
 email-validator==2.3.0
     # via reaktiv-crm-backend (pyproject.toml)
