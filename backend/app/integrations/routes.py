@@ -2,7 +2,15 @@
 
 from fastapi import APIRouter
 
-from . import site_conversion, site_events, site_manufacturers, site_reports, site_requests, site_subscribers
+from . import (
+    site_analytics,
+    site_conversion,
+    site_events,
+    site_manufacturers,
+    site_reports,
+    site_requests,
+    site_subscribers,
+)
 
 router = APIRouter()
 # Fixed paths (/site-requests/report, /site-requests/export.xlsx) before /site-requests/{id}.
@@ -11,4 +19,5 @@ router.include_router(site_requests.router)
 router.include_router(site_conversion.router)
 router.include_router(site_manufacturers.router)
 router.include_router(site_subscribers.router)
+router.include_router(site_analytics.router)
 _ = site_events

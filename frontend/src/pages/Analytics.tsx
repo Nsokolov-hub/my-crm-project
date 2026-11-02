@@ -4,6 +4,7 @@ import {
   BarChart3,
   Download,
   Factory,
+  Globe,
   Mailbox,
   Tags,
   Users,
@@ -31,6 +32,7 @@ import { SalesManagerReport } from './Business';
 import type { Entity } from '../lib/types';
 import type { DashboardData } from './Dashboard';
 import { ManufacturerReport } from './Manufacturers';
+import { SiteAnalyticsReport } from './SiteAnalytics';
 import { SupplierPricesReport } from './SupplierPrices';
 import { SupplierReport } from './SupplierResponses';
 
@@ -44,6 +46,8 @@ type Report = {
   permission: string;
   charts: boolean;
   exportable?: boolean;
+  // The report picks its own period (the site's 7, 30 or 90 days): no dates above it.
+  ownPeriod?: boolean;
   defaultPreset: string;
   render: (props: ReportProps) => React.ReactNode;
 };
@@ -270,6 +274,18 @@ const REPORTS: Report[] = [
     render: ({ from, to }) => <SupplierPricesReport from={from} to={to} />,
   },
   {
+    id: 'site',
+    title: 'Сайт: Метрика и Вебмастер',
+    description:
+      'Посещаемость, источники и цели из Яндекс Метрики; страницы в поиске, запросы и проблемы из Вебмастера.',
+    icon: Globe,
+    permission: 'analytics.reports',
+    charts: true,
+    ownPeriod: true,
+    defaultPreset: 'month',
+    render: ({ charts }) => <SiteAnalyticsReport charts={charts} />,
+  },
+  {
     id: 'receivables',
     title: 'Взаиморасчёты по валютам',
     description: 'Выставлено, распределено и остаток к оплате в каждой валюте.',
@@ -382,41 +398,45 @@ function ReportView({ report }: { report: Report }) {
         }
       />
       <div className="report-settings" role="group" aria-label="Настройки отчёта">
-        <label>
-          Период
-          <select
-            value={settings.preset}
-            onChange={(event) => {
-              const range = PRESETS.find((item) => item.id === event.target.value)?.range?.();
-              change({
-                preset: event.target.value,
-                ...(range ? { from: range[0], to: range[1] } : {}),
-              });
-            }}
-          >
-            {PRESETS.map((preset) => (
-              <option key={preset.id} value={preset.id}>
-                {preset.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          С даты
-          <input
-            type="date"
-            value={settings.from}
-            onChange={(event) => change({ preset: 'custom', from: event.target.value })}
-          />
-        </label>
-        <label>
-          По дату
-          <input
-            type="date"
-            value={settings.to}
-            onChange={(event) => change({ preset: 'custom', to: event.target.value })}
-          />
-        </label>
+        {!report.ownPeriod && (
+          <>
+            <label>
+              Период
+              <select
+                value={settings.preset}
+                onChange={(event) => {
+                  const range = PRESETS.find((item) => item.id === event.target.value)?.range?.();
+                  change({
+                    preset: event.target.value,
+                    ...(range ? { from: range[0], to: range[1] } : {}),
+                  });
+                }}
+              >
+                {PRESETS.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              С даты
+              <input
+                type="date"
+                value={settings.from}
+                onChange={(event) => change({ preset: 'custom', from: event.target.value })}
+              />
+            </label>
+            <label>
+              По дату
+              <input
+                type="date"
+                value={settings.to}
+                onChange={(event) => change({ preset: 'custom', to: event.target.value })}
+              />
+            </label>
+          </>
+        )}
         {report.charts && (
           <label className="report-toggle">
             <input
@@ -427,7 +447,7 @@ function ReportView({ report }: { report: Report }) {
             Показывать графики
           </label>
         )}
-        <span className="muted">Москва, UTC+3 · Без тестовых данных</span>
+        {!report.ownPeriod && <span className="muted">Москва, UTC+3 · Без тестовых данных</span>}
       </div>
       <ErrorBox error={error} />
       {settings.from && settings.to ? (

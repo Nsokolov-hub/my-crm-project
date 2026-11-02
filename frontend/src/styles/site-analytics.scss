@@ -1,0 +1,140 @@
+// Отчёт «Сайт: Метрика и Вебмастер» (pages/SiteAnalytics.tsx).
+$border: #e9eaf0;
+
+.site-analytics-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin: 8px 0 4px;
+
+  .segmented button {
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  > span {
+    color: #808394;
+    font-size: 12px;
+  }
+}
+
+.site-analytics-text {
+  padding: 0 23px 16px;
+  color: #2c2f3a;
+  font-size: 13px;
+  line-height: 1.6;
+
+  p {
+    margin: 0 0 10px;
+  }
+
+  ul {
+    margin: 0 0 10px;
+    padding-left: 18px;
+  }
+}
+
+.site-analytics-warning {
+  margin: 12px 0;
+  padding: 12px 16px;
+  border: 1px solid #f3dca6;
+  border-radius: 8px;
+  background: #fff6e2;
+  color: #8a5a00;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.site-analytics-token {
+  display: grid;
+  gap: 10px;
+  max-width: 620px;
+
+  label {
+    display: grid;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  input {
+    padding: 9px 11px;
+    border: 1px solid $border;
+    border-radius: 8px;
+    font-family: ui-monospace, monospace;
+  }
+
+  p {
+    font-size: 12px;
+  }
+}
+
+.site-analytics-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.site-analytics-examples {
+  margin-top: 2px;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.site-analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 17px;
+  align-items: start;
+}
+
+.line-chart {
+  margin: 4px 0 18px;
+  padding: 0 23px;
+
+  figcaption {
+    margin-bottom: 10px;
+    color: #687283;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  svg {
+    display: block;
+    width: 100%;
+    height: 150px;
+    overflow: visible;
+  }
+
+  line {
+    stroke: $border;
+    vector-effect: non-scaling-stroke;
+  }
+
+  polygon {
+    fill: #f2eef9;
+  }
+
+  polyline {
+    fill: none;
+    stroke: #7f6ae6;
+    stroke-width: 2;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+  }
+}
+
+.line-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  color: #687283;
+  font-size: 11px;
+}
+
+@media (width <= 900px) {
+  .site-analytics-grid {
+    grid-template-columns: 1fr;
+  }
+}
