@@ -50,6 +50,8 @@ type Metrika = {
 };
 type Webmaster = {
   host: string | null;
+  // false — Вебмастер ещё не загрузил данные о сайте: отчётов и добавления Sitemap пока нет.
+  loaded?: boolean;
   errors: string[];
   summary?: { inSearch: number; excluded: number; sqi: number };
   problems?: { code: string; title: string; severity: string; severityTitle: string }[];
@@ -596,13 +598,20 @@ function WebmasterView({
       <Section
         title="Файлы Sitemap"
         action={
-          admin && !ownSitemap && w.host ? (
+          admin && !ownSitemap && w.host && w.loaded !== false ? (
             <Button variant="secondary" busy={command.busy} onClick={() => void addSitemap()}>
               Добавить sitemap.xml в Вебмастер
             </Button>
           ) : undefined
         }
       >
+        {w.loaded === false && (
+          <p className="site-analytics-text muted">
+            Вебмастер ещё не загрузил данные о сайте и пока не принимает Sitemap. Яндекс находит
+            карту сайта сам через robots.txt, а когда данные загрузятся, сайт добавит её в Вебмастер
+            автоматически.
+          </p>
+        )}
         {done && <p className="site-analytics-text">{done}</p>}
         <ErrorBox error={command.error} />
         <DataTable
