@@ -643,6 +643,65 @@
         }
       }
     },
+    "/api/v1/admin/users/{entity_id}/password": {
+      "post": {
+        "tags": [
+          "Доступ и настройки"
+        ],
+        "summary": "Set User Password",
+        "description": "A new password for an employee who forgot theirs: only its hash is kept, so the old one cannot be shown.\nThe employee's sessions end, so whoever knew the old password is signed out everywhere.",
+        "operationId": "set_user_password_api_v1_admin_users__entity_id__password_post",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminPasswordInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Set User Password Api V1 Admin Users  Entity Id  Password Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/admin/roles": {
       "get": {
         "tags": [
@@ -14281,6 +14340,22 @@
           "quantity"
         ],
         "title": "AcceptanceLine"
+      },
+      "AdminPasswordInput": {
+        "properties": {
+          "new_password": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 12,
+            "title": "New Password"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "new_password"
+        ],
+        "title": "AdminPasswordInput"
       },
       "AllocateWaveIn": {
         "properties": {

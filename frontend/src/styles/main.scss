@@ -1535,6 +1535,11 @@ tr.clickable-row {
   background: #fcfbfe;
 }
 
+// A secondary action kept apart from Cancel/Save, e.g. «Задать новый пароль» of an employee.
+.modal-footer-start {
+  margin-right: auto;
+}
+
 .info-note {
   background: #f2eef9;
   border: 1px solid #e9e2f4;

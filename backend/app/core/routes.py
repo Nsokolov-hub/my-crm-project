@@ -460,6 +460,29 @@ def edit_user(
     return user_view(db, row)
 
 
+class AdminPasswordInput(Input):
+    new_password: str = Field(min_length=12, max_length=200)
+
+
+@router.post("/admin/users/{entity_id}/password")
+def set_user_password(
+    entity_id: str,
+    body: AdminPasswordInput,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db, scope="function"),
+) -> dict[str, bool]:
+    """A new password for an employee who forgot theirs: only its hash is kept, so the old one cannot be shown.
+    The employee's sessions end, so whoever knew the old password is signed out everywhere."""
+    require_permission(db, user, "admin.users")
+    row = lock(db, User, entity_id)
+    if row.id == user.id:
+        raise DomainError("SELF_PASSWORD", "Свой пароль меняйте в разделе «Мой аккаунт»", 422)
+    row.password_hash = password_hasher.hash(body.new_password)
+    db.execute(update(AuthSession).where(AuthSession.user_id == row.id).values(revoked=True))
+    audit(db, user, "user", row.id, "password_reset")
+    return {"ok": True}
+
+
 @router.get("/admin/roles")
 def roles(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, "admin.users")

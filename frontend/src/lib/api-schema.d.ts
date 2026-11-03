@@ -197,6 +197,27 @@ export interface paths {
         patch: operations["edit_user_api_v1_admin_users__entity_id__patch"];
         trace?: never;
     };
+    "/api/v1/admin/users/{entity_id}/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set User Password
+         * @description A new password for an employee who forgot theirs: only its hash is kept, so the old one cannot be shown.
+         *     The employee's sessions end, so whoever knew the old password is signed out everywhere.
+         */
+        post: operations["set_user_password_api_v1_admin_users__entity_id__password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/roles": {
         parameters: {
             query?: never;
@@ -3693,6 +3714,11 @@ export interface components {
              */
             analogue_reason: string;
         };
+        /** AdminPasswordInput */
+        AdminPasswordInput: {
+            /** New Password */
+            new_password: string;
+        };
         /** AllocateWaveIn */
         AllocateWaveIn: {
             /** Idempotency Key */
@@ -7041,6 +7067,62 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserView"];
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    set_user_password_api_v1_admin_users__entity_id__password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminPasswordInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
                 };
             };
             /** @description Сеанс отсутствует или отозван */

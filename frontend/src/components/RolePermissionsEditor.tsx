@@ -464,6 +464,7 @@ export function UserAccessEditor({
   const [reassignTo, setReassignTo] = useState('');
   const [reason, setReason] = useState('');
   const [dirty, setDirty] = useState(false);
+  const [passwordMode, setPasswordMode] = useState(false);
   const command = useCommand();
   const roles = useApi<Page<Role>>('/admin/roles');
   const permissions = useApi<{ items: Permission[] }>('/admin/permissions');
@@ -497,6 +498,8 @@ export function UserAccessEditor({
       // useCommand exposes the server error under the form.
     }
   }
+  if (passwordMode)
+    return <UserPasswordEditor employee={employee} onClose={() => setPasswordMode(false)} />;
   return (
     <Modal title={`Доступ сотрудника: ${employee.name}`} onClose={close} wide>
       <form onSubmit={(event) => void submit(event)}>
@@ -627,12 +630,111 @@ export function UserAccessEditor({
           <ErrorBox error={command.error} />
         </div>
         <div className="modal-footer">
+          <Button
+            type="button"
+            variant="secondary"
+            className="modal-footer-start"
+            onClick={() => setPasswordMode(true)}
+            disabled={command.busy}
+          >
+            Задать новый пароль
+          </Button>
           <Button type="button" variant="secondary" onClick={close}>
             Отмена
           </Button>
           <Button type="submit" busy={command.busy} disabled={!roles.data || !permissions.data}>
             Сохранить доступ
           </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/** A readable random password: no look-alike letters, 16 characters (the CRM asks for at least 12). */
+function generatePassword(length = 16) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  return Array.from(
+    crypto.getRandomValues(new Uint32Array(length)),
+    (value) => alphabet[value % alphabet.length],
+  ).join('');
+}
+
+/**
+ * A new password for an employee who forgot theirs. The CRM keeps only a hash, so the old password cannot be shown;
+ * the administrator sets a new one and hands it over, and the employee's open sessions end.
+ */
+function UserPasswordEditor({ employee, onClose }: { employee: Employee; onClose: () => void }) {
+  const [password, setPassword] = useState('');
+  const [saved, setSaved] = useState(false);
+  const command = useCommand();
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    try {
+      await command.run(`/admin/users/${employee.id}/password`, { new_password: password });
+      setSaved(true);
+    } catch {
+      // useCommand exposes the server error under the form.
+    }
+  }
+  return (
+    <Modal title={`Новый пароль: ${employee.name}`} onClose={() => !command.busy && onClose()}>
+      <form onSubmit={(event) => void submit(event)}>
+        <div className="form-body">
+          <p>
+            Старый пароль посмотреть нельзя: CRM хранит только его зашифрованный отпечаток. Задайте
+            новый и передайте его сотруднику лично или в мессенджере. После входа сотрудник сможет
+            сменить его в разделе «Мой аккаунт».
+          </p>
+          <label className="field">
+            <span>Новый пароль *</span>
+            <input
+              aria-label="Новый пароль"
+              value={password}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                setSaved(false);
+              }}
+              minLength={12}
+              maxLength={200}
+              autoComplete="new-password"
+              spellCheck={false}
+              readOnly={saved}
+              required
+            />
+          </label>
+          {!saved && (
+            <div className="inline-actions">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setPassword(generatePassword())}
+              >
+                Сгенерировать
+              </Button>
+            </div>
+          )}
+          {saved ? (
+            <div className="info-note" role="status">
+              Пароль сохранён. Все открытые сеансы {employee.email} завершены: войти можно только с
+              новым паролем.
+            </div>
+          ) : (
+            <p className="muted">
+              Не меньше 12 символов. Все открытые сеансы сотрудника завершатся.
+            </p>
+          )}
+          <ErrorBox error={command.error} />
+        </div>
+        <div className="modal-footer">
+          <Button type="button" variant="secondary" onClick={onClose} disabled={command.busy}>
+            {saved ? 'Готово' : 'Назад'}
+          </Button>
+          {!saved && (
+            <Button type="submit" busy={command.busy}>
+              Сохранить пароль
+            </Button>
+          )}
         </div>
       </form>
     </Modal>

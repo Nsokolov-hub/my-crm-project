@@ -213,7 +213,14 @@ export function Settings() {
               label: 'Доступ',
               render: (r) => <Badge value={r.active ? 'Активен' : 'Заблокирован'} />,
             },
-            { key: 'roles', label: 'Назначенные роли' },
+            {
+              key: 'roles',
+              label: 'Назначенные роли',
+              render: (r) =>
+                ((r.roles as { name: string }[] | undefined) || [])
+                  .map((role) => role.name)
+                  .join(', ') || '—',
+            },
           ]}
         />
       )}
