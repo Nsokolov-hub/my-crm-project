@@ -258,6 +258,9 @@ class QuoteSheet(Entity):
     supplier_id: Mapped[str] = mapped_column(ForeignKey('counterparties.id'), index=True)
     supplier_request_id: Mapped[str | None] = mapped_column(ForeignKey('supplier_requests.id'))
     author_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    # Business remark of 3 November 2026: the supplier ships this quote by extra freight; the amount recommended
+    # for the calculation, its currency and a comment (see migration b5131030).
+    extra_freight: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
 
 class QuoteItem(Entity):

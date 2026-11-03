@@ -30,7 +30,7 @@ from app.crm.models import (
 )
 
 from .calculator import calculate, dec, digest, example_profile, profitability_metrics, validate_profile
-from .itemized import calculate_itemized, itemized_profile
+from .itemized import calculate_itemized, fixed_customs_fees, itemized_profile
 from .logistics import normalize_logistics_expenses
 from .models import (
     Calculation,
@@ -130,7 +130,7 @@ def filter_calculation_snapshot(db, user, request_id: str | None, snapshot: dict
     if can_calculations and all_finances:
         return visible_wave_parts(db, snapshot, access)
 
-    fields = SNAPSHOT_FIELDS | {"profile"} if can_calculations else SNAPSHOT_FIELDS
+    fields = SNAPSHOT_FIELDS | {"profile", "customs_fee_adjustment"} if can_calculations else SNAPSHOT_FIELDS
     if can_reward:
         fields |= {"internal_adjustment"}
     snapshot = {key: value for key, value in snapshot.items() if key in fields}
@@ -834,6 +834,9 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
                 # share its costs with its orders and with the rest of its plan, as the wave counts itself.
                 volume_targets, extra_volume, planned_volume = calculation_planned_volume(db, wave, data, selections)
                 counted = [*selections, *peer_selections]
+                if planned_volume:
+                    calculation_shares(selections, [*counted, *other_plan_orders(db, wave)],
+                                       {**(volume_targets or {}), **(extra_volume or {})}, planned_volume)
                 peer_selections += (planned_rest(db, wave, counted, volume_targets)
                                     if wave.kind == "work" and wave.plan_id
                                     else forecast_selections(db, wave, counted, volume_targets))
@@ -867,6 +870,9 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         validate_unknown_wave_basis(profile.definition, effective_expenses, missing_basis)
         effective_profile = deepcopy(profile.definition)
         effective_profile["vat_deduction_mode"] = data.vat_deductible
+        customs_fee_adjustment = calculation_customs_fees(data, selections, profile.definition)
+        if customs_fee_adjustment:
+            effective_profile["customs_fee_charged"] = customs_fee_adjustment.pop("charged")
         if belarus:
             effective_profile.update(sale_vat_rate="0", tax_category="НДС 0%")
         for selection in selections:
@@ -902,6 +908,8 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
         else:
             snapshot['wave_distribution']['digest'] = digest({'selections': selections, 'expenses': effective_expenses, 'profile': effective_profile})
         snapshot["vat_deductible"] = data.vat_deductible
+        if customs_fee_adjustment:
+            snapshot["customs_fee_adjustment"] = customs_fee_adjustment
         snapshot["sale_vat"] = {"rate": "0", "reason": "belarus"} if belarus else None
         # The person checks and enters the total delivery term; quotes no longer fill it in.
         snapshot["delivery_days"] = data.delivery_days
@@ -1233,12 +1241,80 @@ def planned_rest(db, wave: Wave, selections: list[dict], targets: dict | None = 
     plan = wave if wave.kind == "plan" else db.get(Wave, wave.plan_id) if wave.plan_id else None
     if not plan or plan.archived:
         return []
-    ordered = list(selections)
+    return forecast_selections(db, plan, [*selections, *other_plan_orders(db, wave)], targets)
+
+
+def other_plan_orders(db, wave: Wave) -> list[dict]:
+    """Orders of the wave's plan in its other waves still taking orders: they fill the same planned volume."""
+    plan = db.get(Wave, wave.plan_id) if wave.kind == "work" and wave.plan_id else None
+    if wave.status not in OPEN_WAVES or not plan or plan.archived:
+        return []
+    ordered = []
     for other in [plan.id, *db.scalars(select(Wave.id).where(
             Wave.plan_id == plan.id, Wave.archived.is_(False), Wave.status.in_(OPEN_WAVES)))]:
         if other != wave.id:
             ordered += wave_selections(db, other)[0]
-    return forecast_selections(db, plan, ordered, targets)
+    return ordered
+
+
+def calculation_shares(selections: list[dict], ordered: list[dict], targets: dict, record: dict) -> None:
+    """Business remark of 3 November 2026: «клиент просит КП на 5 шт., но возьмёт только 3».
+
+    The planned volume entered for a group is the number of its pieces the wave's costs are divided by. Below the
+    pieces of this calculation and of the orders already in the wave, the calculation's own pieces of the group
+    count only with what is left of it: each of them gets the `_share` of a piece that ships, and the costs of a
+    piece are those of a supply of that many pieces. The record of the snapshot keeps both numbers."""
+    for group_id, target in targets.items():
+        own = [row for row in selections if row["product_group"]["id"] == group_id
+               and row.get("calculation_type", "IMPORT") == "IMPORT"]
+        own_quantity = sum((dec(row["quote_item"]["quantity"]) for row in own), dec("0"))
+        if not own_quantity:
+            continue
+        own_ids = {row["quote_item"]["id"] for row in own}
+        others = sum((dec(row["quote_item"]["quantity"]) for row in ordered
+                      if row["product_group"]["id"] == group_id and row["quote_item"]["id"] not in own_ids
+                      and not row.get("_forecast")), dec("0"))
+        # 0 or no more than the orders already there keeps the remark of 28 October: «плана больше нет», the
+        # pieces of this calculation carry the costs with those orders.
+        if target >= own_quantity + others or target <= others:
+            continue
+        counted = target - others
+        for row in own:
+            row["_share"] = str(counted / own_quantity)
+        for entry in record["rows"]:
+            if entry["product_group_id"] == group_id:
+                entry.update(offered_quantity=str(own_quantity), counted_quantity=str(counted))
+
+
+def calculation_customs_fees(data: CalculationIn, selections: list[dict], profile: dict) -> dict | None:
+    """Business remark of 3 November 2026: the fixed customs fee of a group (73 800 ₽ for columns) changed for
+    this calculation, e.g. «клиент оплатил всю пошлину, новым клиентам колонки считаем без неё — поедет одной
+    волной». Kept only with a comment; the profile and the wave do not change."""
+    if not data.customs_fees:
+        return None
+    fees = fixed_customs_fees(profile)
+    groups = {row["product_group"]["id"]: row["product_group"] for row in selections
+              if row.get("calculation_type", "IMPORT") == "IMPORT"}
+    charged, rows = {}, []
+    for index, entry in enumerate(data.customs_fees):
+        group = groups.get(entry.product_group_id)
+        if not group or group["slug"] not in fees:
+            error("CUSTOMS_FEE_GROUP", "У позиций этой товарной группы в расчёте нет фиксированного таможенного сбора",
+                  field=f"customs_fees.{index}.product_group_id")
+        if any(row["product_group_id"] == group["id"] for row in rows) or group["slug"] in charged:
+            error("CUSTOMS_FEE_GROUP", "Товарная группа указана повторно", field=f"customs_fees.{index}.product_group_id")
+        if entry.amount == fees[group["slug"]]:
+            continue
+        charged[group["slug"]] = str(entry.amount)
+        rows.append({"product_group_id": group["id"], "product_group_name": group["name"],
+                     "profile_amount": str(fees[group["slug"]]), "amount": str(entry.amount)})
+    if not charged:
+        return None
+    comment = data.customs_fee_comment.strip()
+    if len(comment) < 3:
+        error("CUSTOMS_FEE_COMMENT", "Таможенный сбор в расчёте меняется только с комментарием: укажите причину",
+              field="customs_fee_comment")
+    return {"comment": comment, "rows": rows, "charged": charged}
 
 
 def volume_plan(db, wave: Wave) -> Wave | None:

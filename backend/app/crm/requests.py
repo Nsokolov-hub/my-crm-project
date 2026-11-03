@@ -175,8 +175,9 @@ def requests(q: str = '', stage: str | None = None, client_id: str | None = None
         stmt = stmt.where(latest.c.last_proposal_at >= local_day_start(proposal_from))
     if proposal_to:
         stmt = stmt.where(latest.c.last_proposal_at < local_day_start(proposal_to + timedelta(days=1)))
+    client_name = select(Counterparty.name).where(Counterparty.id == Request.client_id).scalar_subquery()
     columns = {'created_at': Request.created_at, 'title': Request.title, 'number': Request.number,
-               'due_at': Request.due_at, 'last_proposal_at': latest.c.last_proposal_at}
+               'due_at': Request.due_at, 'last_proposal_at': latest.c.last_proposal_at, 'client_name': client_name}
     col = columns.get(sort, Request.created_at)
     order = col.desc() if direction == 'desc' else col.asc()
     if sort == 'last_proposal_at':
@@ -187,12 +188,47 @@ def requests(q: str = '', stage: str | None = None, client_id: str | None = None
     counts = supplier_counts(db, [item['id'] for item in result['items']])
     proposals = dict(db.execute(select(latest.c.request_id, latest.c.last_proposal_at).where(
         latest.c.request_id.in_([item['id'] for item in result['items']]))).tuples().all()) if result['items'] else {}
+    extra = list_extras(db, result['items'])
     for item in result['items']:
         item['client_name'] = clients[item['client_id']].name
+        item['client_tax_id'] = clients[item['client_id']].tax_id
         item['owner_name'] = owners[item['owner_id']].name
         moment = proposals.get(item['id'])
         item['last_proposal_at'] = as_utc(moment).isoformat() if moment else None
         item.update(counts.get(item['id'], {'quoted_suppliers': 0, 'answered_suppliers': 0, 'asked_suppliers': 0}))
+        item.update(extra.get(item['id'], {}))
+    return result
+
+
+def list_extras(db: Session, items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Columns an employee may add to the requests list (business remark of 3 November 2026): the contact,
+    the supply wave, the number of positions and the total of the latest proposal."""
+    from app.commerce.models import CommercialDocument, Wave
+
+    if not items:
+        return {}
+    ids = [item['id'] for item in items]
+    contacts = prefetch(db, Contact, (item['contact_id'] for item in items if item.get('contact_id')))
+    waves = prefetch(db, Wave, (item['wave_id'] for item in items if item.get('wave_id')))
+    positions = dict(db.execute(select(RequestItem.request_id, sa.func.count(RequestItem.id)).where(
+        RequestItem.request_id.in_(ids), RequestItem.archived.is_(False)).group_by(RequestItem.request_id)).tuples().all())
+    totals: dict[str, CommercialDocument] = {}
+    for document in db.scalars(select(CommercialDocument).where(
+            CommercialDocument.request_id.in_(ids), CommercialDocument.kind == 'proposal',
+            CommercialDocument.status != 'cancelled').order_by(CommercialDocument.created_at, CommercialDocument.id)):
+        totals[document.request_id] = document
+    result = {}
+    for item in items:
+        contact = contacts.get(item.get('contact_id') or '')
+        wave = waves.get(item.get('wave_id') or '')
+        proposal = totals.get(item['id'])
+        result[item['id']] = {
+            'contact_name': contact.name if contact else None,
+            'wave_number': wave.number if wave else None,
+            'items_count': positions.get(item['id'], 0),
+            'last_proposal_total': str(proposal.total) if proposal else None,
+            'last_proposal_currency': proposal.currency if proposal else None,
+        }
     return result
 
 

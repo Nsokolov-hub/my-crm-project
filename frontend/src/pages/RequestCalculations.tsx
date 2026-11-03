@@ -1,4 +1,4 @@
-import { Copy, Flag, Plus, Save, Trash2 } from 'lucide-react';
+import { Copy, Flag, Plus, Save, Trash2, Truck } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
@@ -30,6 +30,116 @@ import {
   type Selection,
 } from './calculations/model';
 import { calculationErrors } from './calculations/validation';
+
+type FixedFeeGroup = { id: string; slug: string; name: string; amount: string };
+/** Product groups of the calculation with a fixed customs fee in the profile (73 800 ₽ for columns). */
+function fixedFeeGroups(profile: Entity | undefined, rows: Entity[]): FixedFeeGroup[] {
+  if (!profile) return [];
+  const fees: Record<string, string> = {};
+  for (const rule of (profile.customs_rules || []) as Entity[])
+    if (rule.type === 'FIXED_GROUP')
+      fees[String(rule.product_group_slug)] = String(rule.value ?? '0');
+  for (const rule of (profile.customs_fee_overrides || []) as Entity[])
+    fees[String(rule.product_group_slug)] = String(rule.amount ?? '0');
+  const result: FixedFeeGroup[] = [];
+  for (const row of rows) {
+    const slug = String(row.product_group_slug || '');
+    const id = String(row.product_group_id || '');
+    if (!slug || !id || !(slug in fees) || result.some((group) => group.id === id)) continue;
+    result.push({ id, slug, name: String(row.product_group_name || slug), amount: fees[slug] });
+  }
+  return result;
+}
+type FreightNote = {
+  key: string;
+  quote: string;
+  supplier: string;
+  freight: Entity;
+  positions: number;
+};
+function freightExpenseName(note: FreightNote) {
+  return `Экстрафрахт — ${note.supplier} (${note.quote})`.slice(0, 120);
+}
+/**
+ * Business remark of 3 November 2026: a note at the right of the calculation, moving with it, while positions of
+ * a quote shipped by extra freight are selected. It covers nothing and blocks nothing.
+ */
+function FreightNotes({
+  notes,
+  expenses,
+  onAdd,
+}: {
+  notes: FreightNote[];
+  expenses: Expense[];
+  onAdd: (expense: Expense) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  return (
+    <aside
+      className={`calculation-side-notes${collapsed ? ' collapsed' : ''}`}
+      aria-label="Экстрафрахт"
+    >
+      <button
+        type="button"
+        className="side-note-toggle"
+        aria-expanded={!collapsed}
+        onClick={() => setCollapsed((value) => !value)}
+      >
+        <Truck size={15} /> Экстрафрахт{notes.length > 1 ? ` · ${notes.length}` : ''}
+        <span aria-hidden>{collapsed ? '‹' : '›'}</span>
+      </button>
+      {!collapsed &&
+        notes.map((note) => {
+          const amount = note.freight.amount
+            ? `${decimal(note.freight.amount)} ${String(note.freight.currency || '')}`
+            : '';
+          const name = freightExpenseName(note);
+          const added = expenses.some((expense) => expense.name === name);
+          return (
+            <div className="side-note" key={note.key}>
+              <p>
+                <strong>{note.supplier}</strong> отгрузит квоту {note.quote} экстрафрахтом. Выбрано
+                позиций: {note.positions}.
+              </p>
+              {amount && (
+                <p className="side-note-amount">
+                  Рекомендуем заложить: <b>{amount}</b>
+                </p>
+              )}
+              {Boolean(note.freight.comment) && (
+                <p className="side-note-comment">{String(note.freight.comment)}</p>
+              )}
+              {amount && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={added}
+                  onClick={() =>
+                    onAdd({
+                      name,
+                      amount: String(note.freight.amount),
+                      currency: String(note.freight.currency || 'RUB'),
+                      method: 'BY_QUANTITY',
+                      basis: 'Экстрафрахт поставщика',
+                      stage: 'INTERNATIONAL_LOGISTICS',
+                      scope: 'REQUEST',
+                      calculation_type: 'FIXED',
+                      minimum_amount: '0',
+                      minimum_currency: 'RUB',
+                      include_in_cost: true,
+                      include_in_cash: true,
+                    })
+                  }
+                >
+                  {added ? 'Добавлено в расходы' : 'Добавить в расходы сделки'}
+                </Button>
+              )}
+            </div>
+          );
+        })}
+    </aside>
+  );
+}
 
 /** Business remark of 21 October 2026: the quantity of the request position, in packings of the quote. */
 function requestedQuantity(row: Entity): string {
@@ -156,6 +266,18 @@ function CalculationEditor({
   const [plannedComment, setPlannedComment] = useState(
     String(previousInput.planned_volume_comment || ''),
   );
+  // Business remark of 3 November 2026: the fixed customs fee of a group (73 800 ₽ for columns) for this calculation.
+  const [customsFees, setCustomsFees] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      (Array.isArray(previousInput.customs_fees)
+        ? (previousInput.customs_fees as Entity[])
+        : []
+      ).map((row) => [String(row.product_group_id), plainQuantity(row.amount)]),
+    ),
+  );
+  const [customsFeeComment, setCustomsFeeComment] = useState(
+    String(previousInput.customs_fee_comment || ''),
+  );
   const tariffs = useApi<Page>('/delivery-tariffs');
   const [preview, setPreview] = useState<Entity>();
   const [showDetails, setShowDetails] = useState(false);
@@ -180,6 +302,23 @@ function CalculationEditor({
     (row, index, all) => all.findIndex((candidate) => candidate.id === row.id) === index,
   );
   const selectedRows = rows.filter((row) => selections[row.id]);
+  // Business remark of 3 November 2026: quotes the supplier ships by extra freight, among the selected positions.
+  const freightNotes = Object.values(
+    selectedRows.reduce<Record<string, FreightNote>>((notes, row) => {
+      const freight = row.extra_freight as Entity | null | undefined;
+      if (!freight) return notes;
+      const key = String(row.quote_sheet_id || row.quote_id || row.id);
+      notes[key] = notes[key] || {
+        key,
+        quote: String(row.quote_number || ''),
+        supplier: String(row.supplier_name || 'Поставщик'),
+        freight,
+        positions: 0,
+      };
+      notes[key].positions += 1;
+      return notes;
+    }, {}),
+  );
   useEffect(() => {
     setSelections((current) => {
       let changed = false;
@@ -287,6 +426,27 @@ function CalculationEditor({
   const volumeErrors = volumeShown
     ? plannedVolumeErrors(plannedRows, plannedVolume, plannedComment)
     : [];
+  // Pieces of the proposal by product group, to compare with the volume the costs are divided by.
+  const offeredByGroup = selectedRows.reduce<Record<string, number>>((result, row) => {
+    if (row.calculation_type && row.calculation_type !== 'IMPORT') return result;
+    const group = String(row.product_group_id || '');
+    result[group] = (result[group] || 0) + Number(selections[row.id]?.quantity || 0);
+    return result;
+  }, {});
+  const feeGroups = fixedFeeGroups(
+    selectedProfile?.definition as Entity | undefined,
+    selectedRows.filter((row) => !row.calculation_type || row.calculation_type === 'IMPORT'),
+  );
+  const feeValue = (group: FixedFeeGroup) => customsFees[group.id] ?? plainQuantity(group.amount);
+  const feesChanged = feeGroups.some((group) => Number(feeValue(group)) !== Number(group.amount));
+  const feeErrors = [
+    ...feeGroups
+      .filter((group) => !/^\d+([.,]\d{1,2})?$/.test(feeValue(group).trim()))
+      .map((group) => `Таможенный сбор «${group.name}»: укажите сумму в рублях, 0 или больше.`),
+    ...(feesChanged && customsFeeComment.trim().length < 3
+      ? ['Таможенный сбор изменён: укажите комментарий — без него сбор не сохраняется.']
+      : []),
+  ];
   const errors = [
     ...calculationErrors({
       waveId: request.wave_id,
@@ -308,6 +468,7 @@ function CalculationEditor({
       serviceFeePercent,
     }),
     ...volumeErrors,
+    ...feeErrors,
   ];
   function invalidate() {
     setPreview(undefined);
@@ -355,6 +516,15 @@ function CalculationEditor({
                   quantity: plannedVolume[row.product_group_id] ?? plainQuantity(row.wave_quantity),
                 })),
                 planned_volume_comment: plannedComment.trim(),
+              }
+            : {}),
+          ...(feesChanged
+            ? {
+                customs_fees: feeGroups.map((group) => ({
+                  product_group_id: group.id,
+                  amount: feeValue(group).trim().replace(',', '.'),
+                })),
+                customs_fee_comment: customsFeeComment.trim(),
               }
             : {}),
           ...(deliveryDays !== '' ? { delivery_days: Number(deliveryDays) } : {}),
@@ -421,6 +591,8 @@ function CalculationEditor({
     divideWaveExpenses,
     plannedVolume: volumeShown && volumeChanged ? plannedVolume : null,
     plannedComment: volumeShown && volumeChanged ? plannedComment.trim() : '',
+    customsFees: feesChanged ? customsFees : null,
+    customsFeeComment: feesChanged ? customsFeeComment.trim() : '',
     requestVersion: request.version,
     waveId: request.wave_id,
     selectedRows: selectedRows.map((row) => row.id),
@@ -476,6 +648,7 @@ function CalculationEditor({
     >
       <form
         noValidate
+        className={freightNotes.length ? 'calculation-with-notes' : undefined}
         onSubmit={(event) => {
           event.preventDefault();
           void calculate(false);
@@ -956,7 +1129,10 @@ function CalculationEditor({
                         <tr>
                           <th>Товарная группа</th>
                           <th>В плановой волне, шт.</th>
-                          <th>В этом расчёте, шт.</th>
+                          <th>В КП этого расчёта, шт.</th>
+                          <th title="Число штук, на которое делятся общие расходы волны и сбор">
+                            Делить расходы на, шт.
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -966,6 +1142,7 @@ function CalculationEditor({
                             <td>
                               {row.in_plan === false ? 'нет в плане' : decimal(row.wave_quantity)}
                             </td>
+                            <td>{offeredByGroup[row.product_group_id] || '—'}</td>
                             <td>
                               <input
                                 aria-label={`Плановый объём в расчёте: ${row.product_group_name}`}
@@ -991,6 +1168,27 @@ function CalculationEditor({
                       </tbody>
                     </table>
                   </div>
+                  <small className="muted">
+                    Клиент просит КП на 5 шт., а возьмёт 3? Впишите 3: общие расходы волны и сбор
+                    разделятся на 3 шт., цена за штуку будет как при поставке 3 шт., а в КП
+                    останутся все 5. Если в волне уже есть заказы этой группы, прибавьте их к числу.
+                  </small>
+                  {plannedRows
+                    .filter((row) => {
+                      const value = Number(
+                        plannedVolume[row.product_group_id] ?? plainQuantity(row.wave_quantity),
+                      );
+                      const offered = offeredByGroup[row.product_group_id] || 0;
+                      return volumeChanged && value > 0 && value < offered;
+                    })
+                    .map((row) => (
+                      <p className="info-note" key={`less-${row.product_group_id}`}>
+                        «{row.product_group_name}»: в КП {offeredByGroup[row.product_group_id]} шт.,
+                        расходы считаются на{' '}
+                        {plannedVolume[row.product_group_id] ?? plainQuantity(row.wave_quantity)}{' '}
+                        шт. (вместе с заказами, уже собранными в волне).
+                      </p>
+                    ))}
                   {plannedRows.some((row) => row.in_plan === false) && (
                     <small className="muted">
                       «Нет в плане» — у плановой волны нет объёма по этой группе. Объём, указанный
@@ -1001,8 +1199,13 @@ function CalculationEditor({
                     <p className="info-note">
                       Расходы волны сейчас делятся на{' '}
                       <strong>{decimal(waveDistribution.total_quantity || 0)} шт.</strong>: в этом
-                      расчёте {decimal(waveDistribution.selected_quantity || 0)}, в закупках{' '}
-                      {decimal(waveDistribution.existing_quantity || 0)}, по плану{' '}
+                      расчёте {decimal(waveDistribution.selected_quantity || 0)}
+                      {waveDistribution.offered_quantity !== undefined &&
+                      Number(waveDistribution.offered_quantity) !==
+                        Number(waveDistribution.selected_quantity)
+                        ? ` (в КП ${decimal(waveDistribution.offered_quantity)})`
+                        : ''}
+                      , в закупках {decimal(waveDistribution.existing_quantity || 0)}, по плану{' '}
                       {decimal(waveDistribution.forecast_quantity || 0)}.
                     </p>
                   )}
@@ -1042,6 +1245,69 @@ function CalculationEditor({
                     <p className="field-error">{serverError.message}</p>
                   )}
                 </>
+              )}
+              {feeGroups.length > 0 && (
+                <div className="customs-fee-adjustment">
+                  <h4>Таможенный сбор в этом расчёте</h4>
+                  <p className="muted">
+                    Фиксированный сбор по профилю делится между позициями группы в волне. Если сбор
+                    за эту поставку уже оплачен (например, клиент ноябрьского заказа оплатил его
+                    целиком, а новые колонки поедут той же волной), впишите 0 или другую сумму.
+                    Профиль и волна не меняются.
+                  </p>
+                  {feeGroups.map((group) => (
+                    <label className="field" key={group.id}>
+                      Сбор «{group.name}», ₽ (по профилю {decimal(group.amount)})
+                      <input
+                        inputMode="decimal"
+                        aria-label={`Таможенный сбор: ${group.name}`}
+                        value={feeValue(group)}
+                        aria-invalid={serverError?.field?.startsWith('customs_fees')}
+                        onChange={(event) => {
+                          const value = event.target.value.replace(/\s/g, '');
+                          setCustomsFees((current) => ({ ...current, [group.id]: value }));
+                          invalidate();
+                        }}
+                      />
+                    </label>
+                  ))}
+                  {feesChanged && (
+                    <label className="field">
+                      Комментарий к сбору
+                      <textarea
+                        value={customsFeeComment}
+                        required
+                        aria-invalid={
+                          (attempted && customsFeeComment.trim().length < 3) ||
+                          serverError?.field === 'customs_fee_comment'
+                        }
+                        placeholder="Например: сбор оплачен клиентом заказа на ноябрь, колонки едут той же волной"
+                        onChange={(event) => {
+                          setCustomsFeeComment(event.target.value);
+                          invalidate();
+                        }}
+                      />
+                      <small>Обязателен: без комментария сбор не сохранится.</small>
+                    </label>
+                  )}
+                  {feesChanged && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => {
+                        setCustomsFees({});
+                        setCustomsFeeComment('');
+                        invalidate();
+                      }}
+                    >
+                      Вернуть сбор профиля
+                    </Button>
+                  )}
+                  {(serverError?.field?.startsWith('customs_fee') ||
+                    serverError?.code === 'CUSTOMS_FEE_GROUP') && (
+                    <p className="field-error">{serverError.message}</p>
+                  )}
+                </div>
               )}
             </section>
           )}
@@ -1344,7 +1610,10 @@ function CalculationEditor({
                           setExpenses((current) =>
                             current.map((entry, i) =>
                               i === index
-                                ? { ...entry, minimum_amount: event.target.value.replace(',', '.') }
+                                ? {
+                                    ...entry,
+                                    minimum_amount: event.target.value.replace(',', '.'),
+                                  }
                                 : entry,
                             ),
                           );
@@ -1709,6 +1978,20 @@ function CalculationEditor({
             </section>
           )}
         </div>
+        {freightNotes.length > 0 && (
+          <FreightNotes
+            notes={freightNotes}
+            expenses={expenses}
+            onAdd={(expense) => {
+              setExpenses((current) =>
+                current.some((entry) => entry.name === expense.name)
+                  ? current
+                  : [...current, expense],
+              );
+              invalidate();
+            }}
+          />
+        )}
         <div className="modal-footer">
           <Button type="button" variant="secondary" onClick={close}>
             Закрыть

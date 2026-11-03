@@ -508,6 +508,99 @@ function PlanRequests({ wave, onMoved }: { wave: Entity; onMoved: (wave: Entity)
   );
 }
 
+const NEW_WAVE = 'plan:';
+/**
+ * Business remark of 3 November 2026: a position of a working wave goes to another working wave of the same
+ * supplier, or to a new one copied from the supplier's plan, as the leader does when confirming an order.
+ */
+function TransferAllocation({
+  allocation,
+  wave,
+  onClose,
+  onSuccess,
+}: {
+  allocation: Entity;
+  wave: Entity;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const waves = useApi<Page>('/waves?open=true');
+  if (waves.loading && !waves.data) return null;
+  if (waves.error)
+    return (
+      <Modal title="Перенести количество" onClose={onClose}>
+        <div className="form-body">
+          <ErrorBox error={waves.error} retry={waves.refresh} />
+        </div>
+      </Modal>
+    );
+  const same = (waves.data?.items || []).filter(
+    (row) => row.id !== wave.id && (!wave.supplier_id || row.supplier_id === wave.supplier_id),
+  );
+  // The wave's own plan first, then a newer plan of the supplier if the old one went to the archive.
+  const plans = same
+    .filter((row) => row.kind === 'plan')
+    .sort((a, b) => Number(b.id === wave.plan_id) - Number(a.id === wave.plan_id));
+  const working = same.filter((row) => row.kind !== 'plan');
+  return (
+    <RecordForm
+      title="Перенести количество"
+      endpoint={`/allocations/${String(allocation.id)}/transfer`}
+      extra={{ version: allocation.version }}
+      initial={{
+        quantity: plainNumber(allocation.quantity),
+        target_wave_id: plans.length ? NEW_WAVE + String(plans[0].id) : '',
+      }}
+      command
+      fields={[
+        {
+          name: 'target_wave_id',
+          label: 'Куда перенести',
+          required: true,
+          type: 'select',
+          options: [
+            ...plans.map((row) => ({
+              value: NEW_WAVE + String(row.id),
+              label: `Новая рабочая волна из плановой «${String(row.number)}»`,
+            })),
+            ...working.map((row) => ({
+              value: String(row.id),
+              label: `${String(row.number)} · ${String(row.supplier_name || 'Поставщик не указан')}`,
+            })),
+          ],
+        },
+        { name: 'quantity', label: 'Количество', type: 'decimal', required: true },
+        {
+          name: 'reason',
+          label: 'Причина переноса',
+          type: 'textarea',
+          required: true,
+          minLength: 3,
+        },
+      ]}
+      transform={(values) =>
+        String(values.target_wave_id).startsWith(NEW_WAVE)
+          ? {
+              ...values,
+              target_wave_id: null,
+              new_wave: true,
+              plan_id: String(values.target_wave_id).slice(NEW_WAVE.length),
+            }
+          : { ...values, new_wave: false }
+      }
+      note={`Позиция: ${String(allocation.position || 'без названия')}, заявка №${String(
+        allocation.request_number || '—',
+      )}. Перенести можно в другую открытую рабочую волну этого же поставщика или в новую: она создаётся копией плановой волны — со сроками, маршрутом и бюджетом. Если в старой волне у заявки не останется позиций, заявка и её следующие расчёты перейдут в новую волну. Отправленное количество перенести нельзя, история распределения сохраняется.`}
+      onClose={onClose}
+      onSuccess={onSuccess}
+    />
+  );
+}
+function plainNumber(value: unknown): string {
+  const raw = String(value ?? '');
+  return raw.includes('.') ? raw.replace(/\.?0+$/, '') : raw;
+}
+
 function WaveFinancialSummary({ summary }: { summary: Entity }) {
   const rows = ((summary.allocations || []) as Entity[]).map((row, index) => ({
     ...row,
@@ -774,7 +867,12 @@ export function Waves() {
         !completing &&
         !allocationAction &&
         !addingForecast && (
-          <Modal title={`Волна ${selected.number}`} wide onClose={() => setSelected(undefined)}>
+          <Modal
+            title={`Волна ${selected.number}`}
+            wide
+            className="wave-modal"
+            onClose={() => setSelected(undefined)}
+          >
             <div className="form-body">
               {Boolean(selected.archived) && (
                 <p className="info-note">
@@ -968,6 +1066,7 @@ export function Waves() {
                 <>
                   <h3>Распределённые позиции</h3>
                   <DataTable
+                    className="wave-allocations"
                     rows={(selected.allocations || []) as Entity[]}
                     onRow={(row) => {
                       setAllocation(row);
@@ -1252,30 +1351,10 @@ export function Waves() {
           onSuccess={done}
         />
       )}{' '}
-      {allocation && allocationAction === 'transfer' && (
-        <RecordForm
-          title="Перенести количество"
-          endpoint={`/allocations/${allocation.id}/transfer`}
-          extra={{ version: allocation.version }}
-          command
-          fields={[
-            {
-              name: 'target_wave_id',
-              label: 'Целевая рабочая волна',
-              required: true,
-              type: 'select',
-              source: '/waves?kind=work&open=true',
-            },
-            { name: 'quantity', label: 'Количество', type: 'decimal', required: true },
-            {
-              name: 'reason',
-              label: 'Причина переноса',
-              type: 'textarea',
-              required: true,
-              minLength: 3,
-            },
-          ]}
-          note="Перенести можно в другую открытую рабочую волну. Отправленное количество перенести нельзя. Перенос сохраняет историю распределения."
+      {allocation && allocationAction === 'transfer' && selected && (
+        <TransferAllocation
+          allocation={allocation}
+          wave={selected}
           onClose={() => setAllocationAction(undefined)}
           onSuccess={done}
         />

@@ -1093,13 +1093,32 @@ def transfer_allocation(allocation_id: str, data: TransferIn, db: DB, user: Acto
 
     def operation():
         commerce_locks(db, [execution])
-        for wave_id in sorted({initial.wave_id, data.target_wave_id}):
+        source = db.get(Wave, initial.wave_id)
+        # Business remark of 3 November 2026: a position goes to a new working wave of its supplier's plan.
+        plan = None
+        if data.new_wave:
+            plan = (db.get(Wave, data.plan_id) if data.plan_id else source if source.kind == "plan"
+                    else db.get(Wave, source.plan_id) if source.plan_id else None)
+            if not plan or plan.kind != "plan" or plan.archived or plan.status not in OPEN_WAVES:
+                error("TARGET_WAVE", "Нет действующей плановой волны поставщика: новую рабочую волну создать не из "
+                      "чего. Создайте волну на доске и перенесите позицию в неё", field="plan_id")
+        for wave_id in sorted({initial.wave_id, plan.id if plan else data.target_wave_id}):
             advisory(db, f"wave:{wave_id}")
         current = lock(db, WaveAllocation, allocation_id)
         check_version(current, data.version)
-        target = lock(db, Wave, data.target_wave_id)
+        if plan:
+            lock(db, Wave, plan.id)
+            target = working_wave(db, user, plan, f"Перенос позиции из волны {source.number}: {data.reason}"[:500],
+                                  new=True)
+        else:
+            target = db.get(Wave, data.target_wave_id)
+            if not target:
+                error("TARGET_WAVE", "Волна не найдена", field="target_wave_id")
+            target = lock(db, Wave, target.id)
         if target.archived or target.kind != "work" or target.status not in OPEN_WAVES or target.id == current.wave_id:
             error("TARGET_WAVE", "Выберите другую открытую рабочую волну")
+        if source.supplier_id and target.supplier_id != source.supplier_id:
+            error("WAVE_SUPPLIER", "Перенести можно только в волну того же поставщика", field="target_wave_id")
         if not current.active or event_totals(db, current.id)["shipped"] > 0:
             error("TRANSFER_SHIPPED", "Перенос отправленного или неактивного распределения запрещён")
         if data.quantity > current.quantity:
@@ -1135,7 +1154,17 @@ def transfer_allocation(allocation_id: str, data: TransferIn, db: DB, user: Acto
             after={"allocations": result},
             reason=data.reason,
         )
-        return {"items": result}
+        # The request's next calculations share costs with the wave its orders are in now.
+        request = lock(db, CRMRequest, execution.request_id)
+        left = db.scalar(select(WaveAllocation.id).join(Execution, Execution.id == WaveAllocation.execution_id).where(
+            Execution.request_id == request.id, WaveAllocation.wave_id == current.wave_id,
+            WaveAllocation.active.is_(True)).limit(1))
+        if request.wave_id == current.wave_id and not left:
+            request.wave_id = target.id
+            request.version += 1
+            audit(db, user, "request", request.id, "assign_wave", before={"wave_id": current.wave_id},
+                  after={"wave_id": target.id}, reason=f"Позиции перенесены в волну {target.number}")
+        return {"items": result, "wave": {"id": target.id, "number": target.number}}
 
     return idem(
         db,

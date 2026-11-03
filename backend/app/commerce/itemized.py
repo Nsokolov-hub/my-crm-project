@@ -18,6 +18,20 @@ def _money(value: Decimal, rounding: str) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUNDING[rounding])
 
 
+def _spread(amount: Decimal, bases: dict[str, Decimal], rows: list[dict], rounding: str) -> dict[str, Decimal]:
+    """A shared amount over the positions by `bases`.
+
+    Business remark of 3 November 2026: a client asks a proposal for 5 pieces but will take 3. Such positions have a
+    `share` below 1 (3/5): they count in the base only with the pieces that ship, and the part they get is then priced
+    on all their pieces, so a piece costs what it would if only the pieces taken shipped."""
+    shares = {row["id"]: row["share"] for row in rows if row.get("share", 1) != 1}
+    if not shares:
+        return distribute(amount, bases, Decimal("0.01"), rounding)
+    parts = distribute(amount, {key: base * shares.get(key, 1) for key, base in bases.items()}, Decimal("0.01"),
+                       rounding)
+    return {key: _money(value / shares[key], rounding) if key in shares else value for key, value in parts.items()}
+
+
 # An empty sum stays the integer 0, which saved results render as "0.000000".
 def _string(value: Decimal | int) -> str:
     return format(value, "f")
@@ -169,7 +183,7 @@ def _allocation(amount: Decimal, rows: list[dict], method: str, manual: dict, ro
         bases = {row["id"]: row["weight"] for row in rows}
     else:
         error("DISTRIBUTION_METHOD", "Неизвестный способ распределения расхода", field="expenses")
-    return distribute(amount, bases, Decimal("0.01"), rounding)
+    return _spread(amount, bases, rows, rounding)
 
 
 def calculate_itemized(
@@ -261,11 +275,15 @@ def _position(profile, selection, index, fx, rounding) -> dict:
         error("MARKUP", f"Наценка позиции {name} {packing} должна быть не меньше 1", field=f"selections.{index}.markup_coefficient")
     if bonus_coefficient < 1:
         error("BONUS", f"Бонус позиции {name} {packing} должен быть не меньше 1", field=f"selections.{index}.bonus_coefficient")
+    share = dec(selection.get("_share", "1"))
+    if not 0 < share <= 1:
+        error("PLANNED_VOLUME_SHARE", f"Проверьте объём для расчёта позиции {name} {packing}", field="planned_volume")
     foreign = price * quantity
     exchange_rate = dec(selection.get("_exchange_rate", fx.get(currency, "1")))
     purchase_rub = dec(selection["_purchase_rub"]) if "_purchase_rub" in selection else _money(foreign * exchange_rate, rounding)
     return {
-        "id": quote["id"], "source": selection, "quantity": quantity, "weight": dec(selection.get("weight") or "0"),
+        "id": quote["id"], "source": selection, "quantity": quantity, "share": share,
+        "weight": dec(selection.get("weight") or "0"),
         "currency": currency, "group": group, "markup_coefficient": coefficient,
         'calculation_type': mode,
         "bonus_coefficient": bonus_coefficient,
@@ -289,7 +307,9 @@ class _Wave:
     def __init__(self, rows, selected_ids, existing_quantity, existing_components):
         self.rows, self.selected_ids, self.existing_quantity = rows, selected_ids, existing_quantity
         self.selected_rows = [row for row in rows if row["id"] in selected_ids]
-        self.selected_quantity = sum(row["quantity"] for row in self.selected_rows)
+        # The pieces of the proposal, and those of them that ship (the client may take fewer, see `_spread`).
+        self.offered_quantity = sum(row["quantity"] for row in self.selected_rows)
+        self.selected_quantity = sum(row["quantity"] * row["share"] for row in self.selected_rows)
         self.forecast_quantity = sum(row["quantity"] for row in rows if row["source"].get("_forecast"))
         peer_quantity = sum(row["quantity"] for row in rows if row["id"] not in selected_ids)
         self.total_quantity = self.selected_quantity + peer_quantity + existing_quantity
@@ -312,7 +332,7 @@ class _ExpenseLedger:
         bases = {row["id"]: row["quantity"] for row in rows}
         if self.wave.existing_quantity:
             bases["__wave_existing__"] = self.wave.existing_quantity
-        parts = distribute(amount, bases, Decimal("0.01"), self.rounding)
+        parts = _spread(amount, bases, rows, self.rounding)
         return ({row["id"]: parts[row["id"]] for row in rows},
                 parts.get("__wave_existing__", Decimal("0")))
 
@@ -320,16 +340,19 @@ class _ExpenseLedger:
         """Base of a percentage expense, as accumulated so far."""
         existing = self.wave.existing
         basis_rows = self.wave.rows if include_wave else self.wave.selected_rows
+        # Positions the client takes only partly count with the pieces that ship.
         if kind == "PURCHASE":
-            return sum(row["purchase_rub"] for row in basis_rows) + (existing["purchase_rub"] if include_wave else 0)
+            return sum(row["purchase_rub"] * row["share"] for row in basis_rows) + (
+                existing["purchase_rub"] if include_wave else 0)
         if kind == "CUSTOMS_BASE":
-            return sum(row["purchase_rub"] + row["international_logistics"] for row in basis_rows) + (
+            return sum((row["purchase_rub"] + row["international_logistics"]) * row["share"] for row in basis_rows) + (
                 existing["purchase_rub"] + existing["international_logistics"] if include_wave else 0
             )
         if kind == "DUTY":
-            return sum(row["duty"] for row in basis_rows) + (existing["duty"] if include_wave else 0)
+            return sum(row["duty"] * row["share"] for row in basis_rows) + (existing["duty"] if include_wave else 0)
         if kind == "COST":
-            return sum(row["purchase_rub"] + row["international_logistics"] + row["duty"] + row["customs_fee"] + row["general_expenses"] for row in basis_rows) + (
+            return sum((row["purchase_rub"] + row["international_logistics"] + row["duty"] + row["customs_fee"]
+                        + row["general_expenses"]) * row["share"] for row in basis_rows) + (
                 sum(existing.values()) if include_wave else 0
             )
         error("PERCENT_BASE_REQUIRED", "Для процентного расхода выберите базу начисления", field="expenses")
@@ -400,6 +423,11 @@ class _ExpenseLedger:
         })
 
 
+def fixed_customs_fees(profile: dict) -> dict[str, Decimal]:
+    """The fixed customs fee of each product group that has one (73 800 ₽ for columns), by group slug."""
+    return _customs_by_group(profile)[1]
+
+
 def _customs_by_group(profile) -> tuple[dict, dict[str, Decimal]]:
     """Duty rules and fixed customs fees by product group.
 
@@ -447,30 +475,35 @@ def _apply_customs_fee(profile, overrides: dict[str, Decimal], wave: _Wave, roun
 
     A paid fixed fee (73 800 ₽ for columns) replaces every other fee of the declaration: the scale is
     not charged, the fixed fee falls on the positions of its group only and other groups carry no fee.
+
+    Business remark of 3 November 2026: a calculation may charge another amount of the fixed fee
+    (`customs_fee_charged` by group, e.g. 0 when another client's order of the supply has paid it); the
+    declaration still has the fixed fee, so the scale stays waived.
     """
     rows, existing = wave.rows, wave.existing
+    charged = {group: dec(amount) for group, amount in (profile.get('customs_fee_charged') or {}).items()}
     import_rows = [row for row in rows if row['calculation_type'] == 'IMPORT']
-    customs_basis = sum((row['customs_base'] for row in import_rows), Decimal('0')) + existing['purchase_rub'] + existing['international_logistics']
+    customs_basis = sum((row['customs_base'] * row['share'] for row in import_rows), Decimal('0')) + existing['purchase_rub'] + existing['international_logistics']
     if wave.existing_quantity and overrides:
         error('WAVE_BASIS_REQUIRED', 'Для двух видов сбора нужен состав всех позиций волны с товарными группами')
     ordinary_rows = [row for row in import_rows if row['group'] not in overrides]
-    ordinary_basis = sum((row['customs_base'] for row in ordinary_rows), Decimal('0')) + existing['purchase_rub'] + existing['international_logistics']
+    ordinary_basis = sum((row['customs_base'] * row['share'] for row in ordinary_rows), Decimal('0')) + existing['purchase_rub'] + existing['international_logistics']
     fixed_fee_paid = any(row['group'] in overrides and overrides[row['group']] > 0 for row in import_rows)
     bracket_fee = (_money(_bracket_amount(profile['customs_fee_brackets'], _money(ordinary_basis, rounding), field='customs_fee_brackets'), rounding)
                    if (ordinary_rows or wave.existing_quantity) and not fixed_fee_paid else Decimal('0'))
     fee_bases = {row['id']: row['quantity'] for row in ordinary_rows}
     if wave.existing_quantity:
         fee_bases['__wave_existing__'] = wave.existing_quantity
-    parts = distribute(bracket_fee, fee_bases, Decimal('0.01'), rounding) if fee_bases else {}
+    parts = _spread(bracket_fee, fee_bases, rows, rounding) if fee_bases else {}
     fixed_fee = Decimal('0')
     fixed_parts = {}
     for group, group_fee in overrides.items():
         group_rows = [row for row in import_rows if row['group'] == group]
         if not group_rows:
             continue
-        amount = _money(group_fee, rounding)
+        amount = _money(charged.get(group, group_fee), rounding)
         fixed_fee += amount
-        group_parts = distribute(amount, {row['id']: row['quantity'] for row in group_rows}, Decimal('0.01'), rounding)
+        group_parts = _spread(amount, {row['id']: row['quantity'] for row in group_rows}, group_rows, rounding)
         parts.update(group_parts)
         fixed_parts.update(group_parts)
     fee_parts = {row['id']: parts.get(row['id'], Decimal('0')) for row in rows}
@@ -700,6 +733,7 @@ def _wave_distribution(wave: _Wave, wave_lines: list[dict], fee: dict) -> dict:
             "real_quantity": earlier_quantity,
             "forecast_quantity": _string(wave.forecast_quantity),
             "selected_quantity": _string(wave.selected_quantity),
+            "offered_quantity": _string(wave.offered_quantity),
             "total_quantity": _string(wave.total_quantity),
             "existing_customs_fee_share": _string(fee["existing_fee_share"] + sum(dec(line["detail"]["customs_fee"]) for line in wave_lines if line["line_id"] not in selected_ids)),
             "customs_fee": _string(fee["fee"]),

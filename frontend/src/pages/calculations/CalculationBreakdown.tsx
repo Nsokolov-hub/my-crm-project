@@ -54,10 +54,25 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
           {(((wave.planned_volume as Entity).rows || []) as Entity[])
             .map(
               (row) =>
-                `${String(row.product_group_name)} — ${decimal(row.quantity)} шт. (в волне ${decimal(row.wave_quantity)} шт.)`,
+                `${String(row.product_group_name)} — ${decimal(row.quantity)} шт. (в волне ${decimal(row.wave_quantity)} шт.)` +
+                (row.offered_quantity
+                  ? `, клиент возьмёт ${decimal(row.counted_quantity)} из ${decimal(row.offered_quantity)} шт. КП`
+                  : ''),
             )
             .join('; ')}
           . Комментарий: {String((wave.planned_volume as Entity).comment || '')}
+        </p>
+      )}
+      {Boolean(snapshot.customs_fee_adjustment) && (
+        <p className="info-note">
+          Таможенный сбор изменён в расчёте:{' '}
+          {(((snapshot.customs_fee_adjustment as Entity).rows || []) as Entity[])
+            .map(
+              (row) =>
+                `${String(row.product_group_name)} — ${decimal(row.amount)} ₽ (по профилю ${decimal(row.profile_amount)} ₽)`,
+            )
+            .join('; ')}
+          . Комментарий: {String((snapshot.customs_fee_adjustment as Entity).comment || '')}
         </p>
       )}
       <DataTable<Entity>

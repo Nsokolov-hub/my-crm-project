@@ -226,6 +226,94 @@ function quoteName(row: Entity) {
     row.nomenclature_name || (row.nomenclature as Entity | undefined)?.name || row.name || 'Товар',
   );
 }
+type FreightDraft = { enabled: boolean; amount: string; currency_id: string; comment: string };
+const blankFreight: FreightDraft = { enabled: false, amount: '', currency_id: '', comment: '' };
+function freightError(freight: FreightDraft): string {
+  if (!freight.enabled) return '';
+  const amount = Number(freight.amount.replace(',', '.').replace(/\s/g, ''));
+  if (!Number.isFinite(amount) || amount <= 0) return 'Укажите сумму экстрафрахта больше нуля.';
+  if (!freight.currency_id) return 'Выберите валюту экстрафрахта.';
+  return '';
+}
+function freightPayload(freight: FreightDraft) {
+  return {
+    amount: freight.amount.replace(',', '.').replace(/\s/g, ''),
+    currency_id: freight.currency_id,
+    comment: freight.comment.trim(),
+  };
+}
+/** Business remark of 3 November 2026: «Экстрафрахт» and the amount recommended for the calculation. */
+function ExtraFreightFields({
+  value,
+  currencies,
+  onChange,
+}: {
+  value: FreightDraft;
+  currencies: Entity[];
+  onChange: (value: FreightDraft) => void;
+}) {
+  return (
+    <fieldset className={`extra-freight-fields${value.enabled ? ' active' : ''}`}>
+      <label className="calculation-internal-toggle">
+        <input
+          type="checkbox"
+          checked={value.enabled}
+          onChange={(event) => onChange({ ...value, enabled: event.target.checked })}
+        />{' '}
+        Экстрафрахт — поставщик отгрузит эту квоту экстрафрахтом
+      </label>
+      {value.enabled && (
+        <div className="extra-freight-grid">
+          <label className="field">
+            Рекомендуем заложить
+            <input
+              inputMode="decimal"
+              aria-label="Сумма экстрафрахта"
+              placeholder="Например, 1500"
+              value={value.amount}
+              onChange={(event) => onChange({ ...value, amount: event.target.value })}
+            />
+          </label>
+          <label className="field">
+            Валюта
+            <select
+              aria-label="Валюта экстрафрахта"
+              value={value.currency_id}
+              onChange={(event) => onChange({ ...value, currency_id: event.target.value })}
+            >
+              <option value="">Валюта</option>
+              {currencies.map((currency) => (
+                <option key={currency.id} value={currency.id}>
+                  {String(currency.code || currency.name)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field extra-freight-comment">
+            Комментарий
+            <input
+              value={value.comment}
+              maxLength={1000}
+              placeholder="Например: большой объём, авиа вне графика"
+              onChange={(event) => onChange({ ...value, comment: event.target.value })}
+            />
+          </label>
+          <small className="muted">
+            В расчёте при выборе позиций этой квоты справа появится напоминание с этой суммой.
+          </small>
+        </div>
+      )}
+    </fieldset>
+  );
+}
+/** The mark of a quote shipped by extra freight, as the quote lists and cards show it. */
+export function freightLabel(freight: Entity | null | undefined): string {
+  if (!freight) return '';
+  const amount = freight.amount
+    ? `${decimal(freight.amount)} ${String(freight.currency || '')}`
+    : '';
+  return [amount, String(freight.comment || '')].filter(Boolean).join(' · ');
+}
 function QuoteSheetEditor({
   requestId,
   onClose,
@@ -257,6 +345,8 @@ function QuoteSheetEditor({
   const [rows, setRows] = useState<QuoteDraft[]>([blankQuoteRow(0)]);
   const [localError, setLocalError] = useState<unknown>();
   const [rowErrors, setRowErrors] = useState<Record<number, string>>({});
+  // Business remark of 3 November 2026: the supplier ships this quote by extra freight.
+  const [freight, setFreight] = useState<FreightDraft>(blankFreight);
   const dirty = Boolean(
     supplierId ||
     rfqId ||
@@ -356,6 +446,11 @@ function QuoteSheetEditor({
       setLocalError(new Error('Исправьте отмеченные строки квоты.'));
       return;
     }
+    const freightProblem = freightError(freight);
+    if (freightProblem) {
+      setLocalError(new Error(freightProblem));
+      return;
+    }
     try {
       await operation.run(
         `/requests/${requestId}/quote-sheets`,
@@ -371,6 +466,7 @@ function QuoteSheetEditor({
             currency_id: row.currency_id,
             ...(row.delivery_days ? { delivery_days: Number(row.delivery_days) } : {}),
           })),
+          ...(freight.enabled ? { extra_freight: freightPayload(freight) } : {}),
         },
         'POST',
       );
@@ -460,6 +556,11 @@ function QuoteSheetEditor({
               </select>
             </label>
           </div>
+          <ExtraFreightFields
+            value={freight}
+            currencies={currencies.data?.items || []}
+            onChange={setFreight}
+          />
           <label className="field quote-item-search">
             Поиск позиции заявки
             <input
@@ -653,6 +754,25 @@ export function RequestQuotes({
   const [revision, setRevision] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const deleteCommand = useCommand();
+  const freightCommand = useCommand();
+  const [freightEditing, setFreightEditing] = useState(false);
+  const currencies = useApi<Page>('/currencies?page_size=100');
+  async function removeFreight() {
+    if (!selected || !window.confirm(`Снять экстрафрахт с квоты ${String(selected.quote_number)}?`))
+      return;
+    try {
+      await freightCommand.run(
+        `/quote-sheets/${String(selected.quote_sheet_id)}/extra-freight`,
+        { version: selected.quote_sheet_version, extra_freight: null },
+        'PUT',
+        true,
+      );
+      setSelected(undefined);
+      setRevision((value) => value + 1);
+    } catch {
+      /* ErrorBox displays the failure. */
+    }
+  }
   async function deleteQuote(whole: boolean) {
     if (
       !selected ||
@@ -744,7 +864,21 @@ export function RequestQuotes({
         }}
         onSelect={setSelected}
         columns={[
-          { key: 'quote_number', label: 'Квота' },
+          {
+            key: 'quote_number',
+            label: 'Квота',
+            render: (row) =>
+              row.extra_freight ? (
+                <span className="stacked">
+                  <span>{String(row.quote_number)}</span>
+                  <span title={freightLabel(row.extra_freight as Entity)}>
+                    <Badge value="Экстрафрахт" tone="amber" />
+                  </span>
+                </span>
+              ) : (
+                String(row.quote_number)
+              ),
+          },
           { key: 'nomenclature_name', label: 'Номенклатура', render: quoteName },
           { key: 'article', label: 'Артикул' },
           { key: 'manufacturer', label: 'Производитель' },
@@ -797,7 +931,50 @@ export function RequestQuotes({
           onSuccess={() => setRevision((value) => value + 1)}
         />
       )}
-      {selected && (
+      {selected && freightEditing && (
+        <RecordForm
+          title={`Экстрафрахт · квота ${String(selected.quote_number)}`}
+          endpoint={`/quote-sheets/${String(selected.quote_sheet_id)}/extra-freight`}
+          method="PUT"
+          command
+          extra={{ version: selected.quote_sheet_version }}
+          initial={{
+            amount: (selected.extra_freight as Entity | null)?.amount || '',
+            currency_id: (selected.extra_freight as Entity | null)?.currency_id || '',
+            comment: (selected.extra_freight as Entity | null)?.comment || '',
+          }}
+          fields={[
+            { name: 'amount', label: 'Рекомендуем заложить', type: 'decimal', required: true },
+            {
+              name: 'currency_id',
+              label: 'Валюта',
+              type: 'select',
+              required: true,
+              options: (currencies.data?.items || []).map((currency) => ({
+                value: String(currency.id),
+                label: String(currency.code || currency.name),
+              })),
+            },
+            { name: 'comment', label: 'Комментарий', type: 'textarea' },
+          ]}
+          transform={(values) => ({
+            version: values.version,
+            extra_freight: {
+              amount: String(values.amount).replace(',', '.'),
+              currency_id: values.currency_id,
+              comment: String(values.comment || ''),
+            },
+          })}
+          note={`Отметка относится ко всей квоте ${String(selected.quote_number)} поставщика ${String(selected.supplier_name)}: в расчёте при выборе её позиций справа появится напоминание с этой суммой.`}
+          onClose={() => setFreightEditing(false)}
+          onSuccess={() => {
+            setFreightEditing(false);
+            setSelected(undefined);
+            setRevision((value) => value + 1);
+          }}
+        />
+      )}
+      {selected && !freightEditing && (
         <Modal
           title={`Квота ${String(selected.quote_number)} · ${String(selected.supplier_name)}`}
           onClose={() => setSelected(undefined)}
@@ -815,8 +992,28 @@ export function RequestQuotes({
                 Цена: `${decimal(selected.unit_price)} ${String(selected.currency_code || '')}`,
                 'Срок поставки': selected.delivery_days,
                 'Действует до': date(selected.valid_until),
+                Экстрафрахт: selected.extra_freight
+                  ? freightLabel(selected.extra_freight as Entity) || 'Да'
+                  : 'Нет',
               }}
             />
+            {auth.can('quotes.write') && auth.can('finance.purchase.read') && (
+              <div className="inline-actions">
+                <Button variant="secondary" onClick={() => setFreightEditing(true)}>
+                  {selected.extra_freight ? 'Изменить экстрафрахт' : 'Отметить экстрафрахт'}
+                </Button>
+                {Boolean(selected.extra_freight) && (
+                  <Button
+                    variant="ghost"
+                    busy={freightCommand.busy}
+                    onClick={() => void removeFreight()}
+                  >
+                    Снять экстрафрахт
+                  </Button>
+                )}
+              </div>
+            )}
+            <ErrorBox error={freightCommand.error} />
             {auth.can('quotes.write') && (
               <div className="inline-actions">
                 <Button

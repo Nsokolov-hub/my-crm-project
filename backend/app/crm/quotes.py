@@ -35,9 +35,31 @@ from app.crm.models import (
     Request,
     RequestItem,
 )
-from app.crm.schemas import QuoteSheetInput
+from app.crm.schemas import ExtraFreightInput, QuoteSheetInput
 
 router = APIRouter(tags=['CRM'])
+
+
+class ExtraFreightCommand(VersionCommand):
+    """Marks a quote sheet as shipped by extra freight, changes the mark, or removes it (`extra_freight` null)."""
+    extra_freight: ExtraFreightInput | None = None
+
+
+def extra_freight_record(db: Session, user: User, data: ExtraFreightInput) -> dict[str, Any]:
+    """Business remark of 3 November 2026: what the quote sheet keeps about its extra freight."""
+    currency = require_currency(db, data.currency_id)
+    return {'amount': str(data.amount), 'currency': currency.code, 'currency_id': currency.id,
+            'comment': data.comment.strip(), 'set_by': user.id, 'set_at': utcnow().isoformat()}
+
+
+def extra_freight_view(value: dict[str, Any] | None, show_purchase: bool) -> dict[str, Any] | None:
+    """The mark for people; the amount is a purchase cost, shown only with the right to see purchases."""
+    if not value:
+        return None
+    result = {'comment': value.get('comment', ''), 'set_at': value.get('set_at')}
+    if show_purchase:
+        result.update(amount=value.get('amount'), currency=value.get('currency'), currency_id=value.get('currency_id'))
+    return result
 
 
 def aware_utc(value: Any) -> Any:
@@ -99,6 +121,7 @@ def quote_item_view(db: Session, row: QuoteItem, show_purchase: bool = True) -> 
         'supplier_name': supplier.name,
         'calculation_type': (supplier.details or {}).get('calculation_type', 'IMPORT'),
         'expired': aware_utc(row.valid_until) <= utcnow(),
+        'extra_freight': extra_freight_view(sheet.extra_freight, show_purchase),
     })
     if not show_purchase:
         value.pop('unit_price', None)
@@ -138,6 +161,7 @@ def quote_sheet_views(db: Session, rows: list[QuoteSheet], show_purchase: bool =
         value.update({
             'request_number': db.get(Request, row.request_id).number,
             'supplier_name': db.get(Counterparty, row.supplier_id).name,
+            'extra_freight': extra_freight_view(row.extra_freight, show_purchase),
             'items': [quote_item_view(db, item, show_purchase) for item in items[row.id]],
         })
         views.append(value)
@@ -350,6 +374,36 @@ def quote_sheet_detail(entity_id: str, user: User = Depends(current_user), db: S
     return quote_sheet_view(db, row, has_request_permission(db, user, row.request_id, 'finance.purchase.read'))
 
 
+@router.put('/quote-sheets/{entity_id}/extra-freight')
+def set_extra_freight(entity_id: str, body: ExtraFreightCommand,
+                      user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
+    """Business remark of 3 November 2026: «Экстрафрахт» on a quote already entered, changed or taken off."""
+    row = db.get(QuoteSheet, entity_id)
+    if not row:
+        raise DomainError('NOT_FOUND', 'Квота не найдена', 404)
+    check_request(db, user, row.request_id, 'quotes.write')
+    if body.extra_freight:
+        check_request(db, user, row.request_id, 'finance.purchase.read')
+
+    def operation():
+        advisory(db, f'request-commerce:{row.request_id}')
+        current = lock(db, QuoteSheet, entity_id)
+        check_version(current, body.version)
+        if current.archived:
+            raise DomainError('QUOTE_DELETED', 'Квота удалена', 409)
+        before = current.extra_freight
+        current.extra_freight = extra_freight_record(db, user, body.extra_freight) if body.extra_freight else None
+        current.version += 1
+        db.flush()
+        audit(db, user, 'quote_sheet', current.id, 'extra_freight', before={'extra_freight': before},
+              after={'extra_freight': current.extra_freight})
+        return quote_sheet_view(db, current, has_request_permission(db, user, current.request_id,
+                                                                    'finance.purchase.read'))
+
+    return idem(db, user, body.idempotency_key, f'quote-sheet.extra-freight:{entity_id}',
+                body.model_dump(mode='json'), operation)
+
+
 def archive_quote(db, user, row):
     before = serialize(row)
     row.archived = True
@@ -428,6 +482,7 @@ def record_quote_sheet(db: Session, user: User, request_id: str, body: QuoteShee
         sheet = QuoteSheet(
             number=f'Q-{count + 1:06d}', request_id=request_id, supplier_id=body.supplier_id,
             supplier_request_id=body.supplier_request_id, author_id=user.id,
+            extra_freight=extra_freight_record(db, user, body.extra_freight) if body.extra_freight else None,
         )
         db.add(sheet)
         db.flush()

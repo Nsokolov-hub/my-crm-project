@@ -1166,6 +1166,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/quote-sheets/{entity_id}/extra-freight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Extra Freight
+         * @description Business remark of 3 November 2026: «Экстрафрахт» on a quote already entered, changed or taken off.
+         */
+        put: operations["set_extra_freight_api_v1_quote_sheets__entity_id__extra_freight_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/quote-items/{entity_id}/delete": {
         parameters: {
             query?: never;
@@ -3844,6 +3864,13 @@ export interface components {
              * @default
              */
             planned_volume_comment: string;
+            /** Customs Fees */
+            customs_fees?: components["schemas"]["CustomsFeeIn"][] | null;
+            /**
+             * Customs Fee Comment
+             * @default
+             */
+            customs_fee_comment: string;
         };
         /** CalendarBalanceIn */
         CalendarBalanceIn: {
@@ -4264,6 +4291,13 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** CustomsFeeIn */
+        CustomsFeeIn: {
+            /** Product Group Id */
+            product_group_id: string;
+            /** Amount */
+            amount: number | string;
+        };
         /** DecisionIn */
         DecisionIn: {
             /** Idempotency Key */
@@ -4450,6 +4484,33 @@ export interface components {
             version: number;
             /** Active */
             active: boolean;
+        };
+        /**
+         * ExtraFreightCommand
+         * @description Marks a quote sheet as shipped by extra freight, changes the mark, or removes it (`extra_freight` null).
+         */
+        ExtraFreightCommand: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Version */
+            version: number;
+            extra_freight?: components["schemas"]["ExtraFreightInput"] | null;
+        };
+        /**
+         * ExtraFreightInput
+         * @description Business remark of 3 November 2026: the supplier ships the quote by extra freight; the amount recommended to
+         *     lay into the calculation.
+         */
+        ExtraFreightInput: {
+            /** Amount */
+            amount: number | string;
+            /** Currency Id */
+            currency_id: string;
+            /**
+             * Comment
+             * @default
+             */
+            comment: string;
         };
         /** Formula */
         Formula: {
@@ -5353,6 +5414,7 @@ export interface components {
             supplier_request_id?: string | null;
             /** Items */
             items: components["schemas"]["QuoteItemInput"][];
+            extra_freight?: components["schemas"]["ExtraFreightInput"] | null;
         };
         /** Rate */
         Rate: {
@@ -5994,7 +6056,14 @@ export interface components {
             /** Version */
             version: number;
             /** Target Wave Id */
-            target_wave_id: string;
+            target_wave_id?: string | null;
+            /**
+             * New Wave
+             * @default false
+             */
+            new_wave: boolean;
+            /** Plan Id */
+            plan_id?: string | null;
             /** Quantity */
             quantity: number | string;
             /** Reason */
@@ -11185,6 +11254,60 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    set_extra_freight_api_v1_quote_sheets__entity_id__extra_freight_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtraFreightCommand"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Сеанс отсутствует или отозван */

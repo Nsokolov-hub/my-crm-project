@@ -453,10 +453,26 @@ class QuoteItemInput(Input):
         return value
 
 
+class ExtraFreightInput(Input):
+    """Business remark of 3 November 2026: the supplier ships the quote by extra freight; the amount recommended to
+    lay into the calculation."""
+    amount: Decimal = Field(gt=0, max_digits=24, decimal_places=2)
+    currency_id: str
+    comment: str = Field(default='', max_length=1000)
+
+    @field_validator('amount', mode='before')
+    @classmethod
+    def decimal_string(cls, value: Any) -> Any:
+        if isinstance(value, float):
+            raise ValueError('Сумма передаётся десятичной строкой')
+        return value
+
+
 class QuoteSheetInput(Input):
     supplier_id: str
     supplier_request_id: str | None = None
     items: list[QuoteItemInput] = Field(min_length=1, max_length=10000)
+    extra_freight: ExtraFreightInput | None = None
 
     @model_validator(mode='after')
     def no_duplicate_source_rows(self):

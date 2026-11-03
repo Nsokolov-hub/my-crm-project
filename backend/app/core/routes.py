@@ -174,7 +174,8 @@ def me(request: Request, user: User = Depends(current_user), db: Session = Depen
 
 
 # Business remark of 31 October 2026: an employee saves the filters of the requests list; the list opens with them.
-PREFERENCE_KEYS = ("requests.filters",)
+# requests.columns: the columns of the requests list an employee shows, in their order (remark of 3 November 2026).
+PREFERENCE_KEYS = ("requests.filters", "requests.columns")
 
 
 class PreferenceInput(Input):

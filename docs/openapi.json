@@ -5418,6 +5418,59 @@
         }
       }
     },
+    "/api/v1/quote-sheets/{entity_id}/extra-freight": {
+      "put": {
+        "tags": [
+          "CRM"
+        ],
+        "summary": "Set Extra Freight",
+        "description": "Business remark of 3 November 2026: «Экстрафрахт» on a quote already entered, changed or taken off.",
+        "operationId": "set_extra_freight_api_v1_quote_sheets__entity_id__extra_freight_put",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtraFreightCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/quote-items/{entity_id}/delete": {
       "post": {
         "tags": [
@@ -14671,6 +14724,27 @@
             "maxLength": 2000,
             "title": "Planned Volume Comment",
             "default": ""
+          },
+          "customs_fees": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CustomsFeeIn"
+                },
+                "type": "array",
+                "maxItems": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customs Fees"
+          },
+          "customs_fee_comment": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Customs Fee Comment",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -16112,6 +16186,34 @@
         ],
         "title": "CurrencyInput"
       },
+      "CustomsFeeIn": {
+        "properties": {
+          "product_group_id": {
+            "type": "string",
+            "title": "Product Group Id"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,22}|(?=[\\d.]{1,25}0*$)\\d{0,22}\\.\\d{0,2}0*$)"
+              }
+            ],
+            "title": "Amount"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "product_group_id",
+          "amount"
+        ],
+        "title": "CustomsFeeIn"
+      },
       "DecisionIn": {
         "properties": {
           "idempotency_key": {
@@ -16599,6 +16701,74 @@
           "active"
         ],
         "title": "ExpenseTypePatch"
+      },
+      "ExtraFreightCommand": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "extra_freight": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExtraFreightInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "version"
+        ],
+        "title": "ExtraFreightCommand",
+        "description": "Marks a quote sheet as shipped by extra freight, changes the mark, or removes it (`extra_freight` null)."
+      },
+      "ExtraFreightInput": {
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,22}|(?=[\\d.]{1,25}0*$)\\d{0,22}\\.\\d{0,2}0*$)"
+              }
+            ],
+            "title": "Amount"
+          },
+          "currency_id": {
+            "type": "string",
+            "title": "Currency Id"
+          },
+          "comment": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Comment",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "amount",
+          "currency_id"
+        ],
+        "title": "ExtraFreightInput",
+        "description": "Business remark of 3 November 2026: the supplier ships the quote by extra freight; the amount recommended to\nlay into the calculation."
       },
       "Formula": {
         "properties": {
@@ -19449,6 +19619,16 @@
             "maxItems": 10000,
             "minItems": 1,
             "title": "Items"
+          },
+          "extra_freight": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExtraFreightInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -21346,8 +21526,31 @@
             "title": "Version"
           },
           "target_wave_id": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Target Wave Id"
+          },
+          "new_wave": {
+            "type": "boolean",
+            "title": "New Wave",
+            "default": false
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Id"
           },
           "quantity": {
             "anyOf": [
@@ -21373,7 +21576,6 @@
         "required": [
           "idempotency_key",
           "version",
-          "target_wave_id",
           "quantity",
           "reason"
         ],

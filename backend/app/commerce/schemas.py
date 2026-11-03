@@ -244,6 +244,11 @@ class PlannedVolumeIn(Input):
     quantity: Annotated[Decimal, Field(ge=0, max_digits=24, decimal_places=0)]
 
 
+class CustomsFeeIn(Input):
+    product_group_id: str
+    amount: Annotated[Decimal, Field(ge=0, max_digits=24, decimal_places=2)]
+
+
 class CalculationIn(Command):
     delivery_city: str | None = Field(default=None, max_length=150)
     delivery_required: bool = False
@@ -267,6 +272,10 @@ class CalculationIn(Command):
     # (product group → pieces); it is kept only with a comment saying why it differs from the wave.
     planned_volume: list[PlannedVolumeIn] | None = Field(default=None, max_length=200)
     planned_volume_comment: str = Field(default="", max_length=2000)
+    # Business remark of 3 November 2026: the fixed customs fee of a group (73 800 ₽ for columns) changed for
+    # this calculation only, e.g. 0 when another client's order of the same supply has paid it.
+    customs_fees: list[CustomsFeeIn] | None = Field(default=None, max_length=20)
+    customs_fee_comment: str = Field(default="", max_length=2000)
 
 
 class RequestWaveIn(Command):
@@ -420,9 +429,19 @@ class AllocateWaveIn(Command):
 
 
 class TransferIn(VersionCommand):
-    target_wave_id: str
+    # Business remark of 3 November 2026: a new working wave of the same plan instead of an existing one.
+    target_wave_id: str | None = None
+    new_wave: bool = False
+    # The plan of the supplier the new working wave is copied from; by default the plan of the current wave.
+    plan_id: str | None = None
     quantity: Positive
     reason: str = Field(min_length=3)
+
+    @model_validator(mode="after")
+    def one_target(self):
+        if not self.new_wave and not self.target_wave_id:
+            raise ValueError("Выберите рабочую волну или отметьте «Новая рабочая волна поставщика»")
+        return self
 
 
 class FulfillmentIn(Command):

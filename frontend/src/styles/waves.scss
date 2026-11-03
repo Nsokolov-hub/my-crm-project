@@ -304,3 +304,20 @@
     padding: 12px 16px 0;
   }
 }
+
+/* Business remark of 3 November 2026: the action «Перенести» hid behind the horizontal scroll of the wave. */
+.modal.wave-modal {
+  width: min(1280px, calc(100vw - 32px));
+}
+
+.wave-allocations td:first-child {
+  min-width: 220px;
+  max-width: 340px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.wave-allocations td:nth-child(2) {
+  max-width: 220px;
+  white-space: normal;
+}
