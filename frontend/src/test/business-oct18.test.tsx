@@ -110,7 +110,7 @@ it('saves the shared expenses to the wave with a repeatable operation key', asyn
           },
         ],
       };
-    if (path.endsWith('/wave-expenses'))
+    if (path.includes('/wave-expenses'))
       return { expenses: [], wave_version: 4, complete_budget: true };
     if (path === '/waves/plan/budget') return wave('plan', { version: 5 });
     return { items: [], total: 0 };

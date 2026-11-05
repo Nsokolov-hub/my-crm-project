@@ -58,7 +58,7 @@ function mockCalculator() {
           },
         ],
       };
-    if (path.endsWith('/wave-expenses'))
+    if (path.includes('/wave-expenses'))
       return {
         expenses: [],
         complete_budget: true,
@@ -219,7 +219,7 @@ it('offers a planned volume for a group the plan has none for, right under the p
           },
         ],
       };
-    if (path.endsWith('/wave-expenses'))
+    if (path.includes('/wave-expenses'))
       return { expenses: [], complete_budget: true, wave_version: 1, planned_volume: [] };
     return { items: [] };
   });

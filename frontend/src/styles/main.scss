@@ -1162,6 +1162,18 @@ tr.clickable-row {
   cursor: pointer;
 }
 
+.client-filter .column-picker-menu > input {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.client-filter-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .column-picker-moves {
   display: flex;
   gap: 2px;
@@ -3334,4 +3346,12 @@ tr.clickable-row {
 
 .customs-fee-adjustment > button {
   justify-self: start;
+}
+
+// The wave of a calculation, chosen inside the calculation window (5 November 2026).
+.calculation-wave {
+  display: grid;
+  gap: 4px;
+  max-width: 640px;
+  margin-bottom: 14px;
 }

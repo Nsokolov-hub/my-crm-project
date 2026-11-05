@@ -145,7 +145,8 @@ def local_day_start(day: date) -> datetime:
 
 
 @router.get('/requests')
-def requests(q: str = '', stage: str | None = None, client_id: str | None = None, owner_id: str | None = None,
+def requests(q: str = '', stage: str | None = None, client_id: str | None = None, client_ids: str = '',
+             owner_id: str | None = None,
              proposal_from: date | None = None, proposal_to: date | None = None, with_proposal: bool = False,
              page: int = 1, page_size: int = 25, sort: str = 'created_at', direction: str = 'desc',
              user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
@@ -163,6 +164,11 @@ def requests(q: str = '', stage: str | None = None, client_id: str | None = None
         stmt = stmt.where(or_(Request.title.ilike(f'%{q}%'), Request.number.ilike(f'%{q}%')))
     if client_id:
         stmt = stmt.where(Request.client_id == client_id)
+    # Business remark of 5 November 2026: several clients at once, «Клиенты» in the list's filters.
+    if chosen := [value for value in dict.fromkeys(part.strip() for part in client_ids.split(',')) if value]:
+        if len(chosen) > 100:
+            raise DomainError('FILTER_TOO_LONG', 'Выберите не больше 100 клиентов', 422, 'client_ids')
+        stmt = stmt.where(Request.client_id.in_(chosen))
     if stage:
         stmt = stmt.where(Request.commercial_stage == stage)
     if owner_id:

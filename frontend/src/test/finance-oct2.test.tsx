@@ -108,7 +108,7 @@ it('sends the selected VAT deduction mode and common delivery term in preview an
           },
         ],
       };
-    if (path.endsWith('/wave-expenses')) return { expenses: [], source_calculation_id: null };
+    if (path.includes('/wave-expenses')) return { expenses: [], source_calculation_id: null };
     return { items: [] };
   });
   render(
@@ -219,7 +219,7 @@ it('refreshes shared wave costs in a new version while retaining request costs a
     if (options?.method === 'POST')
       return { snapshot: { lines: [], totals: {}, wave: { financial_digest: 'b'.repeat(64) } } };
     if (path.split('?')[0].endsWith('/calculations')) return { items: [previous] };
-    if (path.endsWith('/wave-expenses'))
+    if (path.includes('/wave-expenses'))
       return { expenses: [shared, airport], source_calculation_id: null, complete_budget: true };
     if (path.includes('/quote-items'))
       return {
@@ -345,7 +345,7 @@ it('edits waves using week numbers and displays recalculated costs for all order
   fireEvent.click(await screen.findByText('Поставщик 1'));
   expect(screen.getByText('Заказ первый')).toBeVisible();
   expect(screen.getByText('Заказ второй')).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'Изменить сроки и состояние' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Изменить название, сроки и состояние' }));
   expect(screen.getByLabelText(/Неделя закрытия/)).toHaveValue(35);
   fireEvent.change(screen.getByLabelText(/Неделя закрытия/), { target: { value: '34' } });
   fireEvent.change(screen.getByLabelText(/Причина изменения/), {

@@ -52,9 +52,12 @@ router = APIRouter(tags=['CRM'])
 
 
 @router.get('/counterparties')
-def clients(q: str = '', kind: str | None = None, client_base: str | None = None, contact_eligible: bool = False, page: int = 1, page_size: int = 25, sort: str = 'name', direction: str = 'asc', archived: bool = False, filter_name: str = '', filter_tax_id: str = '', filter_profile: str = '', filter_city: str = '', filter_phone: str = '', filter_email: str = '', user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
+def clients(q: str = '', ids: str = '', kind: str | None = None, client_base: str | None = None, contact_eligible: bool = False, page: int = 1, page_size: int = 25, sort: str = 'name', direction: str = 'asc', archived: bool = False, filter_name: str = '', filter_tax_id: str = '', filter_profile: str = '', filter_city: str = '', filter_phone: str = '', filter_email: str = '', user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'clients.read')
     stmt = select(Counterparty).where(client_predicate(db, user), Counterparty.archived == archived)
+    if wanted := [value for value in dict.fromkeys(part.strip() for part in ids.split(',')) if value][:100]:
+        # The names of clients chosen in a filter (the requests list keeps only their ids).
+        stmt = stmt.where(Counterparty.id.in_(wanted))
     if contact_eligible:
         stmt = stmt.where(Counterparty.client_base == 'working', Counterparty.archived.is_(False))
     if kind:

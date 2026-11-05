@@ -351,6 +351,9 @@ class DecisionIn(VersionCommand):
     # Business remark of 28 October 2026: the leader names the wave the approved orders go to — an open
     # working wave of the supplier, or its planned wave for a new working wave copied from it.
     wave_id: str | None = None
+    # Business remark of 5 November 2026 (Тимур): each position may go to its own wave — two with the big supply
+    # later, one with the nearest. Execution id → wave id; a position not named here goes to `wave_id`.
+    line_waves: dict[str, str] = Field(default_factory=dict, max_length=500)
 
 
 class WaveIn(Command):
@@ -373,6 +376,8 @@ class WaveIn(Command):
 
 
 class WaveUpdate(VersionCommand):
+    # Business remark of 5 November 2026: the name of a wave is edited like its dates.
+    number: str | None = Field(default=None, min_length=1, max_length=80)
     status: (
         Literal["planned", "assembling", "closed", "shipped", "arrived", "completed", "cancelled"] | None
     ) = None

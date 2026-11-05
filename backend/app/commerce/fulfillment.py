@@ -558,7 +558,7 @@ def wave_option(db, wave: Wave, *, new: bool = False) -> dict:
     label = (f"Новая рабочая волна из плановой «{wave.number}»" if new
              else f"Рабочая · {wave.number}{week}")
     return {"id": wave.id, "label": label, "kind": wave.kind, "number": wave.number, "status": wave.status,
-            "supplier_name": supplier.name if supplier else None, "new": new}
+            "supplier_id": wave.supplier_id, "supplier_name": supplier.name if supplier else None, "new": new}
 
 
 @router.get("/approvals/{approval_id}/waves")
@@ -572,10 +572,15 @@ def approval_waves(approval_id: str, db: DB, user: Actor):
     if not approval_imports(executions):
         return {"items": [], "wave_id": None, "required": False}
     suppliers = set()
+    lines = []
     for execution in executions:
         source = db.get(QuoteItem, execution.quote_item_id) if execution.quote_item_id else db.get(Quote, execution.quote_id)
         if source:
             suppliers.add(source.supplier_id)
+        if (execution.snapshot or {}).get("calculation_type", "IMPORT") == "IMPORT":
+            quantity = format(execution.quantity - execution.cancelled_quantity, "f").rstrip("0").rstrip(".")
+            lines.append({"execution_id": execution.id, "supplier_id": source.supplier_id if source else None,
+                          "label": f"{execution.snapshot.get('description') or 'Позиция'} — {quantity} {execution.unit}"})
     items = []
     for supplier_id in sorted(suppliers):
         items += [wave_option(db, row) for row in db.scalars(select(Wave).where(
@@ -589,7 +594,7 @@ def approval_waves(approval_id: str, db: DB, user: Actor):
         joined = open_working_wave(db, current) if current.kind == "plan" else current
         default = (joined or current).id
     return {"items": items, "wave_id": default if any(row["id"] == default for row in items) else None,
-            "required": True}
+            "required": True, "lines": lines}
 
 
 @router.post("/approvals/{approval_id}/decision")
@@ -633,43 +638,65 @@ def decide_approval(approval_id: str, data: DecisionIn, db: DB, user: Actor):
                 execution.procurement_at = utcnow()
                 execution.financing_deficit = dec(approved_line["funding"]["ratio"]) < dec(approved_line["funding_ratio"])
                 execution.version += 1
-            chosen = data.wave_id or req.wave_id
-            if data.wave_id and not approval_imports(executions):
+            line_waves = {key: value for key, value in (data.line_waves or {}).items() if value}
+            if set(line_waves) - {execution.id for execution in executions}:
+                error("WAVE_LINE", "Позиция не входит в это согласование", field="line_waves")
+            if (data.wave_id or line_waves) and not approval_imports(executions):
                 error("WAVE_NOT_USED", "Волна указывается только для импортных позиций", field="wave_id")
-            if chosen:
-                for wave_id in sorted({value for value in (req.wave_id, chosen) if value}):
-                    advisory(db, f"wave:{wave_id}")
-                wave = lock(db, Wave, chosen) if db.get(Wave, chosen) else None
-                if not wave:
-                    error("WAVE_REQUIRED", "Волна не найдена", field="wave_id")
-                usable(wave, field="wave_id")
-                if wave.status not in OPEN_WAVES:
-                    error("WAVE_CLOSED", "Для передачи в закупки выберите открытую волну", field="wave_id")
-                # The leader's planned wave means a new working wave copied from it; the request's own
-                # planned wave (no choice made) keeps joining the plan's open working wave.
-                wave = working_wave(db, user, wave, f"Подтверждён заказ по заявке №{req.number}",
-                                    new=bool(data.wave_id) and wave.kind == "plan")
-                for execution in executions:
-                    quote = check_execution_quote(db, execution)
-                    if wave.supplier_id != quote.supplier_id:
-                        error("WAVE_SUPPLIER", "Волна не соответствует поставщику подтверждённых позиций",
-                              field="wave_id")
-                    allocated = sum((row.quantity for row in db.scalars(select(WaveAllocation).where(
-                        WaveAllocation.execution_id == execution.id, WaveAllocation.active.is_(True)
-                    ))), Decimal("0"))
-                    remaining = execution.quantity - execution.cancelled_quantity - allocated
-                    if remaining > 0:
-                        db.add(WaveAllocation(wave_id=wave.id, execution_id=execution.id,
-                                              approval_id=approval.id, quantity=remaining))
-                        audit(db, user, "execution", execution.id, "procurement_handoff",
-                              after={"wave_id": wave.id, "quantity": str(remaining)})
+            # Each position goes to its own wave if the leader named one, else to the common choice, else to the
+            # request's wave. A planned wave the leader names means a new working wave copied from it; positions
+            # sent to the same plan share that one copy. The plan stays for further calculations.
+            chosen = {execution.id: line_waves.get(execution.id) or data.wave_id or req.wave_id
+                      for execution in executions}
+            ids = {value for value in (req.wave_id, *chosen.values()) if value}
+            for wave_id in sorted(ids):
+                advisory(db, f"wave:{wave_id}")
+            targets: dict[tuple[str, bool], Wave] = {}
+            touched: dict[str, Wave] = {}
+            placed: dict[str, Wave] = {}
+            for execution in executions:
+                wave_id = chosen[execution.id]
+                if not wave_id:
+                    continue
+                explicit = execution.id in line_waves or bool(data.wave_id)
+                key = (wave_id, explicit)
+                if key not in targets:
+                    found = lock(db, Wave, wave_id) if db.get(Wave, wave_id) else None
+                    if not found:
+                        error("WAVE_REQUIRED", "Волна не найдена", field="wave_id")
+                    usable(found, field="wave_id")
+                    if found.status not in OPEN_WAVES:
+                        error("WAVE_CLOSED", "Для передачи в закупки выберите открытую волну", field="wave_id")
+                    targets[key] = working_wave(db, user, found, f"Подтверждён заказ по заявке №{req.number}",
+                                                new=explicit and found.kind == "plan")
+                wave = targets[key]
+                quote = check_execution_quote(db, execution)
+                if wave.supplier_id != quote.supplier_id:
+                    error("WAVE_SUPPLIER", "Волна не соответствует поставщику подтверждённых позиций",
+                          field="wave_id")
+                allocated = sum((row.quantity for row in db.scalars(select(WaveAllocation).where(
+                    WaveAllocation.execution_id == execution.id, WaveAllocation.active.is_(True)
+                ))), Decimal("0"))
+                remaining = execution.quantity - execution.cancelled_quantity - allocated
+                if remaining > 0:
+                    db.add(WaveAllocation(wave_id=wave.id, execution_id=execution.id,
+                                          approval_id=approval.id, quantity=remaining))
+                    audit(db, user, "execution", execution.id, "procurement_handoff",
+                          after={"wave_id": wave.id, "quantity": str(remaining)})
+                touched[wave.id] = wave
+                placed[execution.id] = wave
+            for wave in touched.values():
                 wave.version += 1
-                if data.wave_id and req.wave_id != wave.id:
-                    # Later calculations of the request share costs with the orders it now has in this wave.
-                    before = {"wave_id": req.wave_id}
-                    req.wave_id = wave.id
-                    audit(db, user, "request", req.id, "assign_wave", before=before, after={"wave_id": wave.id},
-                          reason=f"Волна указана руководителем при согласовании: {wave.number}")
+            # Later calculations of the request share costs with the orders it now has in the leader's wave: the
+            # common choice, or the wave of the first position when only positions were given their waves.
+            common = targets.get((data.wave_id, True)) if data.wave_id else next(
+                (placed[execution.id] for execution in executions if execution.id in line_waves and execution.id in placed),
+                None)
+            if common and req.wave_id != common.id:
+                before = {"wave_id": req.wave_id}
+                req.wave_id = common.id
+                audit(db, user, "request", req.id, "assign_wave", before=before, after={"wave_id": common.id},
+                      reason=f"Волна указана руководителем при согласовании: {common.number}")
             req.version += 1
             recalculate_fulfillment(db, req.id)
         approval.status, approval.reason = data.decision, data.reason
@@ -951,6 +978,12 @@ def update_wave(wave_id: str, data: WaveUpdate, db: DB, user: Actor):
                             "Не весь объём подтверждён фактическими событиями или есть незакрытая претензия",
                         )
             wave.status = data.status
+        if data.number is not None and data.number.strip() != wave.number:
+            number = " ".join(data.number.split())
+            advisory(db, f"wave-number:{number}")
+            if db.scalar(select(Wave.id).where(Wave.number == number, Wave.id != wave.id)):
+                error("WAVE_NUMBER", f"Волна «{number}» уже есть. Выберите другое название", 409, field="number")
+            wave.number = number
         for field, value in wave_schedule(data, wave).items():
             setattr(wave, field, value)
         wave.version += 1

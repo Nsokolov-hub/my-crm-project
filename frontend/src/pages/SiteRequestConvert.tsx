@@ -1,6 +1,8 @@
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
+import { FileSpreadsheet, Plus, Trash2 } from 'lucide-react';
 import { Badge, Button, ErrorBox, Loading, Modal, Section } from '../components/ui';
 import { units } from '../lib/format';
+import { api } from '../lib/api';
 import { useApi, useCommand, useDirtyProtection } from '../lib/hooks';
 import '../styles/site-requests.scss';
 
@@ -64,6 +66,18 @@ type Conversion = {
 };
 
 const NEW = 'new';
+const emptyLine = {
+  site_item_id: null,
+  description: '',
+  article: null,
+  cas: null,
+  packaging: null,
+  quantity: null,
+  unit: 'pcs',
+  allow_analogue: false,
+  comment: null,
+  include: true,
+};
 const blank = (value: string | null | undefined) => (value && value.trim() ? value.trim() : null);
 
 function TextField({
@@ -120,7 +134,11 @@ function ConvertForm({
   const [contact, setContact] = useState<ContactCard>(data.proposal.contact);
   const [title, setTitle] = useState(data.proposal.title);
   const [lines, setLines] = useState(
-    data.proposal.items.map((line) => ({ ...line, include: true })),
+    data.proposal.items.map((line, index) => ({
+      ...line,
+      include: true,
+      key: line.site_item_id ?? `site-${index}`,
+    })),
   );
   const [dirty, setDirty] = useState(false);
   const operation = useCommand();
@@ -136,6 +154,50 @@ function ConvertForm({
     setLines((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
     setDirty(true);
   }
+  // Business remark of 5 November 2026: the lines are free — remove them, add new ones or load them from Excel.
+  function removeLine(index: number) {
+    setLines((rows) => rows.filter((_, i) => i !== index));
+    setDirty(true);
+  }
+  function addLine() {
+    setLines((rows) => [...rows, { ...emptyLine, key: nextKey() }]);
+    setDirty(true);
+  }
+  const keyCounter = useRef(0);
+  const nextKey = () => `new-${(keyCounter.current += 1)}`;
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [tableBusy, setTableBusy] = useState(false);
+  const [tableError, setTableError] = useState<unknown>();
+  const [tableNote, setTableNote] = useState('');
+  async function loadTable(file: File | undefined, replace: boolean) {
+    if (!file || tableBusy) return;
+    setTableBusy(true);
+    setTableError(undefined);
+    setTableNote('');
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const result = await api<{
+        items: Line[];
+        errors: { row_number: number; errors: string[] }[];
+      }>(`/site-requests/${siteRequestId}/conversion/table`, { method: 'POST', body });
+      const loaded = result.items.map((line) => ({ ...line, include: true, key: nextKey() }));
+      setLines((rows) => (replace ? loaded : [...rows, ...loaded]));
+      setDirty(true);
+      setTableNote(
+        `Из таблицы добавлено позиций: ${loaded.length}.` +
+          (result.errors.length
+            ? ` Не прочитаны строки: ${result.errors.map((row) => row.row_number).join(', ')}.`
+            : ''),
+      );
+    } catch (cause) {
+      setTableError(cause);
+    } finally {
+      setTableBusy(false);
+      if (fileInput.current) fileInput.current.value = '';
+    }
+  }
+  const [replaceLines, setReplaceLines] = useState(false);
   function close() {
     if (!dirty || window.confirm('Закрыть окно без создания заявки?')) onClose();
   }
@@ -366,10 +428,60 @@ function ConvertForm({
             />
           </div>
         </Section>
-        {lines.length > 0 && (
-          <Section
-            title={`Позиции (${lines.filter((line) => line.include).length} из ${lines.length})`}
-          >
+        <Section
+          title={`Позиции (${lines.filter((line) => line.include).length} из ${lines.length})`}
+        >
+          <div className="convert-lines-actions inline-actions">
+            <Button type="button" variant="secondary" onClick={addLine}>
+              <Plus size={16} /> Добавить позицию
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              busy={tableBusy}
+              onClick={() => fileInput.current?.click()}
+            >
+              <FileSpreadsheet size={16} /> Загрузить из Excel
+            </Button>
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={replaceLines}
+                onChange={(e) => setReplaceLines(e.target.checked)}
+              />
+              Заменить текущие позиции
+            </label>
+            {lines.length > 0 && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  if (window.confirm('Удалить все позиции из окна?')) {
+                    setLines([]);
+                    setDirty(true);
+                  }
+                }}
+              >
+                <Trash2 size={16} /> Удалить все
+              </Button>
+            )}
+            <input
+              ref={fileInput}
+              type="file"
+              hidden
+              aria-label="Таблица позиций"
+              accept=".xlsx,.csv"
+              onChange={(e) => void loadTable(e.target.files?.[0], replaceLines)}
+            />
+          </div>
+          <p className="muted">
+            Таблица читается как при загрузке позиций в заявку: наименование, артикул, CAS, фасовка,
+            количество и единица — по названиям столбцов. Строки можно поправить перед созданием
+            заявки.
+          </p>
+          {tableNote && <p className="info-note">{tableNote}</p>}
+          <ErrorBox error={tableError} />
+          {lines.length > 0 && (
             <div className="table-scroll">
               <table className="convert-lines">
                 <thead>
@@ -383,11 +495,12 @@ function ConvertForm({
                     <th>Ед.</th>
                     <th>Аналог допустим</th>
                     <th>Комментарий</th>
+                    <th aria-label="Удалить" />
                   </tr>
                 </thead>
                 <tbody>
                   {lines.map((line, index) => (
-                    <tr key={line.site_item_id ?? index}>
+                    <tr key={line.key}>
                       <td>
                         <input
                           type="checkbox"
@@ -405,9 +518,10 @@ function ConvertForm({
                         />
                       </td>
                       {(['article', 'cas', 'packaging'] as const).map((key) => (
-                        <td key={key}>
+                        <td key={key} className={key === 'article' ? 'article-cell' : undefined}>
                           <input
                             aria-label={`${{ article: 'Артикул', cas: 'CAS', packaging: 'Фасовка' }[key]} позиции ${index + 1}`}
+                            title={line[key] ?? ''}
                             value={line[key] ?? ''}
                             onChange={(e) => editLine(index, { [key]: e.target.value })}
                           />
@@ -451,13 +565,23 @@ function ConvertForm({
                           onChange={(e) => editLine(index, { comment: e.target.value })}
                         />
                       </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={`Удалить позицию ${index + 1}`}
+                          onClick={() => removeLine(index)}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </Section>
-        )}
+          )}
+        </Section>
       </div>
       <div className="modal-footer">
         <Button variant="secondary" type="button" onClick={close}>

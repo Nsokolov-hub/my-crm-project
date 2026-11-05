@@ -72,7 +72,7 @@ function mockCalculator() {
           },
         ],
       };
-    if (path.endsWith('/wave-expenses')) return { expenses: [] };
+    if (path.includes('/wave-expenses')) return { expenses: [] };
     return { items: [] };
   });
 }
@@ -159,7 +159,7 @@ it('shows a plan with its working waves, without shipping stages, and archives i
   expect(screen.getByRole('columnheader', { name: 'В рабочей волне, шт.' })).toBeVisible();
   expect(screen.queryByRole('heading', { name: 'Распределённые позиции' })).not.toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Изменить сроки' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Изменить название и сроки' }));
   expect(screen.queryByLabelText(/Состояние/)).not.toBeInTheDocument();
   expect(screen.getByLabelText(/Неделя отправки/)).toHaveValue(51);
   fireEvent.click(screen.getByRole('button', { name: 'Отмена' }));

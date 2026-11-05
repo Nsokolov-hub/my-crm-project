@@ -91,7 +91,8 @@ def test_new_client_contact_and_request_in_one_command(site):
             'Oxcarbazepine CRS — EDQM', 'Y0001897', '28721-07-5', '100 mg', 'pcs')
         assert item.allow_analogue is True and item.desired_at is not None
         assert item.comment == 'Клиент просит подобрать аналог\nФасовка указана клиентом'
-        assert item.source_values == ['EDQM', 'Подберите аналог']
+        # 5 November 2026: an ordinary line; the supplier does not get the site's «Аналоги» column.
+        assert (item.source_columns, item.source_values) == ([], [])
         copy = db.scalar(select(FileRecord).where(FileRecord.request_id == request.id))
         assert copy.name == 'spec.pdf' and copy.status == 'quarantined'
         assert db.scalar(select(FileRecord).where(FileRecord.site_request_id == site_request))

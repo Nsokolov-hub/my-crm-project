@@ -200,7 +200,8 @@ def get_preference(key: str, user: User = Depends(current_user),
 @router.put("/me/preferences/{key}")
 def save_preference(key: str, body: PreferenceInput, user: User = Depends(current_user),
                     db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
-    if any(len(name) > 60 or (isinstance(value, str) and len(value) > 300) for name, value in body.value.items()):
+    # 2 000 characters hold the ids of about 50 clients chosen in the requests filter.
+    if any(len(name) > 60 or (isinstance(value, str) and len(value) > 2000) for name, value in body.value.items()):
         raise DomainError("PREFERENCE_TOO_LONG", "Слишком длинное значение настройки", 422, "value")
     row = db.scalar(select(UserPreference).where(UserPreference.user_id == user.id,
                                                  UserPreference.key == preference_key(key)))

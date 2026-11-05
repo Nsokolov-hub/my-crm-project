@@ -273,27 +273,60 @@ export function ApprovalDecision({
 }) {
   // Business remark of 28 October 2026: the leader names the wave the approved orders go to.
   const waves = useApi<{
-    items: (Entity & { label: string })[];
+    items: (Entity & { label: string; supplier_id?: string | null })[];
     wave_id: string | null;
     required: boolean;
+    lines?: { execution_id: string; supplier_id: string | null; label: string }[];
   }>(`/approvals/${row.id}/waves`);
   if (waves.loading) return null;
   const choice = waves.data;
+  const lines = choice?.required ? choice.lines || [] : [];
+  // Business remark of 5 November 2026 (Тимур): each position may go to its own wave — two positions with the
+  // big supply later, one with the nearest.
+  const lineFields: Field[] =
+    lines.length > 1
+      ? lines.map((line) => ({
+          name: `line_wave:${line.execution_id}`,
+          label: line.label,
+          type: 'select' as const,
+          value: '',
+          options: [
+            { value: '', label: 'Как выбрано выше' },
+            ...choice!.items
+              .filter((wave) => !line.supplier_id || wave.supplier_id === line.supplier_id)
+              .map((wave) => ({ value: wave.id, label: wave.label })),
+          ],
+          wide: true,
+        }))
+      : [];
   const waveField: Field[] = choice?.required
     ? [
         {
           name: 'wave_id',
-          label: 'Волна поставки',
+          label: lines.length > 1 ? 'Волна поставки для всех позиций' : 'Волна поставки',
           type: 'select',
           value: choice.wave_id || '',
-          options: choice.items.map((wave) => ({ value: wave.id, label: wave.label })),
+          options: [
+            ...(lines.length > 1 ? [{ value: '', label: 'Выберите волну' }] : []),
+            ...choice.items.map((wave) => ({ value: wave.id, label: wave.label })),
+          ],
           help: choice.items.length
-            ? 'Обязательно при согласовании. Открытая рабочая волна поставщика — заказ добавится в неё; «Новая рабочая волна» — копия плановой волны с этим заказом.'
+            ? 'Обязательно при согласовании. Открытая рабочая волна поставщика — заказ добавится в неё; «Новая рабочая волна» — копия плановой волны с этим заказом, плановая остаётся для других расчётов.' +
+              (lines.length > 1
+                ? ' Ниже у каждой позиции можно выбрать свою волну: например, две — с большой поставкой позже, одну — с ближайшей.'
+                : '')
             : 'У поставщика нет открытой волны: заведите плановую волну в «Волнах поставок».',
           wide: true,
         },
+        ...lineFields,
       ]
     : [];
+  const lineChoices = (values: Record<string, unknown>) =>
+    Object.fromEntries(
+      lines
+        .map((line) => [line.execution_id, String(values[`line_wave:${line.execution_id}`] || '')])
+        .filter(([, wave]) => wave),
+    );
   return (
     <RecordForm
       title="Решение по составу исполнения"
@@ -320,15 +353,30 @@ export function ApprovalDecision({
           help: 'Обязательно при возврате и отклонении.',
         },
       ]}
-      transform={(values) => ({
-        ...values,
-        wave_id: values.decision === 'approved' && values.wave_id ? values.wave_id : null,
-      })}
-      validate={(values): Record<string, string> =>
-        choice?.required && values.decision === 'approved' && !values.wave_id
-          ? { wave_id: 'Укажите волну, в которую уходят заказы' }
-          : {}
-      }
+      transform={(values) => {
+        const approved = values.decision === 'approved';
+        const rest = Object.fromEntries(
+          Object.entries(values).filter(([key]) => !key.startsWith('line_wave:')),
+        );
+        return {
+          ...rest,
+          wave_id: approved && values.wave_id ? values.wave_id : null,
+          line_waves: approved ? lineChoices(values) : {},
+        };
+      }}
+      validate={(values): Record<string, string> => {
+        if (!choice?.required || values.decision !== 'approved' || values.wave_id) return {};
+        const chosen = lineChoices(values);
+        const missing = lines.filter((line) => !chosen[line.execution_id]);
+        return lines.length > 1 && !missing.length
+          ? {}
+          : {
+              wave_id:
+                lines.length > 1
+                  ? 'Укажите волну для всех позиций или для каждой позиции ниже'
+                  : 'Укажите волну, в которую уходят заказы',
+            };
+      }}
       note="Согласование передаёт подтверждённые позиции в закупки, в указанную волну. Заявка переходит в эту волну: следующие расчёты делят её расходы с её заказами. Оплата может поступить позже по условиям заказа."
       onClose={onClose}
       onSuccess={onSuccess}
@@ -901,7 +949,9 @@ export function Waves() {
               <div className="inline-actions">
                 {writable && (
                   <Button variant="secondary" onClick={() => setEditing(true)}>
-                    {plan || !leader ? 'Изменить сроки' : 'Изменить сроки и состояние'}
+                    {plan || !leader
+                      ? 'Изменить название и сроки'
+                      : 'Изменить название, сроки и состояние'}
                   </Button>
                 )}
                 {writable && leader && selected.status !== 'cancelled' && (
@@ -1269,6 +1319,8 @@ export function Waves() {
           initial={{ ...selected, ...waveWeekInitial(selected) }}
           extra={{ version: selected.version }}
           fields={[
+            // Business remark of 5 November 2026: the name of a wave can be changed.
+            { name: 'number', label: 'Название волны', required: true },
             ...(plan || !leader
               ? []
               : [

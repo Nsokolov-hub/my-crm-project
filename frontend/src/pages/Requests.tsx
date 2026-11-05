@@ -1,4 +1,13 @@
-import { ArrowDown, ArrowUp, Columns3, List, Plus, Search, SlidersHorizontal } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Building2,
+  Columns3,
+  List,
+  Plus,
+  Search,
+  SlidersHorizontal,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { RecordForm } from '../components/Form';
@@ -156,6 +165,118 @@ function savedColumns(value: Record<string, unknown> | null | undefined): string
 }
 
 /** The «Столбцы» menu: show or hide a column and move it; every change is saved for the employee. */
+type ClientOption = { id: string; name: string };
+const clientIdList = (value: string) => value.split(',').filter(Boolean);
+/**
+ * «Клиенты» (business remark of 5 November 2026): requests of several clients at once. The clients are searched
+ * by name; the chosen ones stay at the top of the menu and are saved with the other filters.
+ */
+function ClientFilter({ value, onChange }: { value: string; onChange: (ids: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounced(search);
+  const [names, setNames] = useState<Record<string, string>>({});
+  const root = useRef<HTMLDivElement>(null);
+  const chosen = clientIdList(value);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => event.key === 'Escape' && setOpen(false);
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [open]);
+  // Saved filters hold ids only: the names of the chosen clients are read once.
+  const unknown = chosen.filter((id) => !names[id]);
+  const known = useApi<Page<ClientOption>>(
+    unknown.length
+      ? `/counterparties?${new URLSearchParams({ ids: unknown.join(','), page_size: '100' })}`
+      : null,
+  );
+  useEffect(() => {
+    const rows = known.data?.items;
+    if (rows?.length)
+      setNames((current) => ({
+        ...current,
+        ...Object.fromEntries(rows.map((row) => [row.id, row.name])),
+      }));
+  }, [known.data]);
+  const found = useApi<Page<ClientOption>>(
+    open
+      ? `/counterparties?${new URLSearchParams({ q: debouncedSearch, kind: 'client', page_size: '20' })}`
+      : null,
+  );
+  function toggle(client: ClientOption, on: boolean) {
+    setNames((current) => ({ ...current, [client.id]: client.name }));
+    onChange((on ? [...chosen, client.id] : chosen.filter((id) => id !== client.id)).join(','));
+  }
+  const label =
+    chosen.length === 0
+      ? 'Все клиенты'
+      : chosen.length === 1
+        ? names[chosen[0]] || 'Клиент: 1'
+        : `Клиенты: ${chosen.length}`;
+  const offered = (found.data?.items || []).filter((row) => !chosen.includes(row.id));
+  return (
+    <div className="column-picker client-filter" ref={root}>
+      <button
+        type="button"
+        className="column-picker-toggle"
+        aria-expanded={open}
+        aria-haspopup="true"
+        aria-label={`Клиенты: ${chosen.length ? chosen.map((id) => names[id] || id).join(', ') : 'все'}`}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Building2 size={16} /> <span className="client-filter-label">{label}</span>
+      </button>
+      {open && (
+        <div className="column-picker-menu" role="group" aria-label="Фильтр по клиентам">
+          <input
+            aria-label="Найти клиента"
+            placeholder="Найти клиента…"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            autoFocus
+          />
+          <ul>
+            {chosen.map((id) => (
+              <li key={id} className="shown">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked
+                    onChange={() => toggle({ id, name: names[id] || id }, false)}
+                  />
+                  {names[id] || 'Клиент'}
+                </label>
+              </li>
+            ))}
+            {offered.map((client) => (
+              <li key={client.id}>
+                <label>
+                  <input type="checkbox" checked={false} onChange={() => toggle(client, true)} />
+                  {client.name}
+                </label>
+              </li>
+            ))}
+          </ul>
+          {found.loading && <p>Поиск…</p>}
+          {!found.loading && !offered.length && <p>Клиентов с таким названием не нашлось.</p>}
+          {chosen.length > 0 && (
+            <button type="button" className="chip-button" onClick={() => onChange('')}>
+              Показать всех клиентов
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 function ColumnPicker({
   columns,
   onChange,
@@ -275,6 +396,7 @@ type Filters = {
   q: string;
   stage: string;
   owner_id: string;
+  client_ids: string;
   proposal_from: string;
   proposal_to: string;
   sort: string;
@@ -285,6 +407,7 @@ const EMPTY: Filters = {
   q: '',
   stage: '',
   owner_id: '',
+  client_ids: '',
   proposal_from: '',
   proposal_to: '',
   sort: 'created_at',
@@ -297,6 +420,7 @@ function fromSaved(value: Record<string, unknown> | null | undefined): Filters {
     q: text('q'),
     stage: text('stage'),
     owner_id: text('owner_id'),
+    client_ids: text('client_ids'),
     proposal_from: text('proposal_from'),
     proposal_to: text('proposal_to'),
     sort: text('sort') || EMPTY.sort,
@@ -403,6 +527,7 @@ export function Requests() {
     direction,
   });
   if (filters.owner_id) query.set('owner_id', filters.owner_id);
+  if (filters.client_ids) query.set('client_ids', filters.client_ids);
   if (filters.proposal_from) query.set('proposal_from', filters.proposal_from);
   if (filters.proposal_to) query.set('proposal_to', filters.proposal_to);
   if (params.get('client_id')) query.set('client_id', String(params.get('client_id')));
@@ -477,6 +602,10 @@ export function Requests() {
               </option>
             ))}
           </select>
+          <ClientFilter
+            value={filters.client_ids}
+            onChange={(client_ids) => change({ client_ids })}
+          />
           {view === 'table' && (
             <ColumnPicker
               columns={columns}

@@ -80,6 +80,17 @@
   min-width: 220px;
 }
 
+// A catalogue number is read whole: «1235831-1AMP» must not look like «235831-1AMP».
+.convert-lines td.article-cell input {
+  min-width: 170px;
+}
+
+.convert-lines-actions {
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
 .convert-lines textarea {
   min-height: 34px;
   resize: vertical;

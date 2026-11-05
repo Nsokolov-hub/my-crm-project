@@ -95,7 +95,7 @@ function mockCalculator() {
           },
         ],
       };
-    if (path.endsWith('/wave-expenses')) return { expenses: [] };
+    if (path.includes('/wave-expenses')) return { expenses: [] };
     return { items: [] };
   });
 }

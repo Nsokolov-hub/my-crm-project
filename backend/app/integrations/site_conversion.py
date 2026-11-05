@@ -7,13 +7,14 @@ client (if new), the contact and the request: responsible — the same employee,
 are copied and the request keeps the link to its site request, so the traffic source stays visible.
 """
 
+import csv
 import re
 from datetime import datetime, time
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, File, Header, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -29,9 +30,10 @@ from app.crm.codes import next_request_number
 from app.crm.common import active_user, contact_matches, save
 from app.crm.models import Contact, Counterparty, Request, RequestItem, RequestItemRevision, Task
 from app.crm.requests import structured_item_fields
+from app.crm.table_imports import infer_mapping, read_table, request_plan
 from app.crm.text_search import normalize
 from app.integrations.models import SiteRequest, SiteRequestItem
-from app.integrations.site_contract import ConvertInput
+from app.integrations.site_contract import MAX_ITEMS, ConvertInput
 from app.integrations.site_requests import OPEN_TASK_STATUSES, check_site_request, detail_view
 
 router = APIRouter(tags=['Заявки с сайта'])
@@ -45,8 +47,7 @@ LEGAL_FORMS = {'ооо', 'оао', 'зао', 'пао', 'ао', 'ип', 'нао',
 UNITS = {'pack': 'pcs', 'pcs': 'pcs', 'mg': 'mg', 'g': 'g', 'kg': 'kg', 'ml': 'ml', 'l': 'l'}
 ANALOGUE_LABELS = {'none': 'Только этот товар', 'allowed': 'Готовы рассмотреть аналоги',
                    'requested': 'Подберите аналог'}
-# Columns of the site data shown next to the CRM fields of each line, as for imported tables.
-SOURCE_COLUMNS = ['Бренд', 'Аналоги (сайт)']
+IMPORT_UNITS = {'g', 'kg', 'mg', 'l', 'ml', 'pcs'}
 
 
 def phone_key(value: str | None) -> str:
@@ -268,15 +269,13 @@ def convert(entity_id: str, body: ConvertInput, user: Actor, db: DB,
         request = Request(title=body.title, client_id=party.id, contact_id=contact.id, owner_id=owner.id,
                           number=next_request_number(db), source=SOURCE)
         save(db, user, request, 'request')
-        site_items = {item.id: item for item in db.scalars(
-            select(SiteRequestItem).where(SiteRequestItem.site_request_id == row.id))}
         desired = desired_moment(row)
         for line in body.items:
-            site_item = site_items.get(line.site_item_id or '')
             data = structured_item_fields(db, {**line.model_dump(exclude={'site_item_id'}), 'desired_at': desired})
-            item = RequestItem(request_id=request.id, **data, source_columns=SOURCE_COLUMNS if site_item else [],
-                               source_values=[site_item.brand or '', ANALOGUE_LABELS[site_item.analogue]]
-                               if site_item else [])
+            # Business remark of 5 November 2026: a site line is an ordinary line of the request. Its name,
+            # catalogue number, packaging and quantity go to the supplier; the brand stays in the description and
+            # the customer's choice about analogues in «Аналог допустим» — it is not the supplier's business.
+            item = RequestItem(request_id=request.id, **data, source_columns=[], source_values=[])
             snapshot = save(db, user, item, 'request_item')
             db.add(RequestItemRevision(item_id=item.id, revision=1, snapshot=snapshot, author_id=user.id))
         files = copy_files(db, user, row, request)
@@ -320,3 +319,38 @@ def site_source(db: Session, request_id: str) -> dict[str, Any] | None:
             'channel': attribution.channel if attribution else None,
             'last_touch': ' / '.join(value for value in last if value) or None}
 
+
+@router.post('/site-requests/{entity_id}/conversion/table')
+def conversion_table(entity_id: str, user: Actor, db: DB, file: UploadFile = File()) -> dict[str, Any]:
+    """«Загрузить из Excel» in the window «Создать заявку»: the table's lines, read as a request's import reads
+    them (business remark of 5 November 2026). Nothing is saved: the lines join the window and can be edited."""
+    require_permission(db, user, 'site_requests.write')
+    row = check_site_request(db, user, entity_id)
+    if row.status in ('converted', 'rejected'):
+        raise DomainError('SITE_REQUEST_CLOSED', 'Заявка с сайта уже обработана', 409)
+    content = file.file.read(settings.max_file_size + 1)
+    if len(content) > settings.max_file_size:
+        raise DomainError('FILE_TOO_LARGE', 'Файл превышает допустимый размер', 413)
+    try:
+        columns, rows = read_table(content, file.filename or '')
+    except csv.Error:
+        raise DomainError('IMPORT_INVALID', 'Проверьте формат таблицы', 422) from None
+    mapping = infer_mapping(columns, {}, 'items')
+    items, errors = [], []
+    for entry in request_plan(columns, rows, mapping):
+        if entry['errors']:
+            errors.append({'row_number': entry['row_number'], 'errors': entry['errors']})
+            continue
+        data = entry['data']
+        unit = data.get('unit')
+        items.append({
+            'site_item_id': None, 'description': data['description'][:10000], 'article': data.get('article'),
+            'cas': data.get('cas'), 'packaging': data.get('packaging'),
+            'quantity': quantity_text(Decimal(data['quantity'])) if data.get('quantity') else None,
+            # A unit the request cannot hold («ampoule») is left for the employee to choose.
+            'unit': unit if unit in IMPORT_UNITS else None,
+            'allow_analogue': False, 'comment': None,
+        })
+    if len(items) > MAX_ITEMS:
+        raise DomainError('IMPORT_LIMIT', f'В заявке может быть не больше {MAX_ITEMS} позиций', 422)
+    return {'items': items, 'errors': errors, 'mapping': mapping}

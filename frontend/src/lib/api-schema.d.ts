@@ -3501,6 +3501,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/site-requests/{entity_id}/conversion/table": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Conversion Table
+         * @description «Загрузить из Excel» in the window «Создать заявку»: the table's lines, read as a request's import reads
+         *     them (business remark of 5 November 2026). Nothing is saved: the lines join the window and can be edited.
+         */
+        post: operations["conversion_table_api_v1_site_requests__entity_id__conversion_table_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/integrations/site/manufacturers": {
         parameters: {
             query?: never;
@@ -3756,6 +3777,11 @@ export interface components {
             request_id: string;
             /** Items */
             items?: components["schemas"]["ConvertItemInput"][];
+        };
+        /** Body_conversion_table_api_v1_site_requests__entity_id__conversion_table_post */
+        Body_conversion_table_api_v1_site_requests__entity_id__conversion_table_post: {
+            /** File */
+            file: string;
         };
         /** Body_preview_api_v1_imports_preview_post */
         Body_preview_api_v1_imports_preview_post: {
@@ -4342,6 +4368,10 @@ export interface components {
             reason: string;
             /** Wave Id */
             wave_id?: string | null;
+            /** Line Waves */
+            line_waves?: {
+                [key: string]: string;
+            };
         };
         /** DocumentRef */
         DocumentRef: {
@@ -6329,6 +6359,8 @@ export interface components {
             idempotency_key: string;
             /** Version */
             version: number;
+            /** Number */
+            number?: string | null;
             /** Status */
             status?: ("planned" | "assembling" | "closed" | "shipped" | "arrived" | "completed" | "cancelled") | null;
             /** Close Date */
@@ -8780,6 +8812,7 @@ export interface operations {
         parameters: {
             query?: {
                 q?: string;
+                ids?: string;
                 kind?: string | null;
                 client_base?: string | null;
                 contact_eligible?: boolean;
@@ -10372,6 +10405,7 @@ export interface operations {
                 q?: string;
                 stage?: string | null;
                 client_id?: string | null;
+                client_ids?: string;
                 owner_id?: string | null;
                 proposal_from?: string | null;
                 proposal_to?: string | null;
@@ -19201,6 +19235,62 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ConvertInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    conversion_table_api_v1_site_requests__entity_id__conversion_table_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_conversion_table_api_v1_site_requests__entity_id__conversion_table_post"];
             };
         };
         responses: {

@@ -31,7 +31,7 @@ from app.crm.models import Request, RequestItem, RequestItemRevision, Task
 from app.crm.requests import structured_item_fields
 from app.integrations.models import SiteRequest, SiteRequestAttribution, SiteRequestItem
 from app.integrations.site_contract import ConvertItemInput, Input
-from app.integrations.site_conversion import ANALOGUE_LABELS, SOURCE_COLUMNS, copy_files, desired_moment
+from app.integrations.site_conversion import ANALOGUE_LABELS, copy_files, desired_moment
 from app.integrations.site_requests import OPEN_TASK_STATUSES, check_site_request, detail_view, sees_all
 
 router = APIRouter(tags=['Заявки с сайта'])
@@ -205,15 +205,11 @@ def attach(entity_id: str, body: AttachInput, user: Actor, db: DB,
         request: Request = check_request(db, user, body.request_id, 'requests.write')
         if request.closed_at is not None or request.archived:
             raise DomainError('REQUEST_CLOSED', 'Заявка CRM закрыта или в архиве', 409, 'request_id')
-        site_items = {item.id: item for item in db.scalars(
-            select(SiteRequestItem).where(SiteRequestItem.site_request_id == row.id))}
         desired = desired_moment(row)
         for line in body.items:
-            site_item = site_items.get(line.site_item_id or '')
             data = structured_item_fields(db, {**line.model_dump(exclude={'site_item_id'}), 'desired_at': desired})
-            item = RequestItem(request_id=request.id, **data, source_columns=SOURCE_COLUMNS if site_item else [],
-                               source_values=[site_item.brand or '', ANALOGUE_LABELS[site_item.analogue]]
-                               if site_item else [])
+            # An ordinary line, as in «Создать заявку»: no «Аналоги (сайт)» for the supplier (5 November 2026).
+            item = RequestItem(request_id=request.id, **data, source_columns=[], source_values=[])
             snapshot = save(db, user, item, 'request_item')
             db.add(RequestItemRevision(item_id=item.id, revision=1, snapshot=snapshot, author_id=user.id))
         files = copy_files(db, user, row, request)

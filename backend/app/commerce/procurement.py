@@ -399,15 +399,24 @@ def rfq_workbook(db: Session, columns: list[str], rows: list[list], items: list[
         book.close()
 
 
+# Lines made from site requests before 5 November 2026 kept only the site's brand and the customer's choice about
+# analogues as «source columns». The supplier gets the line's own fields instead: name, packing, quantity, article.
+SITE_SOURCE_COLUMNS = ["Бренд", "Аналоги (сайт)"]
+
+
+def supplier_columns(item) -> list[str]:
+    return [] if list(item.source_columns or []) == SITE_SOURCE_COLUMNS else list(item.source_columns or [])
+
+
 def rfq_table(db, items):
     """Use the same original columns and values for XLSX and inline mail."""
     manual_columns = ["Name", "Packing", "CAS", "Quantity", "Cost", "Article", "Comment", "Producer"]
-    columns = list(dict.fromkeys(col for item in items for col in item.source_columns))
-    if any(not item.source_columns for item in items):
+    columns = list(dict.fromkeys(col for item in items for col in supplier_columns(item)))
+    if any(not supplier_columns(item) for item in items):
         columns = list(dict.fromkeys([*columns, *manual_columns]))
     rows = []
     for item in items:
-        if item.source_columns:
+        if supplier_columns(item):
             values = dict(zip(item.source_columns, item.source_values, strict=True))
         else:
             n = db.get(Nomenclature, item.nomenclature_id) if item.nomenclature_id else None
@@ -445,7 +454,7 @@ def create_rfq(request_id: str, data: RfqIn, db: DB, user: Actor):
             )
             .order_by(RequestItem.created_at, RequestItem.id)
         ).all()
-        if len(items) != len(data.item_ids) or any(not row.source_columns and (not row.quantity or not row.unit) for row in items):
+        if len(items) != len(data.item_ids) or any(not supplier_columns(row) and (not row.quantity or not row.unit) for row in items):
             error("RFQ_ITEMS", "Укажите количество и единицу всех выбранных позиций")
         previous = db.get(SupplierRequest, data.parent_id) if data.parent_id else None
         if data.parent_id and (

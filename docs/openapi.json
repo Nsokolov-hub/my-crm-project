@@ -2373,6 +2373,16 @@
             }
           },
           {
+            "name": "ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Ids"
+            }
+          },
+          {
             "name": "kind",
             "in": "query",
             "required": false,
@@ -4218,6 +4228,16 @@
                 }
               ],
               "title": "Client Id"
+            }
+          },
+          {
+            "name": "client_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Client Ids"
             }
           },
           {
@@ -13762,6 +13782,63 @@
         }
       }
     },
+    "/api/v1/site-requests/{entity_id}/conversion/table": {
+      "post": {
+        "tags": [
+          "Заявки с сайта"
+        ],
+        "summary": "Conversion Table",
+        "description": "«Загрузить из Excel» in the window «Создать заявку»: the table's lines, read as a request's import reads\nthem (business remark of 5 November 2026). Nothing is saved: the lines join the window and can be edited.",
+        "operationId": "conversion_table_api_v1_site_requests__entity_id__conversion_table_post",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_conversion_table_api_v1_site_requests__entity_id__conversion_table_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Conversion Table Api V1 Site Requests  Entity Id  Conversion Table Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/integrations/site/manufacturers": {
       "get": {
         "tags": [
@@ -14491,6 +14568,20 @@
           "request_id"
         ],
         "title": "AttachInput"
+      },
+      "Body_conversion_table_api_v1_site_requests__entity_id__conversion_table_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_conversion_table_api_v1_site_requests__entity_id__conversion_table_post"
       },
       "Body_preview_api_v1_imports_preview_post": {
         "properties": {
@@ -16326,6 +16417,14 @@
               }
             ],
             "title": "Wave Id"
+          },
+          "line_waves": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "maxProperties": 500,
+            "title": "Line Waves"
           }
         },
         "additionalProperties": false,
@@ -22387,6 +22486,19 @@
             "type": "integer",
             "minimum": 1.0,
             "title": "Version"
+          },
+          "number": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Number"
           },
           "status": {
             "anyOf": [

@@ -146,16 +146,26 @@ function requestedQuantity(row: Entity): string {
   return row.request_packings ? plainQuantity(row.request_packings) : '1';
 }
 
+type WaveChooser = {
+  value: string;
+  options: React.ReactNode;
+  canChange: boolean;
+  busy: boolean;
+  error: unknown;
+  onChange: (waveId: string) => void;
+};
 function CalculationEditor({
   request,
   previous,
   initialIds,
+  wave,
   onClose,
   onSuccess,
 }: {
   request: Entity;
   previous?: Entity;
   initialIds: string[];
+  wave?: WaveChooser;
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -181,7 +191,11 @@ function CalculationEditor({
     complete_budget?: boolean;
     wave_version?: number;
     planned_volume?: PlannedVolumeRow[];
-  }>(request.wave_id ? `/requests/${request.id}/wave-expenses` : null);
+  }>(
+    request.wave_id
+      ? `/requests/${request.id}/wave-expenses?wave=${encodeURIComponent(String(request.wave_id))}`
+      : null,
+  );
   const command = useCommand();
   const budgetCommand = useCommand();
   const [profileId, setProfileId] = useState(
@@ -1108,10 +1122,29 @@ function CalculationEditor({
                   </p>
                 </div>
               </div>
+              {wave && (
+                <div className="calculation-wave">
+                  <label className="field">
+                    <span>Волна расчёта</span>
+                    <select
+                      aria-label="Волна расчёта"
+                      value={wave.value}
+                      disabled={!wave.canChange || wave.busy}
+                      onChange={(event) => wave.onChange(event.target.value)}
+                    >
+                      {wave.options}
+                    </select>
+                  </label>
+                  <p className="muted">
+                    Волна сохраняется в заявке сразу: расходы и объём ниже пересчитаются по ней.
+                  </p>
+                  <ErrorBox error={wave.error} />
+                </div>
+              )}
               {!request.wave_id ? (
                 <p className="info-note">
-                  Заявке не назначена волна. Выберите её внизу вкладки «Расчёты», в разделе «Волна
-                  поставки», и откройте расчёт снова.
+                  Заявке не назначена волна. Выберите её здесь — без неё расходы волны не
+                  посчитаются.
                 </p>
               ) : waveExpenses.loading ? (
                 <p className="muted">Загрузка планового объёма…</p>
@@ -2039,12 +2072,12 @@ export function RequestCalculations({
     setAssignedWaveId(String(request.wave_id || ''));
     setWaveId(String(request.wave_id || ''));
   }, [request.version, request.wave_id]);
-  async function saveWave(): Promise<boolean> {
+  async function saveWave(target: string = waveId): Promise<boolean> {
     const path = '/requests/' + request.id + '/wave';
     const save = (version: number) =>
       waveCommand.run<Entity>(
         path,
-        { request_version: version, wave_id: waveId || null },
+        { request_version: version, wave_id: target || null },
         'PUT',
         true,
       );
@@ -2088,6 +2121,36 @@ export function RequestCalculations({
     openWaves.find((wave) => wave.id === assignedWaveId) ||
     (missingWave.data?.id === assignedWaveId ? missingWave.data : undefined);
   const workingWaves = (assignedWave?.working_waves || []) as Entity[];
+  const waveOptions = (
+    <>
+      <option value="">Выберите волну</option>
+      {assignedWave && !openWaves.includes(assignedWave) && (
+        <option value={assignedWave.id}>
+          {waveKindLabel(assignedWave)} · {String(assignedWave.number)} ·{' '}
+          {assignedWave.archived ? 'в архиве' : display(assignedWave.status)}
+        </option>
+      )}
+      {(['plan', 'work'] as const).map((kind) => {
+        const rows = openWaves.filter((wave) => (wave.kind || 'work') === kind);
+        return rows.length > 0 ? (
+          <optgroup key={kind} label={kind === 'plan' ? 'Плановые' : 'Рабочие'}>
+            {rows.map((wave) => (
+              <option key={wave.id} value={wave.id}>
+                {String(wave.number)} · {String(wave.supplier_name || 'Поставщик не указан')} ·{' '}
+                {waveWeekLabel(wave, 'departure')}
+              </option>
+            ))}
+          </optgroup>
+        ) : null;
+      })}
+    </>
+  );
+  // Business remark of 5 November 2026: the wave is chosen in the calculation window too, next to the volume.
+  async function chooseWaveInEditor(target: string) {
+    const before = waveId;
+    setWaveId(target);
+    if (!(await saveWave(target))) setWaveId(before);
+  }
   const [editing, setEditing] = useState(launchQuoteItemIds.length > 0);
   const [initialIds, setInitialIds] = useState(launchQuoteItemIds);
   const [selected, setSelected] = useState<Entity>();
@@ -2136,26 +2199,7 @@ export function RequestCalculations({
             disabled={!auth.can('waves.write') || editing}
             onChange={(event) => setWaveId(event.target.value)}
           >
-            <option value="">Выберите волну</option>
-            {assignedWave && !openWaves.includes(assignedWave) && (
-              <option value={assignedWave.id}>
-                {waveKindLabel(assignedWave)} · {String(assignedWave.number)} ·{' '}
-                {assignedWave.archived ? 'в архиве' : display(assignedWave.status)}
-              </option>
-            )}
-            {(['plan', 'work'] as const).map((kind) => {
-              const rows = openWaves.filter((wave) => (wave.kind || 'work') === kind);
-              return rows.length > 0 ? (
-                <optgroup key={kind} label={kind === 'plan' ? 'Плановые' : 'Рабочие'}>
-                  {rows.map((wave) => (
-                    <option key={wave.id} value={wave.id}>
-                      {String(wave.number)} · {String(wave.supplier_name || 'Поставщик не указан')}{' '}
-                      · {waveWeekLabel(wave, 'departure')}
-                    </option>
-                  ))}
-                </optgroup>
-              ) : null;
-            })}
+            {waveOptions}
           </select>
           {auth.can('waves.write') && (
             <Button
@@ -2330,6 +2374,14 @@ export function RequestCalculations({
           request={{ ...request, version: requestVersion, wave_id: assignedWaveId }}
           previous={previous}
           initialIds={initialIds}
+          wave={{
+            value: assignedWaveId,
+            options: waveOptions,
+            canChange: auth.can('waves.write'),
+            busy: waveCommand.busy,
+            error: waveCommand.error,
+            onChange: (target) => void chooseWaveInEditor(target),
+          }}
           onClose={closeEditor}
           onSuccess={() => {
             closeEditor();
