@@ -20,6 +20,16 @@ import { WorkflowApprovals } from './Business';
 import { ApprovalDecision } from './Fulfillment';
 const names = { documents: 'Документы', payments: 'Оплаты', approvals: 'Согласования' };
 
+/** An approval named by its request and client, with positions, suppliers and waves under it. */
+export function ApprovalTitle({ row }: { row: Entity }) {
+  return (
+    <span className="stacked">
+      <strong>{String(row.title || `Решение · ${row.id.slice(0, 8)}`)}</strong>
+      {Boolean(row.details) && <small>{String(row.details)}</small>}
+    </span>
+  );
+}
+
 /** Client payments declared in requests and waiting for someone to confirm the receipt. */
 export function PaymentConfirmations() {
   const list = useApi<Page>('/payments?status=declared&page_size=100');
@@ -104,8 +114,28 @@ export function Registry({ kind }: { kind: keyof typeof names }) {
         refreshKey={revision}
         onSelect={setSelected}
         columns={[
-          { key: 'number', label: 'Номер', render: (r) => String(r.number || r.id.slice(0, 8)) },
+          kind === 'approvals'
+            ? {
+                // Business remark of 11 November 2026: the request, client, suppliers and waves, not an id.
+                key: 'request_number',
+                label: 'Согласование',
+                render: (r) => <ApprovalTitle row={r} />,
+              }
+            : {
+                key: 'number',
+                label: 'Номер',
+                render: (r) => String(r.number || r.id.slice(0, 8)),
+              },
           { key: 'status', label: 'Состояние', render: (r) => <Badge value={r.status} /> },
+          ...(kind === 'approvals'
+            ? [
+                {
+                  key: 'reviewer_name',
+                  label: 'Руководитель',
+                  render: (r: Entity) => String(r.reviewer_name || '—'),
+                },
+              ]
+            : []),
           ...(kind === 'approvals'
             ? []
             : [
@@ -120,12 +150,30 @@ export function Registry({ kind }: { kind: keyof typeof names }) {
       />
       {selected && !decision && (
         <Modal
-          title={String(selected.number || names[kind])}
+          title={String(selected.number || selected.title || names[kind])}
           onClose={() => setSelected(undefined)}
         >
           <div className="form-body">
             <DetailPairs
               values={{
+                ...(kind === 'approvals'
+                  ? {
+                      Заявка: selected.request_title
+                        ? `№${String(selected.request_number)} · ${String(selected.request_title)}`
+                        : `№${String(selected.request_number || '—')}`,
+                      Клиент: selected.client_name || '—',
+                      Позиции:
+                        [
+                          String(selected.details || '').split(' · ')[0],
+                          ...((selected.position_names as string[]) || []),
+                        ]
+                          .filter(Boolean)
+                          .join('; ') || '—',
+                      Поставщики: ((selected.supplier_names as string[]) || []).join(', ') || '—',
+                      Волны: ((selected.wave_numbers as string[]) || []).join(', ') || '—',
+                      Руководитель: selected.reviewer_name || '—',
+                    }
+                  : {}),
                 Состояние: selected.status,
                 Создано: date(selected.created_at, true),
                 Комментарий: selected.comment || selected.reason,

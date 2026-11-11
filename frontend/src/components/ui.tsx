@@ -195,6 +195,7 @@ export function DataTable<T extends Entity>({
   onRow,
   empty,
   sort,
+  direction,
   onSort,
   rowClassName,
   columnFilters,
@@ -208,6 +209,8 @@ export function DataTable<T extends Entity>({
   onRow?: (row: T) => void;
   empty?: ReactNode;
   sort?: string;
+  /** Shown as an arrow next to the sorted column. */
+  direction?: string;
   onSort?: (key: string) => void;
   rowClassName?: (row: T) => string;
   columnFilters?: Record<string, string>;
@@ -225,11 +228,22 @@ export function DataTable<T extends Entity>({
         <thead>
           <tr>
             {columns.map((col) => (
-              <th key={col.key}>
+              <th
+                key={col.key}
+                aria-sort={
+                  sort === col.key && direction
+                    ? direction === 'desc'
+                      ? 'descending'
+                      : 'ascending'
+                    : undefined
+                }
+              >
                 {onSort && col.sortable !== false ? (
-                  <button onClick={() => onSort(col.key)}>
+                  <button type="button" onClick={() => onSort(col.key)}>
                     {col.label}
-                    <span className={sort === col.key ? 'sorted' : ''}>↕</span>
+                    <span className={sort === col.key ? 'sorted' : ''}>
+                      {sort === col.key && direction ? (direction === 'desc' ? '↓' : '↑') : '↕'}
+                    </span>
                   </button>
                 ) : (
                   col.label

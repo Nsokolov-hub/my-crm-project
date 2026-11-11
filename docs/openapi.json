@@ -226,6 +226,43 @@
         }
       }
     },
+    "/api/v1/client-errors": {
+      "post": {
+        "tags": [
+          "Доступ и настройки"
+        ],
+        "summary": "Report Client Error",
+        "description": "A screen that failed in the browser leaves a trace in the API log (remark of 11 November 2026).\n\nAn employee saw the waves page start over while editing a wave and the log had nothing about it.",
+        "operationId": "report_client_error_api_v1_client_errors_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientErrorInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/auth/logout": {
       "post": {
         "tags": [
@@ -8620,6 +8657,26 @@
               "default": "",
               "title": "Q"
             }
+          },
+          {
+            "name": "supplier",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Supplier"
+            }
+          },
+          {
+            "name": "manufacturer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Manufacturer"
+            }
           }
         ],
         "responses": {
@@ -15503,6 +15560,39 @@
           "version"
         ],
         "title": "ChatPatch"
+      },
+      "ClientErrorInput": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Message"
+          },
+          "stack": {
+            "type": "string",
+            "maxLength": 8000,
+            "title": "Stack",
+            "default": ""
+          },
+          "component": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Component",
+            "default": ""
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Path",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "ClientErrorInput"
       },
       "ClientInput": {
         "properties": {

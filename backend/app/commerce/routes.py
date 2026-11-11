@@ -4,7 +4,7 @@ from sqlalchemy import select
 from app.core.db import DB
 from app.core.models import User
 from app.core.security import Actor, request_predicate, require_permission
-from app.core.service import serialize
+from app.core.service import prefetch, serialize
 from app.crm.models import Counterparty
 from app.crm.models import Request as CRMRequest
 
@@ -83,7 +83,11 @@ def approval_registry(
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
-    return {"items": [serialize(row) for row in rows], "page": page, "page_size": page_size}
+    labels = fulfillment.approval_labels(db, list(rows))
+    people = prefetch(db, User, (row.reviewer_id for row in rows))
+    return {"items": [{**serialize(row), **labels[row.id],
+                       "reviewer_name": people[row.reviewer_id].name if row.reviewer_id in people else None}
+                      for row in rows], "page": page, "page_size": page_size}
 
 
 @router.get("/executions", tags=["Реестры"])

@@ -57,6 +57,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/client-errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report Client Error
+         * @description A screen that failed in the browser leaves a trace in the API log (remark of 11 November 2026).
+         *
+         *     An employee saw the waves page start over while editing a wave and the log had nothing about it.
+         */
+        post: operations["report_client_error_api_v1_client_errors_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/logout": {
         parameters: {
             query?: never;
@@ -4121,6 +4143,26 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** ClientErrorInput */
+        ClientErrorInput: {
+            /** Message */
+            message: string;
+            /**
+             * Stack
+             * @default
+             */
+            stack: string;
+            /**
+             * Component
+             * @default
+             */
+            component: string;
+            /**
+             * Path
+             * @default
+             */
+            path: string;
+        };
         /** ClientInput */
         ClientInput: {
             /** Name */
@@ -6632,6 +6674,56 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    report_client_error_api_v1_client_errors_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientErrorInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Сеанс отсутствует или отозван */
             401: {
@@ -14459,6 +14551,8 @@ export interface operations {
                 wave_id?: string | null;
                 status?: string | null;
                 q?: string;
+                supplier?: string;
+                manufacturer?: string;
             };
             header?: never;
             path?: never;

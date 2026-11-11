@@ -652,9 +652,9 @@ function CalculationEditor({
   return (
     <Modal
       title={
-        previous
+        (previous
           ? `Копия расчёта ${String(previous.calculation_number || previous.selection_label || '')}`
-          : 'Новый расчёт'
+          : 'Новый расчёт') + (request.client_name ? ` · ${String(request.client_name)}` : '')
       }
       wide
       className="calculation-modal"
@@ -669,12 +669,42 @@ function CalculationEditor({
         }}
       >
         <div className="form-body calculation-editor">
+          {/* Business remark of 11 November 2026: the buyer and the wave on top of the calculation. */}
+          <div className="calculation-head">
+            <dl>
+              <div>
+                <dt>Покупатель</dt>
+                <dd>{String(request.client_name || '—')}</dd>
+              </div>
+              <div>
+                <dt>Заявка</dt>
+                <dd>
+                  №{String(request.number || '')}
+                  {request.title ? ` · ${String(request.title)}` : ''}
+                </dd>
+              </div>
+            </dl>
+            {wave && (
+              <label className="field calculation-wave">
+                <span>Волна расчёта</span>
+                <select
+                  aria-label="Волна расчёта"
+                  value={wave.value}
+                  disabled={!wave.canChange || wave.busy}
+                  onChange={(event) => wave.onChange(event.target.value)}
+                >
+                  {wave.options}
+                </select>
+              </label>
+            )}
+          </div>
+          {wave && <ErrorBox error={wave.error} />}
           <div className="info-note">
             Источник: квоты заявки №{String(request.number || '')}. Основание версии:
             {previous
               ? ' последняя сохранённая версия'
               : ' определяется автоматически при сохранении'}
-            .
+            . Волна сохраняется в заявке сразу: расходы и плановый объём пересчитаются по ней.
           </div>
           <ErrorBox
             error={
@@ -1122,29 +1152,10 @@ function CalculationEditor({
                   </p>
                 </div>
               </div>
-              {wave && (
-                <div className="calculation-wave">
-                  <label className="field">
-                    <span>Волна расчёта</span>
-                    <select
-                      aria-label="Волна расчёта"
-                      value={wave.value}
-                      disabled={!wave.canChange || wave.busy}
-                      onChange={(event) => wave.onChange(event.target.value)}
-                    >
-                      {wave.options}
-                    </select>
-                  </label>
-                  <p className="muted">
-                    Волна сохраняется в заявке сразу: расходы и объём ниже пересчитаются по ней.
-                  </p>
-                  <ErrorBox error={wave.error} />
-                </div>
-              )}
               {!request.wave_id ? (
                 <p className="info-note">
-                  Заявке не назначена волна. Выберите её здесь — без неё расходы волны не
-                  посчитаются.
+                  Заявке не назначена волна. Выберите её вверху окна, в поле «Волна расчёта», — без
+                  неё расходы волны не посчитаются.
                 </p>
               ) : waveExpenses.loading ? (
                 <p className="muted">Загрузка планового объёма…</p>
@@ -2323,7 +2334,8 @@ export function RequestCalculations({
             String(
               selected.selection_label ||
                 '№' + (selected.version_number || '') + ' · ' + date(selected.created_at, true),
-            )
+            ) +
+            (request.client_name ? ` · ${String(request.client_name)}` : '')
           }
           wide
           className="calculation-modal"

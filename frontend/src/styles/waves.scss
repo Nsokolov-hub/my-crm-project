@@ -321,3 +321,97 @@
   max-width: 220px;
   white-space: normal;
 }
+
+/* Business remarks of 11 November 2026: filters of the waves table and of the wave positions. */
+.wave-table-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 13px;
+  padding: 15px 23px;
+  border-top: 1px solid #f2f2f6;
+
+  .search-input {
+    flex: 1 1 220px;
+  }
+
+  select {
+    font-size: 10px;
+    min-height: 34px;
+    max-width: 240px;
+  }
+}
+
+.wave-period {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+
+  label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #808394;
+    font-size: 11px;
+  }
+
+  input[type='date'] {
+    min-height: 34px;
+    font-size: 11px;
+  }
+}
+
+.wave-table-save {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.wave-positions-filters {
+  flex-wrap: wrap;
+
+  .search-input {
+    flex: 1 1 240px;
+  }
+
+  select {
+    max-width: 220px;
+  }
+}
+
+.wave-positions-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 0 23px 12px;
+
+  .filter-spacer {
+    flex: 1;
+  }
+}
+
+.wave-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.link-button {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: #7960d6;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.wave-table-count {
+  margin: 0;
+  padding: 0 23px 10px;
+}

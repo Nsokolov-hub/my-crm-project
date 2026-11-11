@@ -22,7 +22,7 @@ import {
   ClipboardList,
   CheckCheck,
 } from 'lucide-react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useAuth } from './Auth';
 import { Loading } from '../components/ui';
@@ -30,6 +30,7 @@ import { api } from '../lib/api';
 import { useApi, usePolling } from '../lib/hooks';
 import { connectLiveEvents, disconnectLiveEvents, useLiveEvents } from '../lib/liveEvents';
 import type { Page } from '../lib/types';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import '../styles/communication-v2.scss';
 import '../styles/business.scss';
 const links = [
@@ -70,6 +71,7 @@ const operations = [
 export function Layout() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [mobile, setMobile] = useState(false);
   const [search, setSearch] = useState('');
   const notifications = useApi<Page>('/notifications?read=false&page_size=1');
@@ -261,9 +263,11 @@ export function Layout() {
           </div>
         </header>
         <main id="main-content" className="main-content">
-          <Suspense fallback={<Loading />}>
-            <Outlet />
-          </Suspense>
+          <ErrorBoundary resetKey={location.pathname}>
+            <Suspense fallback={<Loading />}>
+              <Outlet />
+            </Suspense>
+          </ErrorBoundary>
         </main>
         <footer className="app-footer">
           <span>Реактив CRM</span>

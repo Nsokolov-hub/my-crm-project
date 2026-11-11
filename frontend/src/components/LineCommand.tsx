@@ -1,3 +1,4 @@
+import { Search } from 'lucide-react';
 import { useState } from 'react';
 import { useCommand, useDirtyProtection } from '../lib/hooks';
 import type { Entity } from '../lib/types';
@@ -37,7 +38,28 @@ export function LineCommand({
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [reason, setReason] = useState('');
   const [analogues, setAnalogues] = useState<Record<string, string>>({});
+  const [filter, setFilter] = useState('');
   const operation = useCommand();
+  // Business remark of 11 November 2026: positions are chosen all at once, cleared and found by name.
+  const text = filter.trim().toLocaleLowerCase('ru');
+  const shown = text
+    ? rows.filter((row) =>
+        [label(row), row.article, row.description]
+          .map((value) => String(value || '').toLocaleLowerCase('ru'))
+          .some((value) => value.includes(text)),
+      )
+    : rows;
+  const chosen = Object.keys(selected).length;
+  function choose(list: Entity[], checked: boolean) {
+    setSelected((current) => {
+      const next = { ...current };
+      for (const row of list) {
+        if (checked) next[row.id] = next[row.id] ?? String(row.quantity || '');
+        else delete next[row.id];
+      }
+      return next;
+    });
+  }
   const dirty = Object.keys(selected).length > 0 || Boolean(reason);
   useDirtyProtection(dirty);
   function close() {
@@ -71,9 +93,43 @@ export function LineCommand({
           {note && <div className="info-note">{note}</div>}
           <ErrorBox error={operation.error} />
           {additional}
+          {rows.length > 1 && (
+            <div className="selection-toolbar">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={shown.every((row) => row.id in selected)}
+                onClick={() => choose(shown, true)}
+              >
+                {text ? `Выбрать найденные (${shown.length})` : `Выбрать все (${rows.length})`}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={!chosen}
+                onClick={() => (text ? choose(shown, false) : setSelected({}))}
+              >
+                {text ? 'Снять найденные' : 'Снять все'}
+              </Button>
+              {rows.length > 5 && (
+                <div className="search-input">
+                  <Search size={16} />
+                  <input
+                    aria-label="Найти позицию"
+                    placeholder="Найти позицию…"
+                    value={filter}
+                    onChange={(event) => setFilter(event.target.value)}
+                  />
+                </div>
+              )}
+              <span className="selection-count" aria-live="polite">
+                Выбрано: {chosen} из {rows.length}
+              </span>
+            </div>
+          )}
           <div className="selection-lines">
-            {rows.map((row) => (
-              <div className="selection-line" key={row.id}>
+            {shown.map((row) => (
+              <div className={`selection-line${row.id in selected ? ' chosen' : ''}`} key={row.id}>
                 <label>
                   <input
                     type="checkbox"
@@ -90,12 +146,19 @@ export function LineCommand({
                   <span>
                     <strong>{label(row)}</strong>
                     <small>
-                      {String(row.unit || row.currency || '')} · {row.id.slice(0, 8)}
+                      {[
+                        row.quantity != null && row.quantity !== ''
+                          ? `${String(row.quantity)} ${String(row.unit || '')}`.trim()
+                          : String(row.unit || row.currency || ''),
+                        row.total != null && row.total !== '' ? `сумма ${String(row.total)}` : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </small>
                   </span>
                 </label>
                 {row.id in selected && (
-                  <div>
+                  <div className="selection-line-fields">
                     <label>
                       {labelText}
                       <input

@@ -16,7 +16,7 @@ from sqlalchemy import select
 from app.core.db import DB
 from app.core.security import Actor, can, require_permission
 from app.core.service import prefetch
-from app.crm.models import Counterparty, RequestItem
+from app.crm.models import Counterparty, QuoteItem, RequestItem
 from app.crm.models import Request as CRMRequest
 
 from .calculator import dec
@@ -125,9 +125,19 @@ class Positions:
                 continue
             self.offered_rows(request)
         clients = prefetch(db, Counterparty, (row["client_id"] for row in self.rows))
+        # Business remark of 11 November 2026: the supplier and the term of the quote (synthesis included).
+        quotes = prefetch(db, QuoteItem, (row["quote_item_id"] for row in self.rows))
+        suppliers = prefetch(db, Counterparty, [*(row.supplier_id for row in quotes.values()),
+                                                *(row.supplier_id for row in self.waves.values())])
         for row in self.rows:
             client = clients.get(row["client_id"])
             row["client_name"] = client.name if client else None
+            quote = quotes.get(row.pop("quote_item_id") or "")
+            wave = self.waves.get(row["wave_id"] or "")
+            supplier = suppliers.get(quote.supplier_id if quote else wave.supplier_id if wave else "")
+            row["supplier_name"] = supplier.name if supplier else None
+            if row["delivery_days"] is None and quote:
+                row["delivery_days"] = quote.delivery_days
 
     @staticmethod
     def is_open(request: CRMRequest) -> bool:
@@ -152,6 +162,8 @@ class Positions:
             **self.wave_fields(wave_id),
             **product_of(line, self.items.get(execution.item_id), str(execution.snapshot.get("description") or "")),
             "quantity": pieces(quantity), "unit": execution.unit,
+            "quote_item_id": execution.quote_item_id or (line or {}).get("quote_item_id"),
+            "delivery_days": (line or {}).get("delivery_days"),
             "currency": calculation.snapshot.get("currency", "RUB") if calculation else None,
             "calculation_id": calculation.id if calculation else None,
             "calculation_number": calculation.snapshot.get("calculation_number") if calculation else None,
@@ -183,6 +195,7 @@ class Positions:
                 **self.wave_fields(str(request.wave_id)),
                 **product_of(line, items.get(line.get("item_id")), str(line.get("description") or "")),
                 "quantity": pieces(quantity), "unit": line.get("unit"),
+                "quote_item_id": line.get("quote_item_id"), "delivery_days": line.get("delivery_days"),
                 "currency": calculation.snapshot.get("currency", "RUB"),
                 "calculation_id": calculation.id,
                 "calculation_number": calculation.snapshot.get("calculation_number"),
@@ -193,7 +206,8 @@ class Positions:
 
 
 @router.get("/waves/positions")
-def wave_positions(db: DB, user: Actor, wave_id: str | None = None, status: str | None = None, q: str = ""):
+def wave_positions(db: DB, user: Actor, wave_id: str | None = None, status: str | None = None, q: str = "",
+                   supplier: str = "", manufacturer: str = ""):
     """Positions of the waves in use, newest calculation first.
 
     Rows need the request to be readable; amounts also the purchase and calculation rights on it, and
@@ -209,18 +223,28 @@ def wave_positions(db: DB, user: Actor, wave_id: str | None = None, status: str 
     text = q.strip().casefold()
     items = []
     waves: dict[str, str] = {}
+    suppliers: set[str] = set()
+    manufacturers: set[str] = set()
     for row in rows:
         if row["request_id"] not in visible:
             continue
         if row["wave_number"]:
             waves[row["wave_id"]] = row["wave_number"]
+        if row["supplier_name"]:
+            suppliers.add(row["supplier_name"])
+        if row["manufacturer"]:
+            manufacturers.add(row["manufacturer"])
         if wave_id and row["wave_id"] != wave_id:
             continue
         if status and row["status"] != status:
             continue
+        if supplier and row["supplier_name"] != supplier:
+            continue
+        if manufacturer and row["manufacturer"] != manufacturer:
+            continue
         if text and not any(text in str(row.get(key) or "").casefold() for key in (
                 "name", "article", "packaging", "manufacturer", "cas", "client_name", "request_number",
-                "wave_number")):
+                "wave_number", "supplier_name")):
             continue
         if row["request_id"] not in priced:
             row = {**row, **dict.fromkeys(("purchase", "sale_unit_price", "sale_total", "expenses"), None)}
@@ -229,4 +253,5 @@ def wave_positions(db: DB, user: Actor, wave_id: str | None = None, status: str 
         items.append(row)
     items.sort(key=lambda row: (row["calculated_at"] or "", row["request_number"] or ""), reverse=True)
     return {"items": items, "total": len(items), "statuses": STATUS_LABELS,
-            "waves": [{"id": wave, "number": number} for wave, number in sorted(waves.items(), key=lambda p: p[1])]}
+            "waves": [{"id": wave, "number": number} for wave, number in sorted(waves.items(), key=lambda p: p[1])],
+            "suppliers": sorted(suppliers, key=str.casefold), "manufacturers": sorted(manufacturers, key=str.casefold)}

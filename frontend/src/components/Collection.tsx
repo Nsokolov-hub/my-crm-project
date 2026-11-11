@@ -68,7 +68,10 @@ export function Collection({
       ? null
       : `${endpoint}${endpoint.includes('?') ? '&' : '?'}page=${page}&page_size=${pageSize}&q=${encodeURIComponent(appliedSearch.q)}&sort=${sort}&direction=${direction}&ui_revision=${refreshKey}${query}${filterQuery}`,
   );
-  const rows = data.data?.items || [];
+  // Business remark of 11 November 2026: a list the API returns whole (no total) sorts here, so the arrows work.
+  const loaded = data.data?.items || [];
+  const rows =
+    data.data && data.data.total === undefined ? sortRows(loaded, sort, direction) : loaded;
   const visibleIds = rows.map((row) => row.id);
   const selectedOnPage = visibleIds.filter((id) => selection?.selectedIds.has(id)).length;
   const visibleColumns: Column[] = selection
@@ -181,6 +184,7 @@ export function Collection({
           onRow={onSelect}
           rowClassName={(row) => (selection?.selectedIds.has(row.id) ? 'selected-table-row' : '')}
           sort={sort}
+          direction={direction}
           columnFilters={columnFilters}
           filterKeys={filterKeys}
           onFilter={(key, value) => {
@@ -188,8 +192,8 @@ export function Collection({
             setPage(1);
           }}
           onSort={(key) => {
+            setDirection((v) => (key === sort ? (v === 'asc' ? 'desc' : 'asc') : 'asc'));
             setSort(key);
-            setDirection((v) => (v === 'asc' ? 'desc' : 'asc'));
           }}
         />
       )}
@@ -218,4 +222,21 @@ export function Collection({
       )}
     </Section>
   );
+}
+
+function sortValue(value: unknown): string | number {
+  if (typeof value === 'number') return value;
+  if (value && typeof value === 'object') return JSON.stringify(value);
+  const text = String(value ?? '');
+  return /^-?\d+(\.\d+)?$/.test(text) ? Number(text) : text.toLocaleLowerCase('ru');
+}
+
+function sortRows(rows: Entity[], key: string, direction: string): Entity[] {
+  const sign = direction === 'desc' ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const left = sortValue(a[key]);
+    const right = sortValue(b[key]);
+    if (typeof left !== typeof right) return String(left).localeCompare(String(right)) * sign;
+    return left < right ? -sign : left > right ? sign : 0;
+  });
 }

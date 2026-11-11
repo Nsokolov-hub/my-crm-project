@@ -1,3 +1,4 @@
+import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
@@ -19,6 +20,7 @@ import type { Entity, Field, Page } from '../lib/types';
 import { waveKindLabel, waveKindOptions, waveWeekInitial, waveWeekLabel } from '../lib/waves';
 import { WaveBoard } from './WaveBoard';
 import { WavePositions } from './WavePositions';
+import { WavesTable } from './WavesTable';
 
 const VIEW_KEY = 'waves:view';
 type WaveView = 'board' | 'table' | 'positions';
@@ -98,7 +100,19 @@ export function RequestFulfillment({ requestId }: { requestId: string }) {
         refreshKey={revision}
         onSelect={setApproval}
         columns={[
-          { key: 'id', label: 'Согласование', render: (r) => `Решение · ${r.id.slice(0, 8)}` },
+          {
+            // Business remark of 11 November 2026: positions, suppliers and waves instead of an id.
+            key: 'id',
+            label: 'Согласование',
+            render: (r) => (
+              <span className="stacked">
+                <strong>{String(r.details || `Решение · ${r.id.slice(0, 8)}`)}</strong>
+                {Array.isArray(r.position_names) && r.position_names.length > 0 && (
+                  <small>{(r.position_names as string[]).join('; ')}</small>
+                )}
+              </span>
+            ),
+          },
           { key: 'status', label: 'Состояние', render: (r) => <Badge value={r.status} /> },
           { key: 'created_at', label: 'Передано', render: (r) => date(r.created_at, true) },
           {
@@ -329,7 +343,7 @@ export function ApprovalDecision({
     );
   return (
     <RecordForm
-      title="Решение по составу исполнения"
+      title={`Решение по составу исполнения${row.title ? ` · ${String(row.title)}` : ''}`}
       endpoint={`/approvals/${row.id}/decision`}
       extra={{ version: row.version }}
       command
@@ -870,42 +884,32 @@ export function Waves() {
           )}
         </>
       )}
-      {!archive && view === 'positions' && <WavePositions />}
+      {!archive && view === 'positions' && <WavePositions onOpenWave={openWave} />}
       {(archive || view === 'table') && (
-        <Collection
-          title={archive ? 'Архив волн' : 'Расписание волн'}
-          description={
-            archive
-              ? 'Волны из архива не предлагаются в заявках и расчётах. Их можно вернуть.'
-              : undefined
-          }
-          endpoint={archive ? '/waves?archived=true' : '/waves'}
-          fields={waveFields}
-          canCreate={!archive}
-          command
-          createLabel="Новая волна"
+        <WavesTable
+          archive={archive}
           refreshKey={revision}
-          onSelect={setSelected}
-          columns={[
-            { key: 'number', label: 'Волна' },
-            {
-              key: 'kind',
-              label: 'Вид',
-              render: (r) => (
-                <Badge value={waveKindLabel(r)} tone={r.kind === 'plan' ? 'gray' : 'purple'} />
-              ),
-            },
-            { key: 'supplier_name', label: 'Поставщик' },
-            { key: 'route', label: 'Маршрут' },
-            { key: 'status', label: 'Состояние', render: (r) => <Badge value={r.status} /> },
-            { key: 'close_week', label: 'Приём до', render: (r) => waveWeekLabel(r, 'close') },
-            {
-              key: 'departure_week',
-              label: 'Отправка',
-              render: (r) => waveWeekLabel(r, 'departure'),
-            },
-            { key: 'arrival_week', label: 'Прибытие', render: (r) => waveWeekLabel(r, 'arrival') },
-          ]}
+          onOpen={setSelected}
+          action={
+            !archive && auth.can('waves.write') ? (
+              <Button onClick={() => setCreating(true)}>
+                <Plus size={16} /> Новая волна
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
+      {creating && (archive || view !== 'board') && (
+        <RecordForm
+          title="Новая волна"
+          endpoint="/waves"
+          fields={waveFields}
+          command
+          onClose={() => setCreating(false)}
+          onSuccess={() => {
+            setCreating(false);
+            setRevision((v) => v + 1);
+          }}
         />
       )}
       <ErrorBox error={openError} />
@@ -1356,7 +1360,12 @@ export function Waves() {
                 : 'Состояние волны меняет руководитель. Когда все заказы волны доставлены клиентам, она завершается сама.'
           }
           onClose={() => setEditing(false)}
-          onSuccess={done}
+          onSuccess={(row) => {
+            // Business remark of 11 November 2026: the card stays open with the new name and dates.
+            setEditing(false);
+            setSelected(row);
+            setRevision((value) => value + 1);
+          }}
         />
       )}{' '}
       {allocation && allocationAction === 'event' && (

@@ -718,6 +718,7 @@ export function Requests() {
             rows={list.data?.items || []}
             onRow={(r) => navigate(`/requests/${r.id}`)}
             sort={sort}
+            direction={direction}
             onSort={(key) =>
               change({
                 sort: key,

@@ -216,7 +216,10 @@ it('opens the board by default and the wave from a card', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Закрыть' }));
   fireEvent.click(screen.getByRole('button', { name: 'Таблица' }));
   await waitFor(() =>
-    expect(api).toHaveBeenCalledWith(expect.stringMatching(/^\/waves\?page=/), expect.anything()),
+    expect(api).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/waves\?ui_revision=/),
+      expect.anything(),
+    ),
   );
   expect(localStorage.getItem('waves:view')).toBe('table');
 });

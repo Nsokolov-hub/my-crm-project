@@ -3355,3 +3355,119 @@ tr.clickable-row {
   max-width: 640px;
   margin-bottom: 14px;
 }
+
+/* Business remark of 11 November 2026: choosing the positions a client accepted, all at once or found by name. */
+.selection-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 8px;
+
+  .search-input {
+    flex: 1 1 200px;
+    border: 1px solid $border;
+    border-radius: 8px;
+    padding: 0 10px;
+  }
+}
+
+.selection-toolbar .selection-count {
+  margin-left: auto;
+}
+
+.selection-lines {
+  display: grid;
+  gap: 6px;
+}
+
+.selection-line {
+  border: 1px solid $border;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff;
+
+  > label {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    cursor: pointer;
+  }
+
+  > label > span {
+    display: grid;
+    gap: 2px;
+  }
+
+  small {
+    color: $muted;
+  }
+
+  &.chosen {
+    border-color: #cfc5f3;
+    background: #faf8ff;
+  }
+}
+
+.selection-line-fields {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) minmax(200px, 1fr);
+  gap: 10px;
+  margin: 10px 0 0 28px;
+
+  label {
+    display: grid;
+    gap: 4px;
+    color: $muted;
+    font-size: 12px;
+  }
+
+  @media (width <= 640px) {
+    grid-template-columns: 1fr;
+    margin-left: 0;
+  }
+}
+
+/* A screen that failed shows what to do (business remark of 11 November 2026). */
+.error-screen {
+  padding: 28px;
+
+  h2 {
+    margin-top: 0;
+  }
+}
+
+/* The buyer and the wave on top of a calculation (business remark of 11 November 2026). */
+.calculation-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 28px;
+  padding: 14px 16px;
+  border: 1px solid $border;
+  border-radius: 12px;
+  background: #faf9fe;
+  margin-bottom: 14px;
+
+  dl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 28px;
+    margin: 0;
+  }
+
+  dt {
+    color: $muted;
+    font-size: 12px;
+  }
+
+  dd {
+    margin: 2px 0 0;
+    font-weight: 650;
+  }
+
+  .field {
+    min-width: 260px;
+    margin: 0;
+  }
+}

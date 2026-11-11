@@ -460,6 +460,67 @@ def list_executions(request_id: str, db: DB, user: Actor):
     }
 
 
+def approval_labels(db, approvals: list[Approval]) -> dict[str, dict]:
+    """What an approval is about, instead of its id (business remark of 11 November 2026).
+
+    The request with its client, the positions, their suppliers from the quotes and the waves: the working
+    waves the positions went to once approved, the wave of the request before that.
+    """
+    requests = prefetch(db, CRMRequest, (row.request_id for row in approvals))
+    clients = prefetch(db, Counterparty, (row.client_id for row in requests.values()))
+    lines = {row.id: row.snapshot.get("lines") or [] for row in approvals}
+    quotes = prefetch(db, QuoteItem, (line.get("quote_item_id") for rows in lines.values() for line in rows))
+    executions = prefetch(db, Execution, (line.get("execution_id") for rows in lines.values() for line in rows))
+    suppliers = prefetch(db, Counterparty, (row.supplier_id for row in quotes.values()))
+    placed: dict[str, list[str]] = {}
+    for approval_id, wave_id in db.execute(
+        select(WaveAllocation.approval_id, WaveAllocation.wave_id).where(
+            WaveAllocation.approval_id.in_([row.id for row in approvals]), WaveAllocation.active.is_(True))
+    ).all():
+        placed.setdefault(approval_id, []).append(wave_id)
+    waves = prefetch(db, Wave, [*(wave for rows in placed.values() for wave in rows),
+                                *(row.wave_id for row in requests.values() if row.wave_id)])
+    result = {}
+    for approval in approvals:
+        request = requests.get(approval.request_id)
+        client = clients.get(request.client_id) if request else None
+        rows = lines[approval.id]
+        names = list(dict.fromkeys(
+            suppliers[quotes[line["quote_item_id"]].supplier_id].name for line in rows
+            if line.get("quote_item_id") in quotes and quotes[line["quote_item_id"]].supplier_id in suppliers))
+        wave_ids = placed.get(approval.id) or ([request.wave_id] if request and request.wave_id else [])
+        wave_names = list(dict.fromkeys(waves[wave].number for wave in wave_ids if wave in waves))
+        positions = [str((executions[line["execution_id"]].snapshot or {}).get("description") or "").strip()
+                     for line in rows if line.get("execution_id") in executions]
+        count = len(rows)
+        details = [f"{count} {plural(count, 'позиция', 'позиции', 'позиций')}"]
+        if names:
+            details.append(", ".join(names))
+        if wave_names:
+            details.append(f"волна {', '.join(wave_names)}")
+        result[approval.id] = {
+            "request_number": request.number if request else None,
+            "request_title": request.title if request else None,
+            "client_name": client.name if client else None,
+            "positions": count,
+            "position_names": [name for name in positions if name][:3],
+            "supplier_names": names,
+            "wave_numbers": wave_names,
+            "title": " · ".join(part for part in (
+                f"Заявка №{request.number}" if request else "Заявка", client.name if client else "") if part),
+            "details": " · ".join(details),
+        }
+    return result
+
+
+def plural(count: int, one: str, few: str, many: str) -> str:
+    if count % 10 == 1 and count % 100 != 11:
+        return one
+    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
+        return few
+    return many
+
+
 @router.get("/requests/{request_id}/approvals")
 def list_approvals(request_id: str, db: DB, user: Actor):
     check_request(db, user, request_id)
@@ -467,9 +528,11 @@ def list_approvals(request_id: str, db: DB, user: Actor):
         select(Approval).where(Approval.request_id == request_id).order_by(Approval.created_at.desc())
     ).all()
     people = prefetch(db, User, (row.reviewer_id for row in rows))
+    labels = approval_labels(db, list(rows))
     return {
         "items": [
-            {**serialize(row), "reviewer_name": people[row.reviewer_id].name if row.reviewer_id in people else None}
+            {**serialize(row), **labels[row.id],
+             "reviewer_name": people[row.reviewer_id].name if row.reviewer_id in people else None}
             for row in rows
         ]
     }

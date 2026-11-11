@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import secrets
 import time
 from collections import defaultdict
@@ -175,7 +176,8 @@ def me(request: Request, user: User = Depends(current_user), db: Session = Depen
 
 # Business remark of 31 October 2026: an employee saves the filters of the requests list; the list opens with them.
 # requests.columns: the columns of the requests list an employee shows, in their order (remark of 3 November 2026).
-PREFERENCE_KEYS = ("requests.filters", "requests.columns")
+# Business remark of 11 November 2026: the filters of the waves table and of the wave positions are kept too.
+PREFERENCE_KEYS = ("requests.filters", "requests.columns", "waves.filters", "wave-positions.filters")
 
 
 class PreferenceInput(Input):
@@ -222,6 +224,25 @@ def delete_preference(key: str, user: User = Depends(current_user),
     db.execute(delete(UserPreference).where(UserPreference.user_id == user.id,
                                             UserPreference.key == preference_key(key)))
     return {"key": key, "value": None, "updated_at": None}
+
+
+class ClientErrorInput(Input):
+    message: str = Field(max_length=2000)
+    stack: str = Field(default="", max_length=8000)
+    component: str = Field(default="", max_length=4000)
+    path: str = Field(default="", max_length=500)
+
+
+@router.post("/client-errors", status_code=204)
+def report_client_error(body: ClientErrorInput, user: User = Depends(current_user)) -> Response:
+    """A screen that failed in the browser leaves a trace in the API log (remark of 11 November 2026).
+
+    An employee saw the waves page start over while editing a wave and the log had nothing about it.
+    """
+    logging.getLogger("crm.client").error(json.dumps({
+        "event": "client_error", "userId": user.id, "path": body.path, "error": body.message,
+        "stack": body.stack, "component": body.component}, ensure_ascii=False))
+    return Response(status_code=204)
 
 
 @router.post("/auth/logout")
