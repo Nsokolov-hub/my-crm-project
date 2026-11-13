@@ -1,5 +1,6 @@
 import { ArrowUpRight, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { SearchSelect } from '../components/SearchSelect';
 import { Badge, Button, DataTable, ErrorBox, Loading, TextLink } from '../components/ui';
 import { api } from '../lib/api';
 import { date, decimal, metric } from '../lib/format';
@@ -157,26 +158,20 @@ export function WavePositions({ onOpenWave }: { onOpenWave?: (id: string) => voi
             </option>
           ))}
         </select>
-        <select
-          aria-label="Фильтр: поставщик"
+        <SearchSelect
+          label="Фильтр: поставщик"
+          allLabel="Все поставщики"
           value={filters.supplier}
-          onChange={(event) => change({ supplier: event.target.value })}
-        >
-          <option value="">Все поставщики</option>
-          {(list.data?.suppliers || []).map((name) => (
-            <option key={name}>{name}</option>
-          ))}
-        </select>
-        <select
-          aria-label="Фильтр: производитель"
+          options={list.data?.suppliers || []}
+          onChange={(supplier) => change({ supplier })}
+        />
+        <SearchSelect
+          label="Фильтр: производитель"
+          allLabel="Все производители"
           value={filters.manufacturer}
-          onChange={(event) => change({ manufacturer: event.target.value })}
-        >
-          <option value="">Все производители</option>
-          {(list.data?.manufacturers || []).map((name) => (
-            <option key={name}>{name}</option>
-          ))}
-        </select>
+          options={list.data?.manufacturers || []}
+          onChange={(manufacturer) => change({ manufacturer })}
+        />
         <select
           aria-label="Статус позиции"
           value={filters.status}

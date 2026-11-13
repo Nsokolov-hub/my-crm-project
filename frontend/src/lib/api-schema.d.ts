@@ -1399,6 +1399,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/requests/{request_id}/table-imports/{batch_id}/remove-rows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove Rows
+         * @description Business remark of 13 November 2026: rows of the checked file that should not get into the request are
+         *     removed before it is written. The check runs again on the rest; the rows keep their numbers in the file.
+         */
+        post: operations["remove_rows_api_v1_requests__request_id__table_imports__batch_id__remove_rows_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/requests/{request_id}/table-imports/{batch_id}/errors.xlsx": {
         parameters: {
             query?: never;
@@ -2087,6 +2108,23 @@ export interface paths {
          *     profitability the profit right.
          */
         get: operations["wave_positions_api_v1_waves_positions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/waves/{wave_id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Wave History */
+        get: operations["wave_history_api_v1_waves__wave_id__history_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5554,6 +5592,11 @@ export interface components {
             reason: string;
             /** Version */
             version: number;
+        };
+        /** RemoveRows */
+        RemoveRows: {
+            /** Row Numbers */
+            row_numbers: number[];
         };
         /** RequestInput */
         RequestInput: {
@@ -12076,6 +12119,61 @@ export interface operations {
             };
         };
     };
+    remove_rows_api_v1_requests__request_id__table_imports__batch_id__remove_rows_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoveRows"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     error_file_api_v1_requests__request_id__table_imports__batch_id__errors_xlsx_get: {
         parameters: {
             query?: never;
@@ -14556,6 +14654,58 @@ export interface operations {
             };
             header?: never;
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    wave_history_api_v1_waves__wave_id__history_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                wave_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;

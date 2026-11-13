@@ -42,6 +42,14 @@ const wave = (id: string, number: string, supplier: string, status: string, arri
   arrival_date: arrival,
 });
 
+/** Business remark of 13 November 2026: suppliers and manufacturers are picked by their first letters. */
+function pick(label: string, typed: string, option: string) {
+  const input = screen.getByRole('combobox', { name: label });
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: typed } });
+  fireEvent.click(screen.getByRole('option', { name: option }));
+}
+
 function names() {
   return screen
     .getAllByRole('row')
@@ -78,11 +86,9 @@ it('sorts the waves table by any column and filters it by supplier, state and da
   fireEvent.change(screen.getByLabelText('Фильтр: состояние'), { target: { value: 'planned' } });
   expect(names()).toEqual(['Аозеал 5']);
   fireEvent.change(screen.getByLabelText('Фильтр: состояние'), { target: { value: '' } });
-  fireEvent.change(screen.getByLabelText('Фильтр: поставщик'), {
-    target: { value: 'Pharmaffiliates' },
-  });
+  pick('Фильтр: поставщик', 'pharm', 'Pharmaffiliates');
   expect(names()).toEqual(['ФФ 1']);
-  fireEvent.change(screen.getByLabelText('Фильтр: поставщик'), { target: { value: '' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Сбросить: Фильтр: поставщик' }));
   // Arrival in December: the week of 28 December counts, 11 January does not.
   fireEvent.change(screen.getByLabelText('Срок с'), { target: { value: '2026-12-01' } });
   fireEvent.change(screen.getByLabelText('Срок по'), { target: { value: '2026-12-31' } });
@@ -157,9 +163,7 @@ it('filters wave positions by supplier and manufacturer, shows the quote term an
   expect(within(rows[0]).getByText('60')).toBeVisible();
   expect(screen.getByText('Позиции открыты с сохранёнными фильтрами.')).toBeVisible();
 
-  fireEvent.change(screen.getByLabelText('Фильтр: производитель'), {
-    target: { value: 'Pharmaffiliates' },
-  });
+  pick('Фильтр: производитель', 'Pha', 'Pharmaffiliates');
   await waitFor(() =>
     expect(api).toHaveBeenCalledWith(
       '/waves/positions?supplier=Aozeal&manufacturer=Pharmaffiliates',

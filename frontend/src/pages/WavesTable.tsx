@@ -1,6 +1,7 @@
 import { Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import { SearchSelect } from '../components/SearchSelect';
 import { Badge, Button, DataTable, ErrorBox, Loading, Section } from '../components/ui';
 import { api } from '../lib/api';
 import { useApi, useCommand } from '../lib/hooks';
@@ -217,16 +218,13 @@ export function WavesTable({
             onChange={(event) => change({ q: event.target.value })}
           />
         </div>
-        <select
-          aria-label="Фильтр: поставщик"
+        <SearchSelect
+          label="Фильтр: поставщик"
+          allLabel="Все поставщики"
           value={filters.supplier}
-          onChange={(event) => change({ supplier: event.target.value })}
-        >
-          <option value="">Все поставщики</option>
-          {suppliers.map((name) => (
-            <option key={name}>{name}</option>
-          ))}
-        </select>
+          options={suppliers}
+          onChange={(supplier) => change({ supplier })}
+        />
         <select
           aria-label="Фильтр: состояние"
           value={filters.status}

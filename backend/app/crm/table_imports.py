@@ -14,6 +14,7 @@ from fastapi.responses import Response
 from openpyxl import load_workbook
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
+from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -726,6 +727,58 @@ def preview(
     return batch_view(batch)
 
 
+def renumbered(plan: list[dict], batch) -> list[dict]:
+    """Rows keep the numbers of the file after some were removed from the check (see remove_rows)."""
+    numbers = (batch.file_metadata or {}).get("row_numbers")
+    if numbers:
+        for entry, number in zip(plan, numbers, strict=True):
+            entry["row_number"] = number
+    return plan
+
+
+class RemoveRows(Input):
+    row_numbers: list[int] = Field(min_length=1, max_length=10000)
+
+
+@router.post("/requests/{request_id}/table-imports/{batch_id}/remove-rows")
+def remove_rows(
+    request_id: str,
+    batch_id: str,
+    body: RemoveRows,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db, scope="function"),
+):
+    """Business remark of 13 November 2026: rows of the checked file that should not get into the request are
+    removed before it is written. The check runs again on the rest; the rows keep their numbers in the file."""
+    owned_batch(db, user, request_id, batch_id)
+    batch = lock(db, TableImport, batch_id)
+    if batch.status != "preview":
+        raise DomainError("IMPORT_DONE", "Файл уже записан в заявку", 409)
+    numbers = batch.file_metadata.get("row_numbers") or [entry["row_number"] for entry in batch.plan]
+    drop = set(body.row_numbers) & set(numbers)
+    if not drop:
+        raise DomainError("IMPORT_ROWS", "Таких строк нет в проверенном файле", 422, field="row_numbers")
+    keep = [index for index, number in enumerate(numbers) if number not in drop]
+    if not keep:
+        raise DomainError("IMPORT_ROWS", "Нельзя убрать все строки: закройте окно без записи", 422,
+                          field="row_numbers")
+    rows = [batch.rows[index] for index in keep]
+    metadata = {**batch.file_metadata, "row_numbers": [numbers[index] for index in keep]}
+    if metadata.get("source_rows"):
+        metadata["source_rows"] = [metadata["source_rows"][index] for index in keep]
+    batch.rows, batch.file_metadata = rows, metadata
+    plan = renumbered(
+        quote_plan(db, request_id, batch.columns, rows, batch.mapping, can(db, user, "catalog.write"))
+        if batch.kind == "quotes" else request_plan(batch.columns, rows, batch.mapping),
+        batch,
+    )
+    batch.plan = plan
+    batch.summary = {**summarize(plan), **(uncovered_positions(db, request_id, plan) if batch.kind == "quotes" else {})}
+    batch.version += 1
+    audit(db, user, "table_import", batch.id, "rows_removed", after={"row_numbers": sorted(drop), **batch.summary})
+    return batch_view(batch)
+
+
 def owned_batch(db, user, request_id, batch_id):
     batch = db.get(TableImport, batch_id)
     if not batch or batch.request_id != request_id or batch.author_id != user.id:
@@ -918,8 +971,8 @@ def confirm(
                 )
         else:
             advisory(db, "catalog.article-import")
-            fresh = quote_plan(db, request_id, batch.columns, batch.rows, batch.mapping,
-                               can(db, user, "catalog.write"))
+            fresh = renumbered(quote_plan(db, request_id, batch.columns, batch.rows, batch.mapping,
+                                          can(db, user, "catalog.write")), batch)
             if fresh != batch.plan:
                 raise DomainError(
                     "IMPORT_STALE", "Данные изменились после проверки. Загрузите файл ещё раз", 409

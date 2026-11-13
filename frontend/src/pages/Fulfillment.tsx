@@ -19,6 +19,7 @@ import { useApi, useCommand } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
 import { waveKindLabel, waveKindOptions, waveWeekInitial, waveWeekLabel } from '../lib/waves';
 import { WaveBoard } from './WaveBoard';
+import { WaveHistory, WaveHistoryTab } from './WaveHistory';
 import { WavePositions } from './WavePositions';
 import { WavesTable } from './WavesTable';
 
@@ -291,10 +292,16 @@ export function ApprovalDecision({
     wave_id: string | null;
     required: boolean;
     lines?: { execution_id: string; supplier_id: string | null; label: string }[];
+    positions?: ApprovalPosition[];
+    expenses?: ApprovalExpense[] | null;
   }>(`/approvals/${row.id}/waves`);
   if (waves.loading) return null;
   const choice = waves.data;
   const lines = choice?.required ? choice.lines || [] : [];
+  const positions = choice?.positions || [];
+  const byExecution = Object.fromEntries(
+    positions.map((position) => [position.execution_id, position]),
+  );
   // Business remark of 5 November 2026 (Тимур): each position may go to its own wave — two positions with the
   // big supply later, one with the nearest.
   const lineFields: Field[] =
@@ -304,6 +311,7 @@ export function ApprovalDecision({
           label: line.label,
           type: 'select' as const,
           value: '',
+          help: positionFacts(byExecution[line.execution_id]),
           options: [
             { value: '', label: 'Как выбрано выше' },
             ...choice!.items
@@ -392,9 +400,124 @@ export function ApprovalDecision({
             };
       }}
       note="Согласование передаёт подтверждённые позиции в закупки, в указанную волну. Заявка переходит в эту волну: следующие расчёты делят её расходы с её заказами. Оплата может поступить позже по условиям заказа."
+      wide
+      before={<ApprovalPositions positions={positions} />}
+      after={choice?.expenses ? <ApprovalExpenses expenses={choice.expenses} /> : null}
       onClose={onClose}
       onSuccess={onSuccess}
     />
+  );
+}
+
+type ApprovalPosition = {
+  execution_id: string;
+  description: string;
+  quantity: string;
+  unit: string;
+  supplier_name: string | null;
+  delivery_days: number | null;
+  profitability_percent: string | null;
+};
+type ApprovalExpense = {
+  name: string;
+  method: string | null;
+  currency: string | null;
+  amount: string | null;
+  share: string;
+};
+
+const days = (value: number | null | undefined) => (value == null ? '—' : `${value} дн.`);
+
+/** Подсказка у выбора волны позиции: поставщик и срок его квоты */
+function positionFacts(position: ApprovalPosition | undefined): string | undefined {
+  if (!position) return undefined;
+  return [
+    position.supplier_name,
+    position.delivery_days != null && `срок по квоте ${days(position.delivery_days)}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/**
+ * Business remark of 13 November 2026: in the decision window each position shows its supplier, the delivery term of
+ * its quote and its profitability (the column is there only for those who may see profit).
+ */
+function ApprovalPositions({ positions }: { positions: ApprovalPosition[] }) {
+  if (!positions.length) return null;
+  const profit = positions.some((position) => position.profitability_percent != null);
+  return (
+    <div className="approval-positions">
+      <h3>Позиции на согласовании</h3>
+      <DataTable<ApprovalPosition & { id: string }>
+        rows={positions.map((position) => ({ ...position, id: position.execution_id }))}
+        columns={[
+          {
+            key: 'description',
+            label: 'Позиция',
+            render: (position) =>
+              `${position.description} — ${decimal(position.quantity)} ${position.unit}`,
+          },
+          {
+            key: 'supplier_name',
+            label: 'Поставщик',
+            render: (position) => position.supplier_name || '—',
+          },
+          {
+            key: 'delivery_days',
+            label: 'Срок по квоте',
+            render: (position) => days(position.delivery_days),
+          },
+          ...(profit
+            ? [
+                {
+                  key: 'profitability_percent',
+                  label: 'Рентабельность',
+                  render: (position: ApprovalPosition) =>
+                    position.profitability_percent == null
+                      ? '—'
+                      : `${metric(position.profitability_percent)} %`,
+                },
+              ]
+            : []),
+        ]}
+      />
+    </div>
+  );
+}
+
+const DISTRIBUTION: Record<string, string> = {
+  BY_QUANTITY: 'по количеству',
+  BY_PURCHASE_VALUE: 'по закупочной стоимости',
+  EQUALLY_BY_POSITION: 'поровну по строкам',
+  BY_WEIGHT: 'по весу',
+  MANUAL: 'вручную',
+};
+
+/** Business remark of 13 November 2026: the expenses the calculation laid on these positions, with the total. */
+function ApprovalExpenses({ expenses }: { expenses: ApprovalExpense[] }) {
+  if (!expenses.length) return null;
+  const total = expenses.reduce((sum, row) => sum + Number(row.share || 0), 0);
+  return (
+    <div className="approval-expenses">
+      <h3>Расходы, заложенные в расчёт</h3>
+      <DataTable<ApprovalExpense & { id: string }>
+        rows={expenses.map((row, index) => ({ ...row, id: String(index) }))}
+        columns={[
+          { key: 'name', label: 'Расход' },
+          { key: 'share', label: 'На эти позиции, ₽', render: (row) => decimal(row.share) },
+          { key: 'amount', label: 'Всего по расходу, ₽', render: (row) => decimal(row.amount) },
+          {
+            key: 'method',
+            label: 'Как делится',
+            render: (row) => DISTRIBUTION[String(row.method)] || row.method || '—',
+          },
+        ]}
+      />
+      <p className="approval-expenses-total">
+        Итого на позиции согласования: <strong>{metric(total)} ₽</strong>
+      </p>
+    </div>
   );
 }
 const waveFields: Field[] = [
@@ -777,6 +900,7 @@ export function Waves() {
   const [removingForecast, setRemovingForecast] = useState<Entity>();
   const [showRemoved, setShowRemoved] = useState(false);
   const [selected, setSelected] = useState<Entity>();
+  const [history, setHistory] = useState(false);
   const [editing, setEditing] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -923,8 +1047,19 @@ export function Waves() {
             title={`Волна ${selected.number}`}
             wide
             className="wave-modal"
-            onClose={() => setSelected(undefined)}
+            onClose={() => {
+              setHistory(false);
+              setSelected(undefined);
+            }}
           >
+            <WaveHistoryTab onOpen={() => setHistory(true)} />
+            {history && (
+              <WaveHistory
+                waveId={String(selected.id)}
+                number={String(selected.number)}
+                onClose={() => setHistory(false)}
+              />
+            )}
             <div className="form-body">
               {Boolean(selected.archived) && (
                 <p className="info-note">

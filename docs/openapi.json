@@ -6087,6 +6087,68 @@
         }
       }
     },
+    "/api/v1/requests/{request_id}/table-imports/{batch_id}/remove-rows": {
+      "post": {
+        "tags": [
+          "Импорт заявок и квот"
+        ],
+        "summary": "Remove Rows",
+        "description": "Business remark of 13 November 2026: rows of the checked file that should not get into the request are\nremoved before it is written. The check runs again on the rest; the rows keep their numbers in the file.",
+        "operationId": "remove_rows_api_v1_requests__request_id__table_imports__batch_id__remove_rows_post",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "batch_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Batch Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveRows"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/requests/{request_id}/table-imports/{batch_id}/errors.xlsx": {
       "get": {
         "tags": [
@@ -8676,6 +8738,60 @@
               "type": "string",
               "default": "",
               "title": "Manufacturer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/waves/{wave_id}/history": {
+      "get": {
+        "tags": [
+          "Согласования и поставки"
+        ],
+        "summary": "Wave History",
+        "operationId": "wave_history_api_v1_waves__wave_id__history_get",
+        "parameters": [
+          {
+            "name": "wave_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Wave Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
             }
           }
         ],
@@ -20024,6 +20140,25 @@
           "version"
         ],
         "title": "RejectInput"
+      },
+      "RemoveRows": {
+        "properties": {
+          "row_numbers": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Row Numbers"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "row_numbers"
+        ],
+        "title": "RemoveRows"
       },
       "RequestInput": {
         "properties": {

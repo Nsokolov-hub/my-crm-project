@@ -624,6 +624,56 @@ def wave_option(db, wave: Wave, *, new: bool = False) -> dict:
             "supplier_id": wave.supplier_id, "supplier_name": supplier.name if supplier else None, "new": new}
 
 
+def approval_details(db, user, request_id: str, executions: list[Execution]) -> tuple[list[dict], list[dict] | None]:
+    """Business remark of 13 November 2026: in the decision window the leader sees each position's supplier, the
+    delivery term of its quote and its profitability, and below — the expenses the calculation laid on them.
+    Profitability needs the right to see profit, expenses — the right to see calculations."""
+    from .wave_positions import line_figures
+
+    see_profit = has_request_permission(db, user, request_id, "finance.profit.read")
+    see_costs = has_request_permission(db, user, request_id, "finance.calculations.read")
+    documents = prefetch(db, CommercialDocument, (row.proposal_id for row in executions))
+    calculations = prefetch(db, Calculation, (row.calculation_id for row in documents.values()))
+    items = prefetch(db, QuoteItem, (row.quote_item_id for row in executions))
+    quotes = prefetch(db, Quote, (row.quote_id for row in executions if not row.quote_item_id))
+    suppliers = prefetch(db, Counterparty, [*(row.supplier_id for row in items.values()),
+                                            *(row.supplier_id for row in quotes.values())])
+    positions: list[dict] = []
+    used: dict[str, set[str]] = {}
+    for execution in executions:
+        document = documents.get(execution.proposal_id)
+        calculation = calculations.get(document.calculation_id) if document else None
+        lines = calculation.snapshot.get("lines", []) if calculation else []
+        line = next((row for row in lines if row.get("line_id") == execution.line_id), None)
+        item = items.get(execution.quote_item_id or "")
+        quote = quotes.get(execution.quote_id or "") if not item else None
+        supplier = suppliers.get(item.supplier_id if item else quote.supplier_id if quote else "")
+        days = item.delivery_days if item else (quote.terms or {}).get("delivery_days") if quote else None
+        if days is None:
+            days = (line or {}).get("delivery_days")
+        quantity = execution.quantity - execution.cancelled_quantity
+        figures = line_figures(line, quantity)
+        positions.append({
+            "execution_id": execution.id,
+            "description": (execution.snapshot or {}).get("description") or "Позиция",
+            "quantity": format(quantity, "f").rstrip("0").rstrip(".") or "0", "unit": execution.unit,
+            "supplier_name": supplier.name if supplier else None, "delivery_days": days,
+            "profitability_percent": figures["profitability_percent"] if see_profit else None,
+        })
+        if calculation and line and line.get("quote_item_id"):
+            used.setdefault(calculation.id, set()).add(line["quote_item_id"])
+    if not see_costs:
+        return positions, None
+    expenses: list[dict] = []
+    for calculation_id, quote_ids in used.items():
+        for row in calculations[calculation_id].snapshot.get("expense_allocations", []):
+            share = sum((dec(value) for key, value in (row.get("parts") or {}).items() if key in quote_ids),
+                        Decimal("0"))
+            expenses.append({"name": row.get("name"), "method": row.get("method"), "currency": row.get("currency"),
+                             "amount": row.get("amount"), "share": format(share, "f")})
+    return positions, expenses
+
+
 @router.get("/approvals/{approval_id}/waves")
 def approval_waves(approval_id: str, db: DB, user: Actor):
     """Business remark of 28 October 2026: the waves the leader may send the approved orders to."""
@@ -632,8 +682,9 @@ def approval_waves(approval_id: str, db: DB, user: Actor):
         error("NOT_FOUND", "Согласование не найдено", 404)
     req = check_request(db, user, approval.request_id, "approvals.decide")
     executions = [db.get(Execution, row["execution_id"]) for row in approval.snapshot["lines"]]
+    positions, expenses = approval_details(db, user, req.id, executions)
     if not approval_imports(executions):
-        return {"items": [], "wave_id": None, "required": False}
+        return {"items": [], "wave_id": None, "required": False, "positions": positions, "expenses": expenses}
     suppliers = set()
     lines = []
     for execution in executions:
@@ -657,7 +708,7 @@ def approval_waves(approval_id: str, db: DB, user: Actor):
         joined = open_working_wave(db, current) if current.kind == "plan" else current
         default = (joined or current).id
     return {"items": items, "wave_id": default if any(row["id"] == default for row in items) else None,
-            "required": True, "lines": lines}
+            "required": True, "lines": lines, "positions": positions, "expenses": expenses}
 
 
 @router.post("/approvals/{approval_id}/decision")

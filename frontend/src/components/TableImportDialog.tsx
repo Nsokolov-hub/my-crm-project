@@ -1,4 +1,4 @@
-import { Download } from 'lucide-react';
+import { Download, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { api, download } from '../lib/api';
 import { useCommand } from '../lib/hooks';
@@ -68,6 +68,20 @@ export function TableImportDialog({
   const pending = useRef(false);
   const [error, setError] = useState<unknown>();
   const confirm = useCommand();
+  // Business remark of 13 November 2026: rows that should not get into the request are removed before writing.
+  const removing = useCommand();
+  async function removeRow(rowNumber: number) {
+    if (!batch) return;
+    try {
+      const result = await removing.run<Batch>(
+        `/requests/${requestId}/table-imports/${batch.id}/remove-rows`,
+        { row_numbers: [rowNumber] },
+      );
+      if (result) setBatch(result);
+    } catch {
+      /* displayed below */
+    }
+  }
   const [mappingChanged, setMappingChanged] = useState(false);
   async function preview(event: React.FormEvent) {
     event.preventDefault();
@@ -290,8 +304,35 @@ export function TableImportDialog({
                   label: 'Ошибки',
                   render: (row) => (row.errors as string[]).join('; '),
                 },
+                ...(batch.status === 'preview' && batch.summary.total > 1
+                  ? [
+                      {
+                        key: 'remove',
+                        label: '',
+                        render: (row: Entity) => (
+                          <button
+                            type="button"
+                            className="icon-button"
+                            aria-label={`Убрать строку ${String(row.row_number)}`}
+                            title="Убрать строку: она не попадёт в заявку"
+                            disabled={removing.busy || confirm.busy}
+                            onClick={() => void removeRow(Number(row.row_number))}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        ),
+                      },
+                    ]
+                  : []),
               ]}
             />
+            <ErrorBox error={removing.error} />
+            {batch.status === 'preview' && batch.summary.total > 1 && (
+              <p className="muted">
+                Лишнюю строку можно убрать корзиной справа — проверка пересчитается без неё. Если
+                проверить файл заново, убранные строки вернутся.
+              </p>
+            )}
             {batch.summary.total > 100 && (
               <p>Показаны первые 100 строк. Счётчики и проверка учитывают весь файл.</p>
             )}

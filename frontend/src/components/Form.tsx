@@ -408,6 +408,9 @@ export function RecordForm({
   deriveValues,
   submitLabel = 'Сохранить',
   note,
+  before,
+  after,
+  wide,
 }: {
   title: string;
   fields: Field[];
@@ -424,6 +427,10 @@ export function RecordForm({
   deriveValues?: (values: Record<string, unknown>, changedField: string) => Record<string, unknown>;
   submitLabel?: string;
   note?: React.ReactNode;
+  /** Сведения над полями и под ними — например, позиции и расходы в окне решения по согласованию */
+  before?: React.ReactNode;
+  after?: React.ReactNode;
+  wide?: boolean;
 }) {
   const [values, setValues] = useState<Record<string, unknown>>(() =>
     Object.fromEntries(
@@ -497,10 +504,11 @@ export function RecordForm({
     }
   }
   return (
-    <Modal title={title} onClose={close} wide={fields.length > 5}>
+    <Modal title={title} onClose={close} wide={wide ?? fields.length > 5}>
       <form noValidate onSubmit={submit}>
         <div className="form-body">
           {note && <div className="info-note">{note}</div>}
+          {before}
           <ErrorBox error={operation.error} />
           <div className="form-grid">
             {fields.map((field) => (
@@ -553,6 +561,7 @@ export function RecordForm({
               />
             ))}
           </div>
+          {after}
         </div>
         <div className="modal-footer">
           <Button type="button" variant="secondary" onClick={close}>
