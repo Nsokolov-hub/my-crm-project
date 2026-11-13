@@ -29,6 +29,7 @@ beforeEach(() => {
 });
 
 const SUPPLIERS = [
+  'CHEMICEA PHARMACEUTICALS',
   'ООО "ТД" ХИММЕД',
   'Pharmaffiliates Pvt Ltd',
   'PHARMANANDA',
@@ -61,11 +62,12 @@ it('finds a supplier by the first letters of any word and picks it with Enter', 
   expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
     'ООО "ТД" ХИММЕД',
   ]);
-  // Names that begin with the letters come first, those that only contain them follow.
+  // Names that begin with the letters come first, then names with a word that does, then the rest.
   fireEvent.change(input, { target: { value: 'pharma' } });
   expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
     'Pharmaffiliates Pvt Ltd',
     'PHARMANANDA',
+    'CHEMICEA PHARMACEUTICALS',
     'SimSon Pharma Ltd',
   ]);
   fireEvent.keyDown(input, { key: 'Enter' });

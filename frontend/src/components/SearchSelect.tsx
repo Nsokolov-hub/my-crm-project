@@ -28,18 +28,18 @@ export function SearchSelect({
   const matches = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     if (!query) return options;
-    const first: string[] = [];
+    // Название с набранного → слово с набранного (CHEMICEA PHARMACEUTICALS на «pharm») → внутри слова
+    const start: string[] = [];
+    const word: string[] = [];
     const inside: string[] = [];
     for (const option of options) {
       const text = option.toLocaleLowerCase();
-      if (
-        text.startsWith(query) ||
-        text.split(/[^\p{L}\p{N}]+/u).some((word) => word.startsWith(query))
-      )
-        first.push(option);
+      if (text.startsWith(query)) start.push(option);
+      else if (text.split(/[^\p{L}\p{N}]+/u).some((part) => part.startsWith(query)))
+        word.push(option);
       else if (text.includes(query)) inside.push(option);
     }
-    return [...first, ...inside];
+    return [...start, ...word, ...inside];
   }, [options, search]);
   const choices = search.trim() ? matches : ['', ...matches];
 
@@ -62,6 +62,8 @@ export function SearchSelect({
         aria-autocomplete="list"
         aria-expanded={open}
         aria-controls={listId}
+        spellCheck={false}
+        autoComplete="off"
         placeholder={allLabel}
         value={open ? search : value}
         onFocus={() => {
