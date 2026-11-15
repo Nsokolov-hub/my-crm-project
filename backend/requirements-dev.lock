@@ -65,7 +65,7 @@ defusedxml==0.7.1
     #   -c requirements.lock
     #   reaktiv-crm-backend (pyproject.toml)
     #   py-serializable
-dnspython==2.9.1
+dnspython==2.9.2
     # via
     #   -c requirements.lock
     #   email-validator
