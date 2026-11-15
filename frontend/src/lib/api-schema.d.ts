@@ -5924,7 +5924,7 @@ export interface components {
              * Channel
              * @default null
              */
-            channel: ("cpc" | "organic" | "referral" | "direct" | "email" | "social") | null;
+            channel: ("cpc" | "organic" | "referral" | "direct" | "email" | "social" | "unknown") | null;
             /** @default null */
             client_ids: components["schemas"]["SiteClientIds"] | null;
         };
@@ -5943,9 +5943,15 @@ export interface components {
         };
         /** SiteCustomer */
         SiteCustomer: {
-            /** Name */
+            /**
+             * Name
+             * @default
+             */
             name: string;
-            /** Company */
+            /**
+             * Company
+             * @default
+             */
             company: string;
             /**
              * Inn
@@ -5954,7 +5960,8 @@ export interface components {
             inn: string | null;
             /**
              * Phone
-             * @description E.164: +79991234567
+             * @description E.164 when supplied: +79991234567
+             * @default
              */
             phone: string;
             /** Email */
