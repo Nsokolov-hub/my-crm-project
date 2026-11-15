@@ -2070,6 +2070,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/requests/{request_id}/sale-price-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sale Price History
+         * @description Earlier confirmed sales to this customer, for the articles selected in the calculation.
+         *
+         *     The optional comma-separated quote IDs must all belong to this request. Without them the
+         *     lookup uses every active quoted item and demand of the request. Prices, product names and
+         *     VAT treatment come from the released snapshots, never today's catalogue or a draft price.
+         */
+        get: operations["sale_price_history_api_v1_requests__request_id__sale_price_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/waves/board": {
         parameters: {
             query?: never;
@@ -5729,6 +5753,47 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** SalePriceHistory */
+        SalePriceHistory: {
+            /** Items */
+            items: components["schemas"]["SalePriceHistoryItem"][];
+            /** Limit */
+            limit: number;
+        };
+        /** SalePriceHistoryItem */
+        SalePriceHistoryItem: {
+            /** Execution Id */
+            execution_id: string;
+            /** Request Id */
+            request_id: string;
+            /** Request Number */
+            request_number: string;
+            /**
+             * Sold At
+             * Format: date-time
+             */
+            sold_at: string;
+            /** Article */
+            article: string | null;
+            /** Nomenclature Id */
+            nomenclature_id: string | null;
+            /** Description */
+            description: string;
+            /** Packing */
+            packing: string | null;
+            /** Manufacturer */
+            manufacturer: string | null;
+            /** Unit */
+            unit: string;
+            /** Quantity */
+            quantity: string;
+            /** Unit Price */
+            unit_price: string;
+            /** Currency */
+            currency: string;
+            /** Price Includes Vat */
+            price_includes_vat: boolean;
+        };
         /** Selection */
         Selection: {
             /** Quote Id */
@@ -5745,6 +5810,8 @@ export interface components {
             markup_coefficient?: number | string | null;
             /** Bonus Coefficient */
             bonus_coefficient?: number | string | null;
+            /** Sale Unit Price */
+            sale_unit_price?: number | string | null;
             /** Weight */
             weight?: number | string | null;
             /** Mass */
@@ -14563,6 +14630,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sale_price_history_api_v1_requests__request_id__sale_price_history_get: {
+        parameters: {
+            query?: {
+                quote_item_ids?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalePriceHistory"];
                 };
             };
             /** @description Сеанс отсутствует или отозван */

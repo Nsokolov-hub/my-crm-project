@@ -4,6 +4,7 @@ import {
   nameOf,
   positive,
   validMarkup,
+  validSalePrice,
   type Expense,
   type Rate,
   type Selection,
@@ -76,6 +77,13 @@ export function calculationErrors(draft: CalculationDraft): string[] {
       errors.push('Количество фасовок позиции ' + title + ' должно быть целым числом больше нуля.');
     if (!validMarkup(draft.selections[row.id].markup_coefficient))
       errors.push('Наценка позиции ' + title + ' должна быть не меньше 1.');
+    const salePrice = draft.selections[row.id].sale_unit_price;
+    if (salePrice !== undefined && !validSalePrice(salePrice))
+      errors.push(
+        'Цена продажи позиции ' +
+          title +
+          ' должна быть больше нуля, не более двух знаков после запятой.',
+      );
     if (
       draft.canReadReward &&
       !validMarkup(

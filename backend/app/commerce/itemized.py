@@ -27,6 +27,12 @@ def _spread(amount: Decimal, bases: dict[str, Decimal], rows: list[dict], roundi
     shares = {row["id"]: row["share"] for row in rows if row.get("share", 1) != 1}
     if not shares:
         return distribute(amount, bases, Decimal("0.01"), rounding)
+    if any(row.get("source", {}).get("_scenario_volume") for row in rows):
+        # Below the real wave composition, very small counted shares can amplify an intermediate cent's
+        # rounding error into rubles. Divide on the full-precision scenario basis, then round the offered cost.
+        total = sum(base * shares.get(key, 1) for key, base in bases.items())
+        if total > 0:
+            return {key: _money(amount * base / total, rounding) for key, base in bases.items()}
     parts = distribute(amount, {key: base * shares.get(key, 1) for key, base in bases.items()}, Decimal("0.01"),
                        rounding)
     return {key: _money(value / shares[key], rounding) if key in shares else value for key, value in parts.items()}
@@ -311,8 +317,12 @@ class _Wave:
         self.offered_quantity = sum(row["quantity"] for row in self.selected_rows)
         self.selected_quantity = sum(row["quantity"] * row["share"] for row in self.selected_rows)
         self.forecast_quantity = sum(row["quantity"] for row in rows if row["source"].get("_forecast"))
-        peer_quantity = sum(row["quantity"] for row in rows if row["id"] not in selected_ids)
+        peer_quantity = sum(row["quantity"] * row["share"] for row in rows if row["id"] not in selected_ids)
         self.total_quantity = self.selected_quantity + peer_quantity + existing_quantity
+        if any(row["share"] != 1 for row in rows if row["id"] not in selected_ids):
+            # A scenario may scale existing positions by a repeating ratio. Keep its displayed denominator
+            # at quantity precision instead of exposing e.g. 9.9999999999999999999999999996 pieces.
+            self.total_quantity = self.total_quantity.quantize(Decimal("0.000001"))
         self.existing = {key: dec(existing_components.get(key, "0")) for key in (
             "purchase_rub", "international_logistics", "duty", "customs_fee", "general_expenses"
         )}
@@ -624,7 +634,16 @@ def _priced_line(row, profile, rules, terms: _Terms, selected_ids, rounding) -> 
     cost = cost_before_adjustment + internal_bonus + service_fee
     sale_net = _money(pre_bonus_sale_net + internal_bonus + service_fee, rounding)
     sale_vat = terms.sale_vat_rate
-    if profile.get("round_sale_up_to_ruble", True):
+    manual_price = source.get("sale_unit_price")
+    if manual_price is not None:
+        unit_gross = dec(manual_price)
+        if unit_gross <= 0 or unit_gross != _money(unit_gross, rounding):
+            error("SALE_UNIT_PRICE", "Цена продажи за единицу должна быть положительной, с точностью до копеек",
+                  field="selections.sale_unit_price")
+        sale_total = _money(unit_gross * qty, rounding)
+        sale_tax = _money(sale_total * sale_vat / (Decimal("1") + sale_vat), rounding)
+        sale_net = sale_total - sale_tax
+    elif profile.get("round_sale_up_to_ruble", True):
         unit_gross = (sale_net / qty * (Decimal("1") + sale_vat)).to_integral_value(rounding=ROUND_CEILING)
         sale_total = _money(unit_gross * qty, rounding)
         # The rounded gross price remains taxable in full, including the
@@ -690,6 +709,7 @@ def _priced_line(row, profile, rules, terms: _Terms, selected_ids, rounding) -> 
         "delivery_days": quote.get("delivery_days"),
         "net": _string(sale_net), "tax": _string(sale_tax), "total": _string(sale_total),
         "unit_price": _string(unit_gross.quantize(Decimal("0.00000001"), rounding=ROUNDING[rounding])),
+        "sale_unit_price": _string(dec(manual_price)) if manual_price is not None else None,
         "tax_category": profile.get("tax_category") or "НДС",
         "detail": {key: _string(value) for key, value in detail.items()},
         "expense_details": {key: _string(value) for key, value in row["expense_details"].items()},

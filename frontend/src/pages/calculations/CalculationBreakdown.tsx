@@ -130,6 +130,11 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
             <summary>
               {String(line.description)} · {decimal(line.quantity)} шт. · {decimal(line.total)} ₽
             </summary>
+            {line.sale_unit_price != null && (
+              <p className="info-note">
+                Цена продажи задана вручную: {decimal(line.sale_unit_price)} ₽ за шт. с НДС.
+              </p>
+            )}
             <p>
               Закупка: {decimal(quote.unit_price)} {String(line.purchase_currency || '')} ×{' '}
               {decimal(line.quantity)} шт. × курс {decimal(detail.exchange_rate)} ={' '}

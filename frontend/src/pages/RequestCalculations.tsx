@@ -11,6 +11,7 @@ import { useApi, useCommand, useDirtyProtection } from '../lib/hooks';
 import type { Entity, Page } from '../lib/types';
 import { waveKindLabel, waveWeekLabel } from '../lib/waves';
 import { CalculationBreakdown } from './calculations/CalculationBreakdown';
+import { SalePriceHistory } from './calculations/SalePriceHistory';
 import {
   airportPickup,
   currencyOf,
@@ -24,6 +25,7 @@ import {
   withCalculationGroups,
   standardExpenses,
   validMarkup,
+  validSalePrice,
   type Expense,
   type PlannedVolumeRow,
   type Rate,
@@ -227,6 +229,9 @@ function CalculationEditor({
             ...(old?.quantity ? { quantity: plainQuantity(old.quantity) } : {}),
             markup_coefficient: String(old?.markup_coefficient || '1.5'),
             ...(old || line ? { bonus_coefficient: bonus } : {}),
+            ...(old?.sale_unit_price != null || line?.sale_unit_price != null
+              ? { sale_unit_price: plainQuantity(old?.sale_unit_price ?? line?.sale_unit_price) }
+              : {}),
           },
         ];
       }),
@@ -662,7 +667,9 @@ function CalculationEditor({
     >
       <form
         noValidate
-        className={freightNotes.length ? 'calculation-with-notes' : undefined}
+        className={
+          freightNotes.length || selectedRows.length ? 'calculation-with-notes' : undefined
+        }
         onSubmit={(event) => {
           event.preventDefault();
           void calculate(false);
@@ -849,7 +856,8 @@ function CalculationEditor({
                 <h3>Выбранные квоты и количества</h3>
                 <p>
                   Цена указана за одну фасовку. Количество подставлено из заявки (в фасовках квоты),
-                  его можно изменить; оно не ограничено количеством квоты.
+                  его можно изменить; оно не ограничено количеством квоты. Цену продажи с НДС можно
+                  задать вручную — итоги и рентабельность пересчитаются.
                 </p>
               </div>
               <span className="selection-count">Выбрано: {Object.keys(selections).length}</span>
@@ -895,7 +903,7 @@ function CalculationEditor({
                             const next = { ...current };
                             rows.forEach((row) => {
                               if (checked)
-                                next[row.id] = {
+                                next[row.id] = current[row.id] || {
                                   quote_item_id: row.id,
                                   quantity: current[row.id]?.quantity ?? requestedQuantity(row),
                                   markup_coefficient: current[row.id]?.markup_coefficient || '1.5',
@@ -1023,9 +1031,57 @@ function CalculationEditor({
                 },
                 {
                   key: 'sale_unit_price',
-                  label: 'Цена за шт., ₽',
-                  render: (row) =>
-                    metric(outputLines.find((line) => line.quote_item_id === row.id)?.unit_price),
+                  label: 'Цена за шт. с НДС, ₽',
+                  sortable: false,
+                  render: (row) => {
+                    const selection = selections[row.id];
+                    if (!selection) return '—';
+                    const manual = selection.sale_unit_price !== undefined;
+                    const line = outputLines.find((entry) => entry.quote_item_id === row.id);
+                    return (
+                      <span className="calculation-sale-price">
+                        <input
+                          className="calculation-markup"
+                          inputMode="decimal"
+                          aria-label={'Цена продажи за шт. ' + nameOf(row)}
+                          aria-invalid={manual && !validSalePrice(selection.sale_unit_price!)}
+                          value={selection.sale_unit_price ?? plainQuantity(line?.unit_price)}
+                          placeholder="По расчёту"
+                          title="Цена за одну фасовку с НДС, в рублях. Очистите поле, чтобы вернуть расчётную цену."
+                          onChange={(event) => {
+                            const value = event.target.value.replace(/\s/g, '').replace(',', '.');
+                            setSelections((current) => {
+                              const next = { ...current[row.id] };
+                              if (value) next.sale_unit_price = value;
+                              else delete next.sale_unit_price;
+                              return { ...current, [row.id]: next };
+                            });
+                            invalidate();
+                          }}
+                        />
+                        {manual && (
+                          <>
+                            <small>Задана вручную</small>
+                            <button
+                              type="button"
+                              className="text-link"
+                              aria-label={'Вернуть расчётную цену ' + nameOf(row)}
+                              onClick={() => {
+                                setSelections((current) => {
+                                  const next = { ...current[row.id] };
+                                  delete next.sale_unit_price;
+                                  return { ...current, [row.id]: next };
+                                });
+                                invalidate();
+                              }}
+                            >
+                              Вернуть расчётную
+                            </button>
+                          </>
+                        )}
+                      </span>
+                    );
+                  },
                 },
                 {
                   key: 'sale_amount',
@@ -1215,7 +1271,8 @@ function CalculationEditor({
                   <small className="muted">
                     Клиент просит КП на 5 шт., а возьмёт 3? Впишите 3: общие расходы волны и сбор
                     разделятся на 3 шт., цена за штуку будет как при поставке 3 шт., а в КП
-                    останутся все 5. Если в волне уже есть заказы этой группы, прибавьте их к числу.
+                    останутся все 5. Можно указать любое расчётное количество, в том числе меньше
+                    количества уже заказанных товаров в рабочей волне.
                   </small>
                   {plannedRows
                     .filter((row) => {
@@ -1230,7 +1287,7 @@ function CalculationEditor({
                         «{row.product_group_name}»: в КП {offeredByGroup[row.product_group_id]} шт.,
                         расходы считаются на{' '}
                         {plannedVolume[row.product_group_id] ?? plainQuantity(row.wave_quantity)}{' '}
-                        шт. (вместе с заказами, уже собранными в волне).
+                        шт.
                       </p>
                     ))}
                   {plannedRows.some((row) => row.in_plan === false) && (
@@ -2022,19 +2079,29 @@ function CalculationEditor({
             </section>
           )}
         </div>
-        {freightNotes.length > 0 && (
-          <FreightNotes
-            notes={freightNotes}
-            expenses={expenses}
-            onAdd={(expense) => {
-              setExpenses((current) =>
-                current.some((entry) => entry.name === expense.name)
-                  ? current
-                  : [...current, expense],
-              );
-              invalidate();
-            }}
-          />
+        {(freightNotes.length > 0 || selectedRows.length > 0) && (
+          <div className="calculation-sidebar">
+            {selectedRows.length > 0 && (
+              <SalePriceHistory
+                requestId={request.id}
+                quoteItemIds={selectedRows.map((row) => row.id)}
+              />
+            )}
+            {freightNotes.length > 0 && (
+              <FreightNotes
+                notes={freightNotes}
+                expenses={expenses}
+                onAdd={(expense) => {
+                  setExpenses((current) =>
+                    current.some((entry) => entry.name === expense.name)
+                      ? current
+                      : [...current, expense],
+                  );
+                  invalidate();
+                }}
+              />
+            )}
+          </div>
         )}
         <div className="modal-footer">
           <Button type="button" variant="secondary" onClick={close}>

@@ -163,6 +163,8 @@ class Selection(Input):
     unit: Literal["g", "kg", "mg", "l", "ml", "pcs"] | None = None
     markup_coefficient: Positive | None = None
     bonus_coefficient: Positive | None = None
+    # Price of one packing, including sale VAT; omitted/null restores the profile's formula.
+    sale_unit_price: Annotated[Decimal, Field(gt=0, max_digits=24, decimal_places=2)] | None = None
     weight: Nonnegative | None = None
     mass: Nonnegative | None = None
     volume: Nonnegative | None = None

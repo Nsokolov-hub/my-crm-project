@@ -14,6 +14,7 @@ from . import (
     fulfillment,
     payments,
     procurement,
+    sale_history,
     wave_board,
     wave_history,
     wave_positions,
@@ -22,7 +23,7 @@ from .models import Approval, CommercialDocument, Execution, Payment
 
 router = APIRouter()
 # The board and the positions come before fulfillment, whose /waves/{wave_id} would otherwise take them.
-for domain in (procurement, financial, documents, payments, wave_board, wave_positions, wave_history, fulfillment):
+for domain in (procurement, financial, documents, payments, sale_history, wave_board, wave_positions, wave_history, fulfillment):
     router.include_router(domain.router)
 
 

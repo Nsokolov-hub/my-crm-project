@@ -8637,6 +8637,80 @@
         }
       }
     },
+    "/api/v1/requests/{request_id}/sale-price-history": {
+      "get": {
+        "tags": [
+          "Расчёты и настраиваемые профили"
+        ],
+        "summary": "Sale Price History",
+        "description": "Earlier confirmed sales to this customer, for the articles selected in the calculation.\n\nThe optional comma-separated quote IDs must all belong to this request. Without them the\nlookup uses every active quoted item and demand of the request. Prices, product names and\nVAT treatment come from the released snapshots, never today's catalogue or a draft price.",
+        "operationId": "sale_price_history_api_v1_requests__request_id__sale_price_history_get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "quote_item_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 4000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Quote Item Ids"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalePriceHistory"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/waves/board": {
       "get": {
         "tags": [
@@ -20595,6 +20669,134 @@
         ],
         "title": "RoleRef"
       },
+      "SalePriceHistory": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SalePriceHistoryItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "limit"
+        ],
+        "title": "SalePriceHistory"
+      },
+      "SalePriceHistoryItem": {
+        "properties": {
+          "execution_id": {
+            "type": "string",
+            "title": "Execution Id"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "request_number": {
+            "type": "string",
+            "title": "Request Number"
+          },
+          "sold_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Sold At"
+          },
+          "article": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Article"
+          },
+          "nomenclature_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nomenclature Id"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "packing": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packing"
+          },
+          "manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manufacturer"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          },
+          "quantity": {
+            "type": "string",
+            "title": "Quantity"
+          },
+          "unit_price": {
+            "type": "string",
+            "title": "Unit Price"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "price_includes_vat": {
+            "type": "boolean",
+            "title": "Price Includes Vat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "execution_id",
+          "request_id",
+          "request_number",
+          "sold_at",
+          "article",
+          "nomenclature_id",
+          "description",
+          "packing",
+          "manufacturer",
+          "unit",
+          "quantity",
+          "unit_price",
+          "currency",
+          "price_includes_vat"
+        ],
+        "title": "SalePriceHistoryItem"
+      },
       "Selection": {
         "properties": {
           "quote_id": {
@@ -20697,6 +20899,22 @@
               }
             ],
             "title": "Bonus Coefficient"
+          },
+          "sale_unit_price": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,22}|(?=[\\d.]{1,25}0*$)\\d{0,22}\\.\\d{0,2}0*$)"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sale Unit Price"
           },
           "weight": {
             "anyOf": [

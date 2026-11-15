@@ -6,6 +6,8 @@ export type Selection = {
   quote_item_id: string;
   markup_coefficient: string;
   bonus_coefficient?: string;
+  /** Final sale price per packing in RUB, including VAT; omitted to use the profile's formula. */
+  sale_unit_price?: string;
 };
 export type Rate = {
   currency: string;
@@ -40,6 +42,7 @@ export const plainQuantity = (value: unknown) => {
   return raw.includes('.') ? raw.replace(/\.?0+$/, '') : raw;
 };
 export const validMarkup = (value: string) => Number.isFinite(Number(value)) && Number(value) >= 1;
+export const validSalePrice = (value: string) => /^\d+(\.\d{1,2})?$/.test(value) && positive(value);
 export const detailLabels: Record<string, string> = {
   purchase_foreign: 'Закупка в валюте',
   exchange_rate: 'Курс к ₽',
@@ -180,10 +183,8 @@ const plannedValue = (row: PlannedVolumeRow, values: Record<string, string>) =>
   values[row.product_group_id] ?? plainQuantity(row.wave_quantity);
 
 export const plannedVolumeChanged = (rows: PlannedVolumeRow[], values: Record<string, string>) =>
-  rows.some((row) => {
-    const value = plannedValue(row, values);
-    return value === '' || Number(value) !== Number(row.wave_quantity);
-  });
+  // An explicitly entered plan value is still an override: a working wave may already contain more pieces.
+  rows.some((row) => Object.prototype.hasOwnProperty.call(values, row.product_group_id));
 
 export function plannedVolumeErrors(
   rows: PlannedVolumeRow[],
