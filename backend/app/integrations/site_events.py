@@ -7,11 +7,12 @@ request between stages or edits a manufacturer emits its event without being tau
 - ``site_request.assigned`` / ``converted`` / ``rejected`` — the fate of a site request;
 - ``request.stage_changed`` / ``request.closed`` — stages of a CRM request made from a site request; the site
   turns them into offline conversions of Yandex Metrika and GA4 (F3); ``sale_confirmed`` carries the revenue;
+- ``request.payment_received`` / ``request.payment_refunded`` — confirmed money facts, separate from a sale;
 - ``product.upserted`` — a nomenclature marked «Публиковать на сайте» (F4): the site makes a draft card;
 - ``manufacturer.upserted`` / ``manufacturer.merged`` — the registry changed (F5 without waiting for the night).
 
-Clients, contacts and prices never leave the CRM: events carry ids, stages, the catalogue fields and the revenue
-of a confirmed sale only. Each event is POSTed to SITE_EVENTS_URL with ``X-CRM-Event-Id``, ``X-CRM-Timestamp`` and
+Clients, contacts and line prices never leave the CRM: events carry ids, stages, catalogue fields and aggregate
+sale/payment amounts only. Each event is POSTed to SITE_EVENTS_URL with ``X-CRM-Event-Id``, ``X-CRM-Timestamp`` and
 ``X-CRM-Signature: sha256=HMAC(SITE_EVENTS_SECRET, "<timestamp>.<body>")``.
 """
 
@@ -74,7 +75,7 @@ def revenue(session: Session, request_id: str) -> dict[str, Any] | None:
 def _collect(session: Session, _context: Any, _instances: Any) -> None:
     if not enabled():
         return
-    from app.commerce.models import Manufacturer
+    from app.commerce.models import Manufacturer, Payment, PaymentReversal
     from app.crm.models import Nomenclature, Packing
     from app.crm.models import Request as CRMRequest
     from app.integrations.models import SiteRequest
@@ -90,6 +91,13 @@ def _collect(session: Session, _context: Any, _instances: Any) -> None:
         elif isinstance(row, CRMRequest) and row not in session.new:
             if changed(row, 'commercial_stage') or changed(row, 'sale_confirmed_at') or changed(row, 'closed_at'):
                 _request_events(session, row)
+        elif isinstance(row, Payment) and row.status == 'confirmed':
+            if row in session.new or changed(row, 'status'):
+                payment_event(session, row)
+        elif isinstance(row, PaymentReversal) and row in session.new and row.kind == 'refund':
+            payment = session.get(Payment, row.payment_id)
+            if payment is not None and payment.status == 'confirmed':
+                payment_event(session, payment, refund=row)
         elif isinstance(row, Nomenclature):
             if row in session.new or any(changed(row, field) for field in PRODUCT_FIELDS):
                 touched_nomenclatures.add(row.id)
@@ -107,10 +115,15 @@ def _collect(session: Session, _context: Any, _instances: Any) -> None:
             emit(session, 'product.upserted', f'{row.id}:{utcnow().timestamp()}', product_payload(session, row))
 
 
-def _request_events(session: Session, row: Any) -> None:
+def request_origin(session: Session, request_id: str) -> Any:
     from app.integrations.models import SiteRequest
 
-    origin = session.scalar(select(SiteRequest).where(SiteRequest.request_id == row.id).limit(1))
+    return session.scalar(select(SiteRequest).where(SiteRequest.request_id == request_id)
+                          .order_by(SiteRequest.submitted_at, SiteRequest.id).limit(1))
+
+
+def _request_events(session: Session, row: Any) -> None:
+    origin = request_origin(session, row.id)
     if origin is None:
         return
     base = {'site_request_id': origin.site_request_id, 'crm_request_id': row.id, 'crm_request_number': row.number}
@@ -124,6 +137,31 @@ def _request_events(session: Session, row: Any) -> None:
     if stage == 'sale_confirmed':
         data['revenue'] = revenue(session, row.id)
     emit(session, 'request.stage_changed', f'{row.id}:{stage}', data)
+
+
+def payment_event(session: Session, payment: Any, *, refund: Any = None) -> None:
+    """Confirmed money registered against a request, independently from its sale stage/allocations."""
+    from app.crm.models import Request
+
+    origin = request_origin(session, payment.request_id)
+    request = session.get(Request, payment.request_id)
+    if origin is None or request is None or not payment.confirmed_at:
+        return
+    base = {'site_request_id': origin.site_request_id, 'crm_request_id': request.id,
+            'crm_request_number': request.number}
+    if refund is not None:
+        # New Entity defaults are normally assigned by flush; the immutable fact needs its ID already.
+        if not refund.id:
+            refund.id = str(uuid4())
+        emit(session, 'request.payment_refunded', refund.id, {**base, 'refund': {
+            'id': refund.id, 'payment_id': payment.id, 'amount': format(refund.amount, 'f'),
+            'currency': payment.currency, 'refunded_at': (refund.created_at or utcnow()).isoformat()}})
+    else:
+        if not payment.id:
+            payment.id = str(uuid4())
+        emit(session, 'request.payment_received', payment.id, {**base, 'payment': {
+            'id': payment.id, 'amount': format(payment.amount, 'f'), 'currency': payment.currency,
+            'confirmed_at': payment.confirmed_at.isoformat()}})
 
 
 def product_payload(session: Session, row: Any) -> dict[str, Any]:
