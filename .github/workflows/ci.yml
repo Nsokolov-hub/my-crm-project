@@ -79,13 +79,48 @@ jobs:
         env:
           TEST_DATABASE_URL: postgresql+psycopg://crm_test:crm_test_password@localhost:5432/crm_test_db
           DATABASE_URL: sqlite://
-        run: pytest backend/tests -m 'not postgres and not integration' -q -p no:cacheprovider
+        run: pytest backend/tests -m 'not postgres and not integration' -q -p no:cacheprovider --junitxml=backend-postgres-regular-report.xml
+      - name: Annotate regular PostgreSQL test failures
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          report = Path("backend-postgres-regular-report.xml")
+          if not report.exists():
+              raise SystemExit(0)
+
+          def escape(value):
+              return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+          failures = []
+          for case in ET.parse(report).iter("testcase"):
+              parts = case.get("classname", "").split(".")
+              test_id = "::".join((case.get("classname", ""), case.get("name", "")))
+              for index in range(len(parts), 0, -1):
+                  source = Path("backend", *parts[:index]).with_suffix(".py")
+                  if source.is_file():
+                      test_id = "::".join((str(source), *parts[index:], case.get("name", "")))
+                      break
+              for result in case:
+                  if result.tag in ("failure", "error"):
+                      traceback = result.text or result.get("message", "No traceback recorded")
+                      failures.append(f"{test_id}\n{traceback.strip()[-6000:]}")
+
+          for failure in failures[:10]:
+              print(f"::error::{escape(failure)}")
+          if len(failures) > 10:
+              print(f"::warning::{len(failures) - 10} further failures are in the uploaded JUnit report")
+          PY
       - name: Upload Test Report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: backend-postgres-report
-          path: backend-postgres-report.xml
+          path: |
+            backend-postgres-report.xml
+            backend-postgres-regular-report.xml
 
   frontend:
     runs-on: ubuntu-latest
