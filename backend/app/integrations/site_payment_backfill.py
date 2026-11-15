@@ -30,7 +30,7 @@ def backfill(db: Session, *, apply: bool = False, limit: int = 1000) -> dict[str
                                      'truncated': len(payments) > limit, 'applied': apply}
     for payment in payments[:limit]:
         refunds = db.scalars(select(PaymentReversal).where(
-            PaymentReversal.payment_id == payment.id, PaymentReversal.kind == 'refund')
+            PaymentReversal.payment_id == payment.id, PaymentReversal.kind.in_(('refund', 'correction')))
             .order_by(PaymentReversal.created_at, PaymentReversal.id)).all()
         for fact in [None, *refunds]:
             kind = 'request.payment_refunded' if fact is not None else 'request.payment_received'

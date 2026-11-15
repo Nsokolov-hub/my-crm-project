@@ -29,7 +29,7 @@ from sqlalchemy import event, inspect, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.db import utcnow
+from app.core.db import as_utc, utcnow
 from app.core.errors import DomainError
 from app.core.models import OutboxEvent
 
@@ -94,7 +94,7 @@ def _collect(session: Session, _context: Any, _instances: Any) -> None:
         elif isinstance(row, Payment) and row.status == 'confirmed':
             if row in session.new or changed(row, 'status'):
                 payment_event(session, row)
-        elif isinstance(row, PaymentReversal) and row in session.new and row.kind == 'refund':
+        elif isinstance(row, PaymentReversal) and row in session.new and row.kind in ('refund', 'correction'):
             payment = session.get(Payment, row.payment_id)
             if payment is not None and payment.status == 'confirmed':
                 payment_event(session, payment, refund=row)
@@ -153,15 +153,18 @@ def payment_event(session: Session, payment: Any, *, refund: Any = None) -> None
         # New Entity defaults are normally assigned by flush; the immutable fact needs its ID already.
         if not refund.id:
             refund.id = str(uuid4())
+        if not refund.created_at:
+            refund.created_at = utcnow()
         emit(session, 'request.payment_refunded', refund.id, {**base, 'refund': {
             'id': refund.id, 'payment_id': payment.id, 'amount': format(refund.amount, 'f'),
-            'currency': payment.currency, 'refunded_at': (refund.created_at or utcnow()).isoformat()}})
+            'currency': payment.currency, 'kind': refund.kind,
+            'refunded_at': as_utc(refund.created_at).isoformat()}})
     else:
         if not payment.id:
             payment.id = str(uuid4())
         emit(session, 'request.payment_received', payment.id, {**base, 'payment': {
             'id': payment.id, 'amount': format(payment.amount, 'f'), 'currency': payment.currency,
-            'confirmed_at': payment.confirmed_at.isoformat()}})
+            'confirmed_at': as_utc(payment.confirmed_at).isoformat()}})
 
 
 def product_payload(session: Session, row: Any) -> dict[str, Any]:
