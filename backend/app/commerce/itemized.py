@@ -192,6 +192,15 @@ def _allocation(amount: Decimal, rows: list[dict], method: str, manual: dict, ro
     return _spread(amount, bases, rows, rounding)
 
 
+def _request_rows(rows: list[dict]) -> list[dict]:
+    """A hypothetical wave volume never scales this proposal's own expenses or fixed commission.
+
+    Keep the earlier partial-purchase share (five offered, three taken) when no wave scenario is set.
+    """
+    return [{**row, "share": Decimal("1"), "source": {**row["source"], "_scenario_volume": False}}
+            if row.get("source", {}).get("_scenario_volume") else row for row in rows]
+
+
 def calculate_itemized(
     profile: dict,
     selections: list[dict],
@@ -349,7 +358,7 @@ class _ExpenseLedger:
     def basis(self, kind, include_wave=False):
         """Base of a percentage expense, as accumulated so far."""
         existing = self.wave.existing
-        basis_rows = self.wave.rows if include_wave else self.wave.selected_rows
+        basis_rows = self.wave.rows if include_wave else _request_rows(self.wave.selected_rows)
         # Positions the client takes only partly count with the pieces that ship.
         if kind == "PURCHASE":
             return sum(row["purchase_rub"] * row["share"] for row in basis_rows) + (
@@ -377,6 +386,7 @@ class _ExpenseLedger:
         kind = expense.get("calculation_type", "FIXED")
         method = expense.get("method", "BY_QUANTITY")
         wave_scope = expense.get("scope", "WAVE") == "WAVE"
+        allocation_rows = rows if wave_scope else _request_rows(wave.selected_rows)
         shared = method == "BY_QUANTITY" and wave_scope
         calculation_basis = None
         if kind in ("FIXED", "MANUAL"):
@@ -402,7 +412,7 @@ class _ExpenseLedger:
         if shared:
             parts, existing_share = self.shared_by_quantity(amount)
         else:
-            parts = _allocation(amount, rows if wave_scope else wave.selected_rows, method, expense.get("manual") or {}, rounding)
+            parts = _allocation(amount, allocation_rows, method, expense.get("manual") or {}, rounding)
             existing_share = Decimal("0")
         stage = expense.get("stage", "GENERAL")
         for row in rows:
@@ -427,7 +437,8 @@ class _ExpenseLedger:
             "wave_parts": {key: _string(value) for key, value in parts.items()},
             "existing_wave_share": _string(existing_share + sum(value for key, value in parts.items() if key not in selected_ids)),
             "wave_total_quantity": _string(wave.total_quantity),
-            "distribution_quantity": _string(wave.total_quantity if wave_scope else wave.selected_quantity),
+            "distribution_quantity": _string(wave.total_quantity if wave_scope else
+                                             sum(row["quantity"] * row["share"] for row in allocation_rows)),
             "basis": expense.get("basis", ""), "percent_base": expense.get("percent_base"),
             "calculation_basis": _string(calculation_basis) if calculation_basis is not None else None,
         })
@@ -575,7 +586,8 @@ def _pricing_terms(profile, payment_terms, internal_adjustment, selected_rows, r
         error("INTERNAL_ADJUSTMENT", "Недопустимые параметры внутренней комиссии", field="internal_adjustment")
     fixed_adjustment = {}
     if adjustment_enabled and adjustment_type == "FIXED":
-        fixed_adjustment = _allocation(_money(adjustment_value, rounding), selected_rows, "BY_QUANTITY", {}, rounding)
+        fixed_adjustment = _allocation(_money(adjustment_value, rounding), _request_rows(selected_rows),
+                                       "BY_QUANTITY", {}, rounding)
     return _Terms(vat_rate, deduct_vat, sale_vat_rate, deferred, days, start_event, annual_rate, day_basis, adjustment_enabled,
                   adjustment_type, adjustment_value, service_percent, fixed_adjustment)
 

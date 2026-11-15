@@ -98,6 +98,80 @@ def test_scenario_below_real_volume_uses_full_precision_and_only_its_own_working
     assert Decimal(calculated["totals"]["general_expenses"]) == 3000
 
 
+def scenario_rows():
+    own = quote_selection("own", "reference_standards", "2", "1000", "1")
+    peer = quote_selection("peer", "reference_standards", "23", "1000", "1")
+    for row in (own, peer):
+        row["product_group"]["id"] = "group"
+        row["currency_code"] = "RUB"
+    profile = itemized_profile()
+    profile.update(import_country_id="RU", customs_fee_brackets=[{
+        "from_amount": "0", "to_amount": None, "fee": "0"}])
+    return profile, own, peer
+
+
+def test_wave_scenario_changes_airport_pickup_but_keeps_request_expenses_and_manual_parts():
+    profile, own, peer = scenario_rows()
+    expenses = [
+        {"name": "Вывоз из аэропорта", "amount": "1000", "scope": "WAVE", "method": "BY_QUANTITY"},
+        {"name": "Доставка клиенту", "amount": "5000", "scope": "REQUEST", "method": "BY_QUANTITY"},
+        {"name": "Процент заявки", "amount": "10", "scope": "REQUEST", "method": "BY_QUANTITY",
+         "calculation_type": "PERCENTAGE", "percent_base": "PURCHASE"},
+        {"name": "Диапазон заявки", "scope": "REQUEST", "method": "BY_QUANTITY",
+         "calculation_type": "BRACKET", "percent_base": "PURCHASE", "brackets": [
+             {"from_amount": "0", "to_amount": "1999.99", "fee": "100"},
+             {"from_amount": "2000", "to_amount": None, "fee": "300"}]},
+        {"name": "Ручной расход заявки", "amount": "1000", "scope": "REQUEST", "method": "MANUAL",
+         "manual": {"own": "1000"}},
+        {"name": "Ручной расход волны", "amount": "250", "scope": "WAVE", "method": "MANUAL",
+         "manual": {"own": "50", "peer": "200"}},
+    ]
+    original = calculate_itemized(profile, [own], expenses, [], wave_existing_selections=[peer])
+    calculation_shares([own], [own, peer], {"group": Decimal("10")},
+                       {"rows": [{"product_group_id": "group"}]}, wave_rows=[own, peer])
+    scenario = calculate_itemized(profile, [own], expenses, [], wave_existing_selections=[peer])
+    before = original["lines"][0]["expense_details"]
+    after = scenario["lines"][0]["expense_details"]
+    assert (Decimal(before["Вывоз из аэропорта"]), Decimal(after["Вывоз из аэропорта"])) == (80, 200)
+    for name, amount in (("Доставка клиенту", 5000), ("Процент заявки", 200), ("Диапазон заявки", 300),
+                         ("Ручной расход заявки", 1000), ("Ручной расход волны", 50)):
+        assert Decimal(before[name]) == Decimal(after[name]) == amount
+    for allocation in scenario["expense_allocations"]:
+        if allocation["scope"] == "REQUEST":
+            assert Decimal(allocation["distribution_quantity"]) == 2
+            assert allocation["existing_wave_share"] == "0"
+
+
+def test_wave_scenario_keeps_fixed_internal_commission_and_manual_sale_price():
+    profile, own, peer = scenario_rows()
+    own["sale_unit_price"] = "1999.37"
+    adjustment = {"enabled": True, "type": "FIXED", "value": "300"}
+    original = calculate_itemized(profile, [own], [], [], internal_adjustment=adjustment,
+                                  wave_existing_selections=[peer])
+    calculation_shares([own], [own, peer], {"group": Decimal("10")},
+                       {"rows": [{"product_group_id": "group"}]}, wave_rows=[own, peer])
+    scenario = calculate_itemized(profile, [own], [], [], internal_adjustment=adjustment,
+                                  wave_existing_selections=[peer])
+    for result in (original, scenario):
+        detail = result["lines"][0]["detail"]
+        assert Decimal(detail["internal_bonus"]) == 300
+        assert Decimal(detail["bonus_withdrawal_fee"]) == 48
+        assert Decimal(detail["sale_total"]) == Decimal("3998.74")
+        assert result["lines"][0]["sale_unit_price"] == "1999.37"
+
+
+def test_partial_client_purchase_keeps_its_previous_delivery_and_fixed_commission_pricing():
+    profile, own, _ = scenario_rows()
+    own["quote_item"]["quantity"] = "5"
+    own["_share"] = "0.6"  # Earlier business case: five offered, only three taken.
+    result = calculate_itemized(profile, [own], [{"name": "Доставка клиенту", "amount": "5000",
+        "scope": "REQUEST", "method": "BY_QUANTITY"}], [],
+        internal_adjustment={"enabled": True, "type": "FIXED", "value": "300"})
+    assert Decimal(result["totals"]["client_delivery"]) == Decimal("8333.33")
+    assert Decimal(result["totals"]["internal_bonus"]) == 500
+    assert Decimal(result["expense_allocations"][0]["distribution_quantity"]) == 3
+
+
 @pytest.mark.parametrize("target", ["1", "10", "23"])
 def test_working_wave_volume_can_be_smaller_than_its_23_existing_pieces(crm, target):
     req, data, seller, supplier, plan, group_id, item = planned(crm)

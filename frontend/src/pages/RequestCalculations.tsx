@@ -626,6 +626,9 @@ function CalculationEditor({
   const snapshot = (preview?.snapshot || preview) as Record<string, unknown> | undefined;
   const outputLines = (snapshot?.lines || []) as Entity[];
   const waveDistribution = (snapshot?.wave_distribution || {}) as Entity;
+  const offeredQuantity =
+    waveDistribution.offered_quantity ??
+    outputLines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
   const totals = snapshot?.totals as Record<string, unknown> | undefined;
   const resultLabels: Record<string, string> = {
     purchase_rub: 'Закупка, ₽',
@@ -1298,16 +1301,11 @@ function CalculationEditor({
                   )}
                   {preview && divideWaveExpenses && (
                     <p className="info-note">
-                      Расходы волны сейчас делятся на{' '}
-                      <strong>{decimal(waveDistribution.total_quantity || 0)} шт.</strong>: в этом
-                      расчёте {decimal(waveDistribution.selected_quantity || 0)}
-                      {waveDistribution.offered_quantity !== undefined &&
-                      Number(waveDistribution.offered_quantity) !==
-                        Number(waveDistribution.selected_quantity)
-                        ? ` (в КП ${decimal(waveDistribution.offered_quantity)})`
-                        : ''}
-                      , в закупках {decimal(waveDistribution.existing_quantity || 0)}, по плану{' '}
-                      {decimal(waveDistribution.forecast_quantity || 0)}.
+                      База распределения общих расходов волны:{' '}
+                      <strong>{decimal(waveDistribution.total_quantity || 0)} шт.</strong> В КП{' '}
+                      {decimal(offeredQuantity)} шт.; ранее заказано{' '}
+                      {decimal(waveDistribution.existing_quantity || 0)} шт.; прогноз{' '}
+                      {decimal(waveDistribution.forecast_quantity || 0)} шт.
                     </p>
                   )}
                   {volumeShown && volumeChanged && (
@@ -1955,10 +1953,10 @@ function CalculationEditor({
           )}
           {preview && (
             <p className="info-note">
-              В закупках: {decimal(waveDistribution.existing_quantity || 0)} шт. · В расчёте:{' '}
-              {decimal(waveDistribution.selected_quantity || 0)} шт. · Прогноз:{' '}
-              {decimal(waveDistribution.forecast_quantity || 0)} шт. · База:{' '}
-              {decimal(waveDistribution.total_quantity || 0)} шт.
+              База распределения расходов: {decimal(waveDistribution.total_quantity || 0)} шт. · В
+              КП: {decimal(offeredQuantity)} шт. · Ранее заказано:{' '}
+              {decimal(waveDistribution.existing_quantity || 0)} шт. · Прогноз:{' '}
+              {decimal(waveDistribution.forecast_quantity || 0)} шт.
               {!divideWaveExpenses && ' · Расходы волны не делятся: все на этом расчёте.'}
               {Boolean(waveDistribution.customs_fee_scale_waived) &&
                 ' · В волне есть колонки: платится только сбор 73 800 ₽ на колонки, сбор по шкале не начисляется.'}

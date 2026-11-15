@@ -4,6 +4,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/queryClient';
 import { RequestCalculations } from '../pages/RequestCalculations';
+import { CalculationBreakdown } from '../pages/calculations/CalculationBreakdown';
 
 vi.mock('../app/Auth', () => ({ useAuth: () => ({ can: () => true }) }));
 vi.mock('../lib/api', async (original) => ({
@@ -261,4 +262,43 @@ it('accepts a calculation volume below the 23 pieces already ordered in a workin
       { product_group_id: 'columns', quantity: '10' },
     ]),
   );
+});
+
+it('keeps the scenario basis separate from the actual number of pieces in the saved calculation', () => {
+  render(
+    <CalculationBreakdown
+      snapshot={{
+        id: 'saved',
+        lines: [{ id: 'line', line_id: 'line', description: 'Колонка', quantity: '3' }],
+        wave_distribution: {
+          total_quantity: '1',
+          offered_quantity: '3',
+          selected_quantity: '0.115',
+          existing_quantity: '23',
+          forecast_quantity: '0',
+        },
+        wave: {
+          planned_volume: {
+            rows: [
+              {
+                product_group_name: 'Колонки',
+                quantity: '1',
+                wave_quantity: '10',
+                offered_quantity: '3',
+                counted_quantity: '0.115',
+              },
+            ],
+            comment: 'Сценарий поставки',
+          },
+        },
+      }}
+    />,
+  );
+  expect(screen.getByText(/База распределения общих расходов волны:/)).toHaveTextContent(
+    'База распределения общих расходов волны: 1 шт. В КП 3 шт.; ранее заказано 23 шт.; прогноз 0 шт.',
+  );
+  expect(screen.getByText(/Плановый объём изменён в расчёте:/)).toHaveTextContent(
+    'в распределении учтено 0,115 из 3 шт. КП',
+  );
+  expect(screen.queryByText(/клиент возьмёт|шт. в этом расчёте \+/)).not.toBeInTheDocument();
 });

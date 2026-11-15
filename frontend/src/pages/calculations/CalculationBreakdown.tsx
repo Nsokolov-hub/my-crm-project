@@ -11,6 +11,9 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
   const lines = (snapshot.lines || []) as Entity[];
   const wave = (snapshot.wave || {}) as Entity;
   const distribution = (snapshot.wave_distribution || {}) as Entity;
+  const offeredQuantity =
+    distribution.offered_quantity ??
+    lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
   const allocations = (snapshot.expense_allocations || []) as Entity[];
   const rates = (snapshot.rates || []) as Entity[];
   const rows = [
@@ -42,11 +45,10 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
       </div>
       <p>
         Волна: {String(wave.number || '—')}. База распределения общих расходов волны:{' '}
-        {decimal(distribution.total_quantity || 0)} шт. (
-        {decimal(distribution.selected_quantity || 0)} шт. в этом расчёте +{' '}
-        {decimal(distribution.existing_quantity || 0)} шт. в закупках +{' '}
-        {decimal(distribution.forecast_quantity || 0)} шт. прогноза). Доставка клиенту делится на{' '}
-        {decimal(distribution.selected_quantity || 0)} шт. этого расчёта.
+        {decimal(distribution.total_quantity || 0)} шт. В КП {decimal(offeredQuantity)} шт.; ранее
+        заказано {decimal(distribution.existing_quantity || 0)} шт.; прогноз{' '}
+        {decimal(distribution.forecast_quantity || 0)} шт. Доставка клиенту распределяется отдельно
+        в пределах этого расчёта.
       </p>
       {Boolean(wave.planned_volume) && (
         <p className="info-note">
@@ -56,7 +58,7 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
               (row) =>
                 `${String(row.product_group_name)} — ${decimal(row.quantity)} шт. (в волне ${decimal(row.wave_quantity)} шт.)` +
                 (row.offered_quantity
-                  ? `, клиент возьмёт ${decimal(row.counted_quantity)} из ${decimal(row.offered_quantity)} шт. КП`
+                  ? `, в распределении учтено ${decimal(row.counted_quantity)} из ${decimal(row.offered_quantity)} шт. КП`
                   : ''),
             )
             .join('; ')}
