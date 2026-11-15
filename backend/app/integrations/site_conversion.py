@@ -158,11 +158,13 @@ def proposal(db: Session, row: SiteRequest) -> dict[str, Any]:
             'comment': '\n'.join([*notes, *([item.comment] if item.comment else [])]) or None,
         })
     if row.kind == 'service' and row.service:
-        title = f'Услуга «{row.service.get("name")}» — {row.company}'
+        title = f'Услуга «{row.service.get("name")}»'
     elif items:
-        title = f'{items[0].name}' + (f' и ещё {len(items) - 1}' if len(items) > 1 else '') + f' — {row.company}'
+        title = f'{items[0].name}' + (f' и ещё {len(items) - 1}' if len(items) > 1 else '')
     else:
-        title = f'Запрос с сайта {row.site_number} — {row.company}'
+        title = f'Запрос с сайта {row.site_number}'
+    if row.company:
+        title += f' — {row.company}'
     return {
         'client': {'name': row.company, 'tax_id': row.inn, 'country': None, 'city': row.city, 'phone': row.phone,
                    'email': row.email},

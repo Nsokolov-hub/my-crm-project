@@ -112,7 +112,8 @@ class SiteRequestAttribution(Entity):
 
     __tablename__ = 'site_request_attributions'
     __table_args__ = (
-        CheckConstraint("channel IS NULL OR channel IN ('cpc', 'organic', 'referral', 'direct', 'email', 'social')"),
+        CheckConstraint("channel IS NULL OR channel IN ('cpc', 'organic', 'referral', 'direct', 'email', 'social', 'unknown')",
+                        name='ck_site_attribution_channel'),
     )
     site_request_id: Mapped[str] = mapped_column(ForeignKey('site_requests.id'), unique=True)
     channel: Mapped[str | None] = mapped_column(String(20), index=True)

@@ -21234,7 +21234,8 @@
                   "referral",
                   "direct",
                   "email",
-                  "social"
+                  "social",
+                  "unknown"
                 ],
                 "type": "string"
               },
@@ -21295,14 +21296,14 @@
       "SiteCustomer": {
         "properties": {
           "name": {
+            "default": "",
             "maxLength": 200,
-            "minLength": 1,
             "title": "Name",
             "type": "string"
           },
           "company": {
+            "default": "",
             "maxLength": 250,
-            "minLength": 1,
             "title": "Company",
             "type": "string"
           },
@@ -21320,8 +21321,10 @@
             "title": "Inn"
           },
           "phone": {
-            "description": "E.164: +79991234567",
-            "pattern": "^\\+[1-9][0-9]{6,14}$",
+            "default": "",
+            "description": "E.164 when supplied: +79991234567",
+            "maxLength": 20,
+            "pattern": "^(?:\\+[1-9][0-9]{6,14})?$",
             "title": "Phone",
             "type": "string"
           },
@@ -21364,9 +21367,6 @@
           }
         },
         "required": [
-          "name",
-          "company",
-          "phone",
           "email"
         ],
         "title": "SiteCustomer",

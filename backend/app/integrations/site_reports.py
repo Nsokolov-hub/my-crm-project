@@ -41,9 +41,9 @@ STATUS_NAMES = {'new': 'Новая', 'in_work': 'В работе', 'converted': 
 QUALIFIED = ('collecting_quotes', 'quote_given', 'calculation', 'proposal_sent', 'composition_agreed',
              'awaiting_payment', 'sale_confirmed')
 PROPOSED = ('proposal_sent', 'composition_agreed', 'awaiting_payment', 'sale_confirmed')
-CHANNELS = ('cpc', 'organic', 'referral', 'direct', 'email', 'social')
+CHANNELS = ('cpc', 'organic', 'referral', 'direct', 'email', 'social', 'unknown')
 CHANNEL_NAMES = {'cpc': 'Реклама', 'organic': 'Поиск', 'referral': 'Переходы с сайтов', 'direct': 'Прямые заходы',
-                 'email': 'Рассылки', 'social': 'Соцсети', None: 'Не определён'}
+                 'email': 'Рассылки', 'social': 'Соцсети', 'unknown': 'Не определён', None: 'Не определён'}
 
 
 def workbook_response(sheets: list[tuple[str, list[str], list[list[Any]]]], name: str) -> Response:

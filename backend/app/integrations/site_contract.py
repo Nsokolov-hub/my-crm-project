@@ -20,7 +20,7 @@ MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 # Formats the site's forms accept (RFQ-03).
 ATTACHMENT_EXTENSIONS = ('.xlsx', '.csv', '.pdf', '.docx')
 
-Channel = Literal['cpc', 'organic', 'referral', 'direct', 'email', 'social']
+Channel = Literal['cpc', 'organic', 'referral', 'direct', 'email', 'social', 'unknown']
 Kind = Literal['product_rfq', 'one_click', 'service', 'general']
 Analogue = Literal['none', 'allowed', 'requested']
 Unit = Literal['pack', 'mg', 'g', 'kg', 'ml', 'l', 'pcs']
@@ -35,10 +35,11 @@ def blank_to_none(value: object) -> object:
 
 
 class SiteCustomer(Contract):
-    name: str = Field(min_length=1, max_length=200)
-    company: str = Field(min_length=1, max_length=250)
+    name: str = Field(default='', max_length=200)
+    company: str = Field(default='', max_length=250)
     inn: str | None = Field(default=None, max_length=12)
-    phone: str = Field(pattern=r'^\+[1-9][0-9]{6,14}$', description='E.164: +79991234567')
+    phone: str = Field(default='', max_length=20, pattern=r'^(?:\+[1-9][0-9]{6,14})?$',
+                       description='E.164 when supplied: +79991234567')
     email: str = Field(min_length=3, max_length=254)
     city: str | None = Field(default=None, max_length=200)
     comment: str | None = Field(default=None, max_length=10000)
@@ -137,7 +138,7 @@ class SiteRequestIn(Contract):
 
     @model_validator(mode='after')
     def items_for_kind(self) -> 'SiteRequestIn':
-        if self.kind in ('product_rfq', 'one_click') and not self.items:
+        if self.kind == 'product_rfq' and not self.items and not self.attachments:
             raise ValueError('В запросе КП нужна хотя бы одна позиция')
         if self.kind == 'one_click' and len(self.items) != 1:
             raise ValueError('«Заказ в 1 клик» содержит одну позицию')
