@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { StockCatalog } from '../pages/StockCatalog';
 import { useAuth } from '../app/Auth';
-import { download } from '../lib/api';
+import { ApiError, download } from '../lib/api';
 import { useApi } from '../lib/hooks';
 
 vi.mock('../app/Auth', () => ({ useAuth: vi.fn() }));
@@ -195,6 +195,36 @@ describe('stock catalogue', () => {
     expect(screen.getByText('Каталог недоступен')).toBeInTheDocument();
     expect(vi.mocked(useApi).mock.calls.at(-1)?.[0]).toBeNull();
   });
+
+  it.each([false, true])(
+    'shows a failed load without empty or cached stock when cached data exists: %s',
+    (hasCachedData) => {
+      const cached = vi.mocked(useApi).getMockImplementation()!('/stock-catalog');
+      vi.mocked(useApi).mockReturnValue({
+        ...cached,
+        data: hasCachedData ? cached.data : undefined,
+        loading: false,
+        error: new ApiError(503, 'SITE_UNAVAILABLE', 'Каталог сайта временно недоступен'),
+      });
+      open();
+
+      expect(screen.getByRole('alert')).toHaveTextContent('Каталог сайта временно недоступен');
+      expect(screen.getByText('Не удалось загрузить наличие')).toBeVisible();
+      expect(screen.queryByText('Загрузка наличия')).not.toBeInTheDocument();
+      expect(screen.queryByText('Позиций в наличии нет')).not.toBeInTheDocument();
+      expect(screen.queryByText('000123')).not.toBeInTheDocument();
+      expect(screen.queryByRole('table')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Назад' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Далее' })).not.toBeInTheDocument();
+      expect(screen.queryByText('Состояние источников')).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Срез:/)).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Excel для клиента' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Внутренний Excel' })).toBeDisabled();
+      fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
+      expect(refresh).toHaveBeenCalledOnce();
+      expect(download).not.toHaveBeenCalled();
+    },
+  );
 
   it('explains a failed export and keeps unsafe supplier links inert', async () => {
     vi.mocked(download).mockRejectedValueOnce(new Error('Сайт не отвечает'));

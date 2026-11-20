@@ -361,9 +361,13 @@ export function StockCatalog() {
         </div>
         <div className="stock-export-bar">
           <span className="muted">
-            {list.data?.as_of
-              ? `Срез: ${date(list.data.as_of, true)} · Москва`
-              : 'Загрузка наличия'}
+            {list.error
+              ? 'Не удалось загрузить наличие'
+              : list.loading
+                ? 'Загрузка наличия'
+                : list.data?.as_of
+                  ? `Срез: ${date(list.data.as_of, true)} · Москва`
+                  : 'Наличие не загружено'}
           </span>
           <div className="inline-actions">
             {exportAllowed && mode === 'catalog' && (
@@ -406,10 +410,10 @@ export function StockCatalog() {
             {mode === 'catalog' && ' В клиентском файле нет поставщиков и закупочных данных.'}
           </p>
         )}
-        <ErrorBox error={exportError || list.error} retry={list.refresh} />
-        {list.loading ? (
+        <ErrorBox error={list.error || exportError} retry={list.refresh} />
+        {list.error ? null : list.loading ? (
           <Loading />
-        ) : (
+        ) : list.data ? (
           <>
             <DataTable
               rows={list.data?.items || []}
@@ -487,8 +491,8 @@ export function StockCatalog() {
               </div>
             </div>
           </>
-        )}
-        {internal && Boolean(list.data?.sources.length) && (
+        ) : null}
+        {!list.error && !list.loading && internal && Boolean(list.data?.sources.length) && (
           <details className="stock-source-status">
             <summary>Состояние источников</summary>
             <ul>
