@@ -108,6 +108,8 @@ remote "for repo in reaktiv-crm-backend reaktiv-crm-web; do docker images \$repo
 cat <<EOF
 
 ГОТОВО: на проде $sha (было $live).
-Откат, если понадобится (если в выкатке была миграция базы, сначала откатите её):
+Команда возврата образов ниже подходит только для релиза без миграций.
+При наличии миграций используйте отдельный план отката: docs/stock-catalog-2026-11-20.md.
+Схему и сохранённые снимки наличия через alembic downgrade не удалять.
   ssh $HOST 'cd $APP && docker tag reaktiv-crm-backend:rollback-$live reaktiv-crm-backend:local && docker tag reaktiv-crm-web:rollback-$live reaktiv-crm-web:local && docker compose up -d --no-build'
 EOF
