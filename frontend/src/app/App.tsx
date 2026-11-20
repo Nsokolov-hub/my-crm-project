@@ -20,6 +20,9 @@ const RequestDetail = lazy(() =>
   import('../pages/RequestDetail').then((m) => ({ default: m.RequestDetail })),
 );
 const Catalog = lazy(() => import('../pages/Catalog').then((m) => ({ default: m.Catalog })));
+const StockCatalog = lazy(() =>
+  import('../pages/StockCatalog').then((m) => ({ default: m.StockCatalog })),
+);
 const SiteRequests = lazy(() =>
   import('../pages/SiteRequests').then((m) => ({ default: m.SiteRequests })),
 );
@@ -57,6 +60,7 @@ function AuthenticatedApp() {
         <Route path="requests/:id" element={<RequestDetail />} />
         <Route path="site-requests" element={<SiteRequests />} />
         <Route path="catalog" element={<Catalog />} />
+        <Route path="stock-catalog" element={<StockCatalog />} />
         <Route path="documents" element={<Registry kind="documents" />} />
         <Route path="payments" element={<Registry kind="payments" />} />
         <Route path="approvals" element={<Registry kind="approvals" />} />

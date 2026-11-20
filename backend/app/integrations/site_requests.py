@@ -127,7 +127,9 @@ def store_request(db: Session, author: User, data: SiteRequestIn, payload_hash: 
     db.add(row)
     db.flush()
     for position, item in enumerate(data.items, start=1):
-        db.add(SiteRequestItem(site_request_id=row.id, position=position, **item.model_dump()))
+        values = item.model_dump()
+        values['stock_snapshot'] = item.stock_snapshot.model_dump(mode='json') if item.stock_snapshot else None
+        db.add(SiteRequestItem(site_request_id=row.id, position=position, **values))
     attribution = data.attribution
     if attribution:
         first, last = attribution.first_touch, attribution.last_touch

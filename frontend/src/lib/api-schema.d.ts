@@ -1280,6 +1280,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stock-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Listing */
+        get: operations["listing_api_v1_stock_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stock-catalog/export.xlsx": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export */
+        get: operations["export_api_v1_stock_catalog_export_xlsx_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/imports/template.xlsx": {
         parameters: {
             query?: never;
@@ -4419,6 +4453,8 @@ export interface components {
         ConvertItemInput: {
             /** Site Item Id */
             site_item_id?: string | null;
+            /** Stock Snapshot */
+            readonly stock_snapshot?: unknown;
             /** Description */
             description: string;
             /** Article */
@@ -6052,6 +6088,13 @@ export interface components {
              */
             site_product_id: string | null;
             /**
+             * Site Packaging Id
+             * @default null
+             */
+            site_packaging_id: string | null;
+            /** @default null */
+            stock_snapshot: components["schemas"]["SiteStockSnapshot"] | null;
+            /**
              * Crm Product Id
              * @default null
              */
@@ -6213,6 +6256,98 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** SiteStockOffer */
+        SiteStockOffer: {
+            /** Source */
+            source: string;
+            /** Source Name */
+            source_name: string;
+            /** Offer Id */
+            offer_id: string;
+            /** External Id */
+            external_id: string;
+            /** Catalog Number */
+            catalog_number: string;
+            /**
+             * Pack
+             * @default null
+             */
+            pack: string | null;
+            /**
+             * Site Packaging Id
+             * @default null
+             */
+            site_packaging_id: string | null;
+            /**
+             * Match
+             * @enum {string}
+             */
+            match: "exact_pack" | "product_only";
+            /**
+             * Seen At
+             * Format: date-time
+             */
+            seen_at: string;
+            /**
+             * Valid Until
+             * Format: date-time
+             */
+            valid_until: string;
+            /**
+             * Quantity
+             * @default null
+             */
+            quantity: number | null;
+            /**
+             * Url
+             * @default null
+             */
+            url: string | null;
+        };
+        /**
+         * SiteStockSnapshot
+         * @description Private server-derived evidence at submission, never a reservation or a current stock guarantee.
+         */
+        SiteStockSnapshot: {
+            /**
+             * Version
+             * @default 1
+             * @constant
+             */
+            version: 1;
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "in_stock" | "on_order" | "unknown";
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "own" | "supplier" | "none" | "unknown";
+            /**
+             * Site Product Id
+             * @default null
+             */
+            site_product_id: string | null;
+            /**
+             * Site Packaging Id
+             * @default null
+             */
+            site_packaging_id: string | null;
+            /**
+             * Packaging Match
+             * @enum {string}
+             */
+            packaging_match: "exact" | "product_only" | "custom" | "unmatched";
+            /** Offers */
+            offers?: components["schemas"]["SiteStockOffer"][];
+        };
         /** SiteTouch */
         SiteTouch: {
             /**
@@ -6275,6 +6410,113 @@ export interface components {
              * @default Передача позиций в работу
              */
             reason: string;
+        };
+        /** StockCatalogPage */
+        StockCatalogPage: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Items */
+            items: components["schemas"]["StockItem"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+            /** Has More */
+            has_more: boolean;
+            /** Sources */
+            sources?: components["schemas"]["StockSource"][];
+            /** Can Review */
+            can_review: boolean;
+        };
+        /** StockItem */
+        StockItem: {
+            /** Id */
+            id: string;
+            /** Product Id */
+            product_id?: string | null;
+            /** Packaging Id */
+            packaging_id?: string | null;
+            /** Name */
+            name: string;
+            /** Article */
+            article?: string | null;
+            /** Cas */
+            cas?: string | null;
+            /** Manufacturer */
+            manufacturer?: string | null;
+            /** Purity */
+            purity?: string | null;
+            /**
+             * Packaging
+             * @default
+             */
+            packaging: string;
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "in_stock" | "unknown" | "on_order";
+            /** Checked At */
+            checked_at?: string | null;
+            /** Product Url */
+            product_url?: string | null;
+            /** Origin */
+            origin?: string | null;
+            /** Offers */
+            offers?: components["schemas"]["StockOffer"][];
+            /** Fresh */
+            fresh?: boolean | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /** StockOffer */
+        StockOffer: {
+            /** Source */
+            source: string;
+            /** Source Name */
+            source_name: string;
+            /** Offer Id */
+            offer_id: string;
+            /** External Id */
+            external_id?: string | null;
+            /** Catalog Number */
+            catalog_number?: string | null;
+            /** Pack */
+            pack?: string | null;
+            /** Site Packaging Id */
+            site_packaging_id?: string | null;
+            /**
+             * Match
+             * @default
+             */
+            match: string;
+            /** Seen At */
+            seen_at?: string | null;
+            /** Valid Until */
+            valid_until?: string | null;
+            /** Quantity */
+            quantity?: number | string | null;
+            /** Url */
+            url?: string | null;
+        };
+        /** StockSource */
+        StockSource: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /** Last Check */
+            last_check?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** SupplierFavoriteInput */
         SupplierFavoriteInput: {
@@ -11857,6 +12099,118 @@ export interface operations {
                 "application/json": components["schemas"]["VersionCommand"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listing_api_v1_stock_catalog_get: {
+        parameters: {
+            query?: {
+                mode?: "catalog" | "review";
+                audience?: "client" | "internal";
+                q?: string;
+                source?: string;
+                brand?: string;
+                cursor?: string | null;
+                limit?: number;
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockCatalogPage"];
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    export_api_v1_stock_catalog_export_xlsx_get: {
+        parameters: {
+            query?: {
+                audience?: "client" | "internal";
+                mode?: "catalog" | "review";
+                q?: string;
+                source?: string;
+                brand?: string;
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

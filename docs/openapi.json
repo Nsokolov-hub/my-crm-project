@@ -5757,6 +5757,259 @@
         }
       }
     },
+    "/api/v1/stock-catalog": {
+      "get": {
+        "tags": [
+          "Каталог наличия"
+        ],
+        "summary": "Listing",
+        "operationId": "listing_api_v1_stock_catalog_get",
+        "parameters": [
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "catalog",
+                "review"
+              ],
+              "type": "string",
+              "default": "catalog",
+              "title": "Mode"
+            }
+          },
+          {
+            "name": "audience",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "client",
+                "internal"
+              ],
+              "type": "string",
+              "default": "client",
+              "title": "Audience"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 30,
+              "default": "",
+              "title": "Source"
+            }
+          },
+          {
+            "name": "brand",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "",
+              "title": "Brand"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "as_of",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As Of"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockCatalogPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/stock-catalog/export.xlsx": {
+      "get": {
+        "tags": [
+          "Каталог наличия"
+        ],
+        "summary": "Export",
+        "operationId": "export_api_v1_stock_catalog_export_xlsx_get",
+        "parameters": [
+          {
+            "name": "audience",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "client",
+                "internal"
+              ],
+              "type": "string",
+              "default": "client",
+              "title": "Audience"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "catalog",
+                "review"
+              ],
+              "type": "string",
+              "default": "catalog",
+              "title": "Mode"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 30,
+              "default": "",
+              "title": "Source"
+            }
+          },
+          {
+            "name": "brand",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "",
+              "title": "Brand"
+            }
+          },
+          {
+            "name": "as_of",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As Of"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/imports/template.xlsx": {
       "get": {
         "tags": [
@@ -16532,6 +16785,10 @@
             ],
             "title": "Site Item Id"
           },
+          "stock_snapshot": {
+            "title": "Stock Snapshot",
+            "readOnly": true
+          },
           "description": {
             "type": "string",
             "maxLength": 10000,
@@ -21614,6 +21871,30 @@
             "default": null,
             "title": "Site Product Id"
           },
+          "site_packaging_id": {
+            "anyOf": [
+              {
+                "maxLength": 150,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Site Packaging Id"
+          },
+          "stock_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SiteStockSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "crm_product_id": {
             "anyOf": [
               {
@@ -22040,6 +22321,208 @@
         "title": "SiteService",
         "type": "object"
       },
+      "SiteStockOffer": {
+        "properties": {
+          "source": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "source_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Source Name",
+            "type": "string"
+          },
+          "offer_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Offer Id",
+            "type": "string"
+          },
+          "external_id": {
+            "maxLength": 150,
+            "minLength": 1,
+            "title": "External Id",
+            "type": "string"
+          },
+          "catalog_number": {
+            "maxLength": 150,
+            "title": "Catalog Number",
+            "type": "string"
+          },
+          "pack": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pack"
+          },
+          "site_packaging_id": {
+            "anyOf": [
+              {
+                "maxLength": 150,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Site Packaging Id"
+          },
+          "match": {
+            "enum": [
+              "exact_pack",
+              "product_only"
+            ],
+            "title": "Match",
+            "type": "string"
+          },
+          "seen_at": {
+            "format": "date-time",
+            "title": "Seen At",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "title": "Valid Until",
+            "type": "string"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Quantity"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          }
+        },
+        "required": [
+          "source",
+          "source_name",
+          "offer_id",
+          "external_id",
+          "catalog_number",
+          "match",
+          "seen_at",
+          "valid_until"
+        ],
+        "title": "SiteStockOffer",
+        "type": "object"
+      },
+      "SiteStockSnapshot": {
+        "description": "Private server-derived evidence at submission, never a reservation or a current stock guarantee.",
+        "properties": {
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "availability": {
+            "enum": [
+              "in_stock",
+              "on_order",
+              "unknown"
+            ],
+            "title": "Availability",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "own",
+              "supplier",
+              "none",
+              "unknown"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "site_product_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Site Product Id"
+          },
+          "site_packaging_id": {
+            "anyOf": [
+              {
+                "maxLength": 150,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Site Packaging Id"
+          },
+          "packaging_match": {
+            "enum": [
+              "exact",
+              "product_only",
+              "custom",
+              "unmatched"
+            ],
+            "title": "Packaging Match",
+            "type": "string"
+          },
+          "offers": {
+            "items": {
+              "$ref": "#/components/schemas/SiteStockOffer"
+            },
+            "maxItems": 200,
+            "title": "Offers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "captured_at",
+          "availability",
+          "origin",
+          "packaging_match"
+        ],
+        "title": "SiteStockSnapshot",
+        "type": "object"
+      },
       "SiteTouch": {
         "properties": {
           "landing_url": {
@@ -22201,6 +22684,380 @@
           "item_ids"
         ],
         "title": "StartItemsInput"
+      },
+      "StockCatalogPage": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StockItem"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/StockSource"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "can_review": {
+            "type": "boolean",
+            "title": "Can Review"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "items",
+          "has_more",
+          "can_review"
+        ],
+        "title": "StockCatalogPage"
+      },
+      "StockItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "product_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Id"
+          },
+          "packaging_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packaging Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "article": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Article"
+          },
+          "cas": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cas"
+          },
+          "manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manufacturer"
+          },
+          "purity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purity"
+          },
+          "packaging": {
+            "type": "string",
+            "title": "Packaging",
+            "default": ""
+          },
+          "availability": {
+            "type": "string",
+            "enum": [
+              "in_stock",
+              "unknown",
+              "on_order"
+            ],
+            "title": "Availability"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "product_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Url"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin"
+          },
+          "offers": {
+            "items": {
+              "$ref": "#/components/schemas/StockOffer"
+            },
+            "type": "array",
+            "title": "Offers"
+          },
+          "fresh": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fresh"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "availability"
+        ],
+        "title": "StockItem"
+      },
+      "StockOffer": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "source_name": {
+            "type": "string",
+            "title": "Source Name"
+          },
+          "offer_id": {
+            "type": "string",
+            "title": "Offer Id"
+          },
+          "external_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Id"
+          },
+          "catalog_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Number"
+          },
+          "pack": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pack"
+          },
+          "site_packaging_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Packaging Id"
+          },
+          "match": {
+            "type": "string",
+            "title": "Match",
+            "default": ""
+          },
+          "seen_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seen At"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "source_name",
+          "offer_id"
+        ],
+        "title": "StockOffer"
+      },
+      "StockSource": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          },
+          "last_check": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Check"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status"
+        ],
+        "title": "StockSource"
       },
       "SupplierFavoriteInput": {
         "properties": {

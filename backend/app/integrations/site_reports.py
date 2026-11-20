@@ -31,7 +31,12 @@ from app.crm.models import Request, RequestItem, RequestItemRevision, Task
 from app.crm.requests import structured_item_fields
 from app.integrations.models import SiteRequest, SiteRequestAttribution, SiteRequestItem
 from app.integrations.site_contract import ConvertItemInput, Input
-from app.integrations.site_conversion import ANALOGUE_LABELS, copy_files, desired_moment
+from app.integrations.site_conversion import (
+    ANALOGUE_LABELS,
+    copy_files,
+    desired_moment,
+    frozen_stock_for_lines,
+)
 from app.integrations.site_requests import OPEN_TASK_STATUSES, check_site_request, detail_view, sees_all
 
 router = APIRouter(tags=['Заявки с сайта'])
@@ -202,6 +207,7 @@ def attach(entity_id: str, body: AttachInput, user: Actor, db: DB,
         check_version(row, body.version)
         if row.status in ('converted', 'rejected'):
             raise DomainError('SITE_REQUEST_CLOSED', 'Заявка с сайта уже обработана', 409)
+        stock = frozen_stock_for_lines(db, row, body.items)
         request: Request = check_request(db, user, body.request_id, 'requests.write')
         if request.closed_at is not None or request.archived:
             raise DomainError('REQUEST_CLOSED', 'Заявка CRM закрыта или в архиве', 409, 'request_id')
@@ -209,7 +215,8 @@ def attach(entity_id: str, body: AttachInput, user: Actor, db: DB,
         for line in body.items:
             data = structured_item_fields(db, {**line.model_dump(exclude={'site_item_id'}), 'desired_at': desired})
             # An ordinary line, as in «Создать заявку»: no «Аналоги (сайт)» for the supplier (5 November 2026).
-            item = RequestItem(request_id=request.id, **data, source_columns=[], source_values=[])
+            item = RequestItem(request_id=request.id, **data, source_columns=[], source_values=[],
+                               stock_snapshot=stock.get(line.site_item_id) if line.site_item_id else None)
             snapshot = save(db, user, item, 'request_item')
             db.add(RequestItemRevision(item_id=item.id, revision=1, snapshot=snapshot, author_id=user.id))
         files = copy_files(db, user, row, request)

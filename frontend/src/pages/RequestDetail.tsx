@@ -4,6 +4,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useApi, useCommand } from '../lib/hooks';
 import { useAuth } from '../app/Auth';
 import { TableImportDialog } from '../components/TableImportDialog';
+import { StockSnapshot } from '../components/StockSnapshot';
 import type { Entity, Page } from '../lib/types';
 import { requestEditFields, taskFields } from '../lib/fields';
 import { date } from '../lib/format';
@@ -298,6 +299,11 @@ export function RequestDetail() {
               { key: 'quantity', label: 'Количество' },
               { key: 'unit', label: 'Единица' },
               { key: 'cas', label: 'CAS' },
+              {
+                key: 'stock_snapshot',
+                label: 'Наличие на момент заявки',
+                render: (item) => <StockSnapshot value={item.stock_snapshot} />,
+              },
               { key: 'revision', label: 'Редакция' },
               {
                 key: 'work_status',

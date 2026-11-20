@@ -45,6 +45,14 @@ const row = {
   request_id: null,
   request_number: null,
 };
+const stock = {
+  version: 1,
+  captured_at: '2026-10-24T08:18:04Z',
+  availability: 'in_stock',
+  origin: 'supplier',
+  packaging_match: 'exact',
+  offers: [],
+};
 const detail = {
   ...row,
   marketing_consent: false,
@@ -60,6 +68,7 @@ const detail = {
       quantity: '2.000000',
       analogue: 'requested',
       custom_packaging: false,
+      stock_snapshot: stock,
     },
   ],
   attribution: { channel: 'cpc', last_utm_source: 'yandex', last_utm_medium: 'cpc', yclid: '42' },
@@ -93,6 +102,7 @@ it('lists site requests, shows one as sent and rejects it with a reason', async 
   expect(await within(card).findByText('Oxcarbazepine CRS')).toBeVisible();
   expect(within(card).getByText('Подберите аналог')).toBeVisible();
   expect(within(card).getByText('yandex / cpc')).toBeVisible();
+  expect(within(card).getByText('Было у поставщика')).toBeVisible();
 
   fireEvent.click(within(card).getByRole('button', { name: /Отклонить/ }));
   const form = await screen.findByRole('dialog', { name: 'Отклонить заявку с сайта' });
@@ -150,6 +160,7 @@ it('creates a CRM request for the client found by INN in one command', async () 
           unit: 'pcs',
           allow_analogue: true,
           comment: 'Клиент просит подобрать аналог',
+          stock_snapshot: stock,
         },
       ],
     },
@@ -183,6 +194,7 @@ it('creates a CRM request for the client found by INN in one command', async () 
   const window = await screen.findByRole('dialog', { name: 'Создать заявку' });
   expect(await within(window).findByRole('radio', { name: /Пример-Фарма/ })).toBeChecked();
   expect(within(window).getByRole('radio', { name: /Иван Петров/ })).toBeChecked();
+  expect(within(window).getByText('Было у поставщика')).toBeVisible();
   fireEvent.change(within(window).getByLabelText('Количество позиции 1'), {
     target: { value: '3' },
   });
@@ -203,4 +215,7 @@ it('creates a CRM request for the client found by INN in one command', async () 
       }),
     ),
   );
+  const conversionCall = vi.mocked(api).mock.calls.find(([path]) => path.endsWith('/convert'));
+  const submitted = conversionCall?.[1]?.body as { items: Record<string, unknown>[] };
+  expect(submitted.items[0]).not.toHaveProperty('stock_snapshot');
 });

@@ -92,6 +92,8 @@ class SiteRequestItem(Entity):
     site_request_id: Mapped[str] = mapped_column(ForeignKey('site_requests.id'), index=True)
     position: Mapped[int] = mapped_column(Integer)
     site_product_id: Mapped[str | None] = mapped_column(String(100))
+    site_packaging_id: Mapped[str | None] = mapped_column(String(150))
+    stock_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     crm_product_id: Mapped[str | None] = mapped_column(String(36))
     brand: Mapped[str | None] = mapped_column(String(200))
     catalog_number: Mapped[str | None] = mapped_column(String(150))

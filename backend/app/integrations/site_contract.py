@@ -62,8 +62,38 @@ class SiteCustomer(Contract):
         return value
 
 
+class SiteStockOffer(Contract):
+    source: str = Field(min_length=1, max_length=40)
+    source_name: str = Field(min_length=1, max_length=200)
+    offer_id: str = Field(min_length=1, max_length=100)
+    external_id: str = Field(min_length=1, max_length=150)
+    catalog_number: str = Field(max_length=150)
+    pack: str | None = Field(default=None, max_length=200)
+    site_packaging_id: str | None = Field(default=None, max_length=150)
+    match: Literal['exact_pack', 'product_only']
+    seen_at: datetime
+    valid_until: datetime
+    quantity: int | None = Field(default=None, ge=0)
+    url: str | None = Field(default=None, max_length=2000)
+
+
+class SiteStockSnapshot(Contract):
+    """Private server-derived evidence at submission, never a reservation or a current stock guarantee."""
+
+    version: Literal[1] = 1
+    captured_at: datetime
+    availability: Literal['in_stock', 'on_order', 'unknown']
+    origin: Literal['own', 'supplier', 'none', 'unknown']
+    site_product_id: str | None = Field(default=None, max_length=100)
+    site_packaging_id: str | None = Field(default=None, max_length=150)
+    packaging_match: Literal['exact', 'product_only', 'custom', 'unmatched']
+    offers: list[SiteStockOffer] = Field(default_factory=list, max_length=200)
+
+
 class SiteItem(Contract):
     site_product_id: str | None = Field(default=None, max_length=100)
+    site_packaging_id: str | None = Field(default=None, max_length=150)
+    stock_snapshot: SiteStockSnapshot | None = None
     crm_product_id: str | None = Field(default=None, max_length=36)
     brand: str | None = Field(default=None, max_length=200)
     catalog_number: str | None = Field(default=None, max_length=150)
@@ -77,7 +107,7 @@ class SiteItem(Contract):
     comment: str | None = Field(default=None, max_length=5000)
     page_url: str | None = Field(default=None, max_length=2000)
 
-    _blank = field_validator('site_product_id', 'crm_product_id', 'brand', 'catalog_number', 'cas', 'packaging',
+    _blank = field_validator('site_product_id', 'site_packaging_id', 'crm_product_id', 'brand', 'catalog_number', 'cas', 'packaging',
                              'comment', 'page_url', mode='before')(blank_to_none)
 
 
@@ -192,6 +222,8 @@ class ConvertItemInput(Input):
     """A request line as it will be saved; the employee may correct the proposal before saving."""
 
     site_item_id: str | None = Field(default=None, max_length=36)
+    # Proposal metadata may be echoed by older clients, but only the source row in the database is trusted.
+    stock_snapshot: Any = Field(default=None, exclude=True, json_schema_extra={'readOnly': True})
     description: str = Field(min_length=1, max_length=10000)
     article: str | None = Field(default=None, max_length=150)
     cas: str | None = Field(default=None, max_length=30)

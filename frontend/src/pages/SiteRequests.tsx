@@ -10,6 +10,7 @@ import {
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { RecordForm } from '../components/Form';
+import { StockSnapshot } from '../components/StockSnapshot';
 import {
   Badge,
   Button,
@@ -309,6 +310,11 @@ export function SiteRequestCard({
                           render: (item) => ANALOGUES[String(item.analogue)],
                         },
                         { key: 'comment', label: 'Комментарий' },
+                        {
+                          key: 'stock_snapshot',
+                          label: 'Наличие на момент заявки',
+                          render: (item) => <StockSnapshot value={item.stock_snapshot} />,
+                        },
                       ]}
                     />
                   </Section>

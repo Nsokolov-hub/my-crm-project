@@ -173,6 +173,8 @@ class RequestItem(Entity):
     __table_args__ = (CheckConstraint('quantity IS NULL OR quantity > 0'),)
     request_id: Mapped[str] = mapped_column(ForeignKey('requests.id'), index=True)
     description: Mapped[str] = mapped_column(Text)
+    # Historical site availability; independent from the chosen procurement supplier and customer-facing text.
+    stock_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     source_columns: Mapped[list[str]] = mapped_column(JSON, default=list)
     source_values: Mapped[list[str]] = mapped_column(JSON, default=list)
     source_format: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default='{}')

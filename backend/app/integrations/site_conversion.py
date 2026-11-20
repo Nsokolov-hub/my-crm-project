@@ -9,6 +9,7 @@ are copied and the request keeps the link to its site request, so the traffic so
 
 import csv
 import re
+from copy import deepcopy
 from datetime import datetime, time
 from decimal import Decimal
 from typing import Any
@@ -33,7 +34,7 @@ from app.crm.requests import structured_item_fields
 from app.crm.table_imports import infer_mapping, read_table, request_plan
 from app.crm.text_search import normalize
 from app.integrations.models import SiteRequest, SiteRequestItem
-from app.integrations.site_contract import MAX_ITEMS, ConvertInput
+from app.integrations.site_contract import MAX_ITEMS, ConvertInput, ConvertItemInput
 from app.integrations.site_requests import OPEN_TASK_STATUSES, check_site_request, detail_view
 
 router = APIRouter(tags=['Заявки с сайта'])
@@ -156,6 +157,7 @@ def proposal(db: Session, row: SiteRequest) -> dict[str, Any]:
             'quantity': quantity_text(item.quantity), 'unit': UNITS.get(item.unit, 'pcs'),
             'allow_analogue': item.analogue in ('allowed', 'requested'),
             'comment': '\n'.join([*notes, *([item.comment] if item.comment else [])]) or None,
+            'stock_snapshot': item.stock_snapshot,
         })
     if row.kind == 'service' and row.service:
         title = f'Услуга «{row.service.get("name")}»'
@@ -251,6 +253,19 @@ def resolve_contact(db: Session, user: User, body: ConvertInput, party: Counterp
     return existing
 
 
+def frozen_stock_for_lines(db: Session, row: SiteRequest,
+                           lines: list[ConvertItemInput]) -> dict[str, dict[str, Any] | None]:
+    """Only source lines of this request can supply historical metadata, once per conversion."""
+    ids = [line.site_item_id for line in lines if line.site_item_id is not None]
+    if len(ids) != len(set(ids)):
+        raise DomainError('SITE_ITEM_DUPLICATE', 'Позиция с сайта указана несколько раз', 422, 'items')
+    sources = {item.id: item for item in db.scalars(select(SiteRequestItem).where(
+        SiteRequestItem.site_request_id == row.id, SiteRequestItem.id.in_(ids)))} if ids else {}
+    if set(ids) != set(sources):
+        raise DomainError('SITE_ITEM_INVALID', 'Позиция не относится к этой заявке с сайта', 422, 'items')
+    return {key: deepcopy(item.stock_snapshot) for key, item in sources.items()}
+
+
 @router.post('/site-requests/{entity_id}/convert')
 def convert(entity_id: str, body: ConvertInput, user: Actor, db: DB,
             idempotency_key: str | None = Header(default=None)) -> dict[str, Any]:
@@ -263,6 +278,7 @@ def convert(entity_id: str, body: ConvertInput, user: Actor, db: DB,
         check_version(row, body.version)
         if row.status in ('converted', 'rejected'):
             raise DomainError('SITE_REQUEST_CLOSED', 'Заявка с сайта уже обработана', 409)
+        stock = frozen_stock_for_lines(db, row, body.items)
         owner = active_user(db, row.assignee_id or user.id)
         if owner.id != user.id:
             require_permission(db, user, 'requests.assign')
@@ -277,7 +293,8 @@ def convert(entity_id: str, body: ConvertInput, user: Actor, db: DB,
             # Business remark of 5 November 2026: a site line is an ordinary line of the request. Its name,
             # catalogue number, packaging and quantity go to the supplier; the brand stays in the description and
             # the customer's choice about analogues in «Аналог допустим» — it is not the supplier's business.
-            item = RequestItem(request_id=request.id, **data, source_columns=[], source_values=[])
+            item = RequestItem(request_id=request.id, **data, source_columns=[], source_values=[],
+                               stock_snapshot=stock.get(line.site_item_id) if line.site_item_id else None)
             snapshot = save(db, user, item, 'request_item')
             db.add(RequestItemRevision(item_id=item.id, revision=1, snapshot=snapshot, author_id=user.id))
         files = copy_files(db, user, row, request)

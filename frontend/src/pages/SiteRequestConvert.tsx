@@ -1,6 +1,7 @@
 import { useId, useRef, useState } from 'react';
 import { FileSpreadsheet, Plus, Trash2 } from 'lucide-react';
 import { Badge, Button, ErrorBox, Loading, Modal, Section } from '../components/ui';
+import { StockSnapshot, type StockSnapshotData } from '../components/StockSnapshot';
 import { units } from '../lib/format';
 import { api } from '../lib/api';
 import { useApi, useCommand, useDirtyProtection } from '../lib/hooks';
@@ -49,6 +50,7 @@ type ContactCard = {
 };
 type Line = {
   site_item_id: string | null;
+  stock_snapshot?: StockSnapshotData | null;
   description: string;
   article: string | null;
   cas: string | null;
@@ -495,6 +497,7 @@ function ConvertForm({
                     <th>Ед.</th>
                     <th>Аналог допустим</th>
                     <th>Комментарий</th>
+                    <th>Наличие на момент заявки</th>
                     <th aria-label="Удалить" />
                   </tr>
                 </thead>
@@ -564,6 +567,9 @@ function ConvertForm({
                           value={line.comment ?? ''}
                           onChange={(e) => editLine(index, { comment: e.target.value })}
                         />
+                      </td>
+                      <td>
+                        <StockSnapshot value={line.stock_snapshot} />
                       </td>
                       <td>
                         <button
