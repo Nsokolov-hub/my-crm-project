@@ -59,6 +59,9 @@ def quote_file(supplier_code, overrides=None):
         "unit_price": "100,25",
         "currency": "rub",
         "delivery_days": "14",
+        # Explicit synthetic transport information for checked quote fixtures.
+        "storage_temperature": "1-25",
+        "transport_hazard": "Не опасный",
     }
     row.update(overrides or {})
     return [row.get(key, "") for key in QUOTE_COLUMNS]

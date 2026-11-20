@@ -1,7 +1,9 @@
 import { History } from 'lucide-react';
-import { ErrorBox, Loading, Modal } from '../components/ui';
+import { useInfiniteQuery } from '@tanstack/react-query';
+import { Button, ErrorBox, Loading, Modal } from '../components/ui';
+import { api } from '../lib/api';
 import { date } from '../lib/format';
-import { useApi } from '../lib/hooks';
+import { queryClient } from '../lib/queryClient';
 
 type WaveEvent = {
   id: string;
@@ -14,13 +16,21 @@ type WaveEvent = {
 };
 
 /** Плашка сбоку карточки волны (замечание бизнеса 13.11.2026): открывает историю изменений */
-export function WaveHistoryTab({ onOpen }: { onOpen: () => void }) {
+export function WaveHistoryTab({
+  onOpen,
+  expanded = false,
+}: {
+  onOpen: () => void;
+  expanded?: boolean;
+}) {
   return (
     <button
       type="button"
       className="wave-history-tab"
       onClick={onOpen}
       aria-label="История изменений волны"
+      aria-haspopup="dialog"
+      aria-expanded={expanded}
     >
       <History size={15} />
       <span>История</span>
@@ -41,23 +51,36 @@ export function WaveHistory({
   number: string;
   onClose: () => void;
 }) {
-  const history = useApi<{ items: WaveEvent[] }>(`/waves/${waveId}/history`);
-  const items = history.data?.items || [];
+  const history = useInfiniteQuery(
+    {
+      queryKey: ['api', `/waves/${waveId}/history`],
+      initialPageParam: undefined as string | undefined,
+      queryFn: ({ pageParam, signal }) =>
+        api<{ items: WaveEvent[]; next_cursor?: string | null }>(
+          `/waves/${waveId}/history${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`,
+          { signal },
+        ),
+      getNextPageParam: (last) => last.next_cursor || undefined,
+    },
+    queryClient,
+  );
+  const items = history.data?.pages.flatMap((page) => page.items) || [];
   // Панель выезжает справа поверх карточки волны: своё окно, Esc закрывает только её
   return (
     <Modal title={`История изменений · ${number}`} className="side-drawer" onClose={onClose}>
       <div className="wave-history">
-        {history.loading && <Loading />}
+        {history.isPending && <Loading />}
         <ErrorBox error={history.error} />
-        {!history.loading && !items.length && !history.error && (
+        {!history.isPending && !items.length && !history.error && (
           <p className="muted">Изменений пока нет.</p>
         )}
+        {items.length > 0 && <p className="muted">Показано изменений: {items.length}</p>}
         <ol className="wave-history-list">
           {items.map((event) => (
             <li key={event.id}>
               <p className="wave-history-meta">
                 {date(event.created_at, true)}
-                {event.actor_name ? ` · ${event.actor_name}` : ''}
+                {` · ${event.actor_name || 'Система'}`}
               </p>
               <p className="wave-history-title">{event.title}</p>
               {event.details && <p className="wave-history-details">{event.details}</p>}
@@ -74,9 +97,19 @@ export function WaveHistory({
               {event.comment && (
                 <blockquote className="wave-history-comment">{event.comment}</blockquote>
               )}
+              {!event.comment && <p className="muted">Комментарий не указан.</p>}
             </li>
           ))}
         </ol>
+        {history.hasNextPage && (
+          <Button
+            variant="secondary"
+            busy={history.isFetchingNextPage}
+            onClick={() => void history.fetchNextPage()}
+          >
+            Показать ещё изменения
+          </Button>
+        )}
       </div>
     </Modal>
   );

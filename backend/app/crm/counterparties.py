@@ -18,7 +18,7 @@ from app.core.security import (
     has_request_permission,
     require_permission,
 )
-from app.core.service import audit, check_version, idem, lock, serialize
+from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.core.service import page as paginate
 from app.crm.common import active_user, save
 from app.crm.models import (
@@ -31,6 +31,7 @@ from app.crm.models import (
     Request,
     RequestItem,
     Seller,
+    SupplierFavorite,
     Task,
 )
 from app.crm.schemas import (
@@ -45,6 +46,7 @@ from app.crm.schemas import (
     PromoteClientInput,
     SellerInput,
     SellerUpdate,
+    SupplierFavoriteInput,
 )
 from app.crm.text_search import search_parts
 
@@ -52,7 +54,7 @@ router = APIRouter(tags=['CRM'])
 
 
 @router.get('/counterparties')
-def clients(q: str = '', ids: str = '', kind: str | None = None, client_base: str | None = None, contact_eligible: bool = False, page: int = 1, page_size: int = 25, sort: str = 'name', direction: str = 'asc', archived: bool = False, filter_name: str = '', filter_tax_id: str = '', filter_profile: str = '', filter_city: str = '', filter_phone: str = '', filter_email: str = '', user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
+def clients(q: str = '', ids: str = '', kind: str | None = None, client_base: str | None = None, contact_eligible: bool = False, favorite: bool = False, page: int = 1, page_size: int = 25, sort: str = 'name', direction: str = 'asc', archived: bool = False, filter_name: str = '', filter_tax_id: str = '', filter_profile: str = '', filter_city: str = '', filter_phone: str = '', filter_email: str = '', user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
     require_permission(db, user, 'clients.read')
     stmt = select(Counterparty).where(client_predicate(db, user), Counterparty.archived == archived)
     if wanted := [value for value in dict.fromkeys(part.strip() for part in ids.split(',')) if value][:100]:
@@ -62,6 +64,11 @@ def clients(q: str = '', ids: str = '', kind: str | None = None, client_base: st
         stmt = stmt.where(Counterparty.client_base == 'working', Counterparty.archived.is_(False))
     if kind:
         stmt = stmt.where(Counterparty.kind.in_([kind, 'both']))
+    if favorite:
+        stmt = stmt.where(Counterparty.id.in_(select(SupplierFavorite.supplier_id)
+                                              .where(SupplierFavorite.user_id == user.id)),
+                          Counterparty.kind.in_(('supplier', 'both')), Counterparty.archived.is_(False),
+                          Counterparty.merged_into_id.is_(None), Counterparty.client_base == 'working')
     if client_base:
         if client_base not in ('cold', 'working'):
             raise DomainError('CLIENT_BASE_INVALID', 'Выберите рабочую базу или базу обзвона', 422)
@@ -84,24 +91,28 @@ def clients(q: str = '', ids: str = '', kind: str | None = None, client_base: st
     for key, value in filters.items():
         for part in search_parts(value):
             stmt = stmt.where(Counterparty.search_fields[key].as_string().contains(part, autoescape=True))
-    return add_counterparty_owners(db, paginate(db, stmt, page, page_size))
+    return add_counterparty_owners(db, paginate(db, stmt, page, page_size), user)
 
 
-def add_counterparty_owners(db: Session, result: dict) -> dict:
+def add_counterparty_owners(db: Session, result: dict, user: User) -> dict:
     names = {row.id: row.name for row in db.scalars(select(User).where(
         User.id.in_({row['owner_id'] for row in result['items']})))}
     merged_into = {row['merged_into_id'] for row in result['items'] if row.get('merged_into_id')}
     main_cards = dict(db.execute(select(Counterparty.id, Counterparty.name).where(
         Counterparty.id.in_(merged_into))).all()) if merged_into else {}
+    favorite_ids = set(db.scalars(select(SupplierFavorite.supplier_id).where(
+        SupplierFavorite.user_id == user.id,
+        SupplierFavorite.supplier_id.in_([row['id'] for row in result['items']]))))
     for row in result['items']:
         row['owner_name'] = names.get(row['owner_id'])
+        row['is_favorite'] = row['id'] in favorite_ids
         if row.get('merged_into_id'):
             row['merged_into_name'] = main_cards.get(row['merged_into_id'])
     return result
 
 
-def counterparty_view(db: Session, row: Counterparty) -> dict:
-    return add_counterparty_owners(db, {'items': [serialize(row)]})['items'][0]
+def counterparty_view(db: Session, row: Counterparty, user: User) -> dict:
+    return add_counterparty_owners(db, {'items': [serialize(row)]}, user)['items'][0]
 
 
 @router.get('/counterparty-owners')
@@ -120,12 +131,35 @@ def create_client(body: ClientInput, user: User = Depends(current_user), db: Ses
         require_permission(db, user, 'requests.assign')
     active_user(db, data['owner_id'])
     result = save(db, user, Counterparty(**data), 'counterparty')
-    return counterparty_view(db, db.get(Counterparty, result['id']))
+    return counterparty_view(db, db.get(Counterparty, result['id']), user)
 
 
 @router.get('/counterparties/{entity_id}')
 def client_detail(entity_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
-    return counterparty_view(db, check_client(db, user, entity_id))
+    return counterparty_view(db, check_client(db, user, entity_id), user)
+
+
+@router.put('/counterparties/{entity_id}/favorite')
+def favorite_supplier(entity_id: str, body: SupplierFavoriteInput, user: User = Depends(current_user),
+                      db: Session = Depends(get_db, scope="function")) -> dict[str, Any]:
+    require_permission(db, user, 'clients.read')
+    check_client(db, user, entity_id)
+    # The personal preference lock is also used by merges, without locking the employee's account.
+    row = lock(db, Counterparty, entity_id)
+    check_client(db, user, entity_id)
+    advisory(db, f'supplier-favorites:{user.id}')
+    if body.favorite:
+        if row.kind not in ('supplier', 'both'):
+            raise DomainError('SUPPLIER_REQUIRED', 'В избранное можно добавить поставщика', 422)
+        if row.archived or row.merged_into_id or row.client_base != 'working':
+            raise DomainError('SUPPLIER_UNAVAILABLE', 'Выберите действующего поставщика из рабочей базы', 409)
+    key = (user.id, row.id)
+    current = db.get(SupplierFavorite, key)
+    if body.favorite and current is None:
+        db.add(SupplierFavorite(user_id=user.id, supplier_id=row.id))
+    elif not body.favorite and current is not None:
+        db.delete(current)
+    return {'id': row.id, 'is_favorite': body.favorite}
 
 
 @router.post('/counterparties/{entity_id}/promote')
@@ -135,13 +169,13 @@ def promote_client(entity_id: str, body: PromoteClientInput, user: User = Depend
     if row.archived:
         raise DomainError('CLIENT_ARCHIVED', 'Сначала восстановите клиента из архива', 409)
     if row.client_base == 'working':
-        return counterparty_view(db, row)
+        return counterparty_view(db, row, user)
     check_version(row, body.version)
     before = serialize(row)
     row.client_base = 'working'
     row.version += 1
     audit(db, user, 'counterparty', row.id, 'promoted', before, serialize(row), 'Перенос из базы обзвона в рабочую базу')
-    return counterparty_view(db, row)
+    return counterparty_view(db, row, user)
 
 
 @router.patch('/counterparties/{entity_id}')
@@ -162,7 +196,7 @@ def edit_client(entity_id: str, body: ClientPatch, user: User = Depends(current_
         setattr(row, k, v)
     row.version += 1
     audit(db, user, 'counterparty', row.id, 'updated', before, serialize(row), body.reason)
-    return counterparty_view(db, row)
+    return counterparty_view(db, row, user)
 
 
 def requests_in_work(db: Session, counterparty_id: str) -> list[Request]:
@@ -247,7 +281,7 @@ def archive_counterparty(entity_id: str, body: CounterpartyArchiveInput, user: U
         row.version += 1
         audit(db, user, 'counterparty', row.id, 'archived' if body.archived else 'restored', before,
               serialize(row), body.reason)
-        return counterparty_view(db, row)
+        return counterparty_view(db, row, user)
 
     return idem(db, user, body.idempotency_key, f'archive-counterparty:{entity_id}', body.model_dump(mode='json'),
                 operation)
@@ -325,12 +359,20 @@ def merge_counterparty(entity_id: str, body: CounterpartyMergeInput, user: User 
                 setattr(target, field, getattr(row, field))
         target.details = {**(row.details or {}),
                           **{key: value for key, value in (target.details or {}).items() if value not in (None, '')}}
+        # Keep each employee's shortcut when the duplicate disappears. Existing target shortcuts stay one row.
+        for favorite in db.scalars(select(SupplierFavorite).where(SupplierFavorite.supplier_id == row.id)
+                                   .order_by(SupplierFavorite.user_id)).all():
+            advisory(db, f'supplier-favorites:{favorite.user_id}')
+            if db.get(SupplierFavorite, (favorite.user_id, target.id)) is None:
+                db.add(SupplierFavorite(user_id=favorite.user_id, supplier_id=target.id,
+                                        created_at=favorite.created_at))
+            db.delete(favorite)
         target.version += 1
         row.archived, row.merged_into_id = True, target.id
         row.version += 1
         audit(db, user, 'counterparty', target.id, 'merged', target_before, serialize(target), note)
         audit(db, user, 'counterparty', row.id, 'merged_into', before, serialize(row), note)
-        return {**counterparty_view(db, target), 'moved': moved}
+        return {**counterparty_view(db, target, user), 'moved': moved}
 
     return idem(db, user, body.idempotency_key, f'merge-counterparty:{entity_id}', body.model_dump(mode='json'),
                 operation)

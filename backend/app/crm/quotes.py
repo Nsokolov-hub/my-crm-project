@@ -109,6 +109,8 @@ def quote_item_view(db: Session, row: QuoteItem, show_purchase: bool = True) -> 
         'nomenclature_name': nomenclature.name,
         'article': nomenclature.article,
         'manufacturer': nomenclature.manufacturer,
+        'storage_temperature': nomenclature.storage_temperature,
+        'transport_hazard': nomenclature.transport_hazard,
         'request_quantity': db.get(RequestItem, row.source_request_item_id).quantity if row.source_request_item_id else None,
         # Business remark of 21 October 2026: a calculation takes the quantity of the request by default.
         'request_packings': requested_packings(

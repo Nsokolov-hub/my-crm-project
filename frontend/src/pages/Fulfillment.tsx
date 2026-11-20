@@ -1052,7 +1052,7 @@ export function Waves() {
               setSelected(undefined);
             }}
           >
-            <WaveHistoryTab onOpen={() => setHistory(true)} />
+            <WaveHistoryTab onOpen={() => setHistory(true)} expanded={history} />
             {history && (
               <WaveHistory
                 waveId={String(selected.id)}

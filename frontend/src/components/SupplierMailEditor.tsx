@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Star } from 'lucide-react';
 import { DirectorySelect } from './Form';
-import { Button, DataTable, ErrorBox, Modal } from './ui';
+import { Button, DataTable, ErrorBox, Modal, Pagination } from './ui';
+import { SupplierFavoriteButton } from './SupplierFavoriteButton';
 import { api } from '../lib/api';
-import { useCommand } from '../lib/hooks';
-import type { Entity } from '../lib/types';
+import { useApi, useCommand } from '../lib/hooks';
+import type { Entity, Page } from '../lib/types';
 export function SupplierMailEditor({
   requestId,
   itemIds,
@@ -24,6 +26,17 @@ export function SupplierMailEditor({
   const [cc, setCc] = useState('info@ogk-chem.ru');
   const [preview, setPreview] = useState<Entity[]>();
   const [error, setError] = useState<unknown>();
+  const [adding, setAdding] = useState(false);
+  const [favoritePage, setFavoritePage] = useState(1);
+  const favoritePageSize = 12;
+  const favorites = useApi<Page>(
+    `/counterparties?kind=supplier&favorite=true&page=${favoritePage}&page_size=${favoritePageSize}`,
+  );
+  useEffect(() => {
+    if (favorites.data?.total === undefined) return;
+    const lastPage = Math.max(1, Math.ceil(favorites.data.total / favoritePageSize));
+    if (favoritePage > lastPage) setFavoritePage(lastPage);
+  }, [favorites.data?.total, favoritePage]);
   const command = useCommand();
   const body = {
     supplier_ids: suppliers.map((s) => s.id),
@@ -34,14 +47,25 @@ export function SupplierMailEditor({
       .map((email) => email.trim())
       .filter(Boolean),
   };
-  async function add() {
+  async function add(supplierId = chosen) {
+    if (!supplierId || adding) return;
+    setAdding(true);
+    setError(undefined);
     try {
-      const supplier = await api<Entity>(`/counterparties/${chosen}`);
+      const supplier = await api<Entity>(`/counterparties/${supplierId}`);
+      if (
+        supplier.archived ||
+        supplier.merged_into_id ||
+        (supplier.kind && !['supplier', 'both'].includes(String(supplier.kind)))
+      )
+        throw new Error('Выберите действующего поставщика из справочника.');
       setSuppliers((rows) => [...rows.filter((row) => row.id !== supplier.id), supplier]);
-      setChosen('');
+      setChosen((value) => (value === supplierId ? '' : value));
       setPreview(undefined);
     } catch (cause) {
       setError(cause);
+    } finally {
+      setAdding(false);
     }
   }
   async function showPreview() {
@@ -88,14 +112,66 @@ export function SupplierMailEditor({
             value={chosen}
             onChange={(v) => setChosen(String(v))}
           />
-          <Button variant="secondary" disabled={!chosen} onClick={() => void add()}>
+          <Button variant="secondary" disabled={!chosen} busy={adding} onClick={() => void add()}>
             Добавить получателя
           </Button>
         </div>
+        <section className="supplier-favorites" aria-labelledby="mail-favorites-title">
+          <h3 id="mail-favorites-title">Избранные поставщики</h3>
+          <p>Ваш личный список. Нажмите на поставщика, чтобы добавить получателя.</p>
+          {favorites.error ? (
+            <ErrorBox error={favorites.error} retry={favorites.refresh} />
+          ) : favorites.loading ? (
+            <p role="status">Загрузка избранных поставщиков…</p>
+          ) : favorites.data?.items.length ? (
+            <div className="inline-actions">
+              {favorites.data.items.map((supplier) => (
+                <Button
+                  key={supplier.id}
+                  variant="secondary"
+                  disabled={adding || suppliers.some((row) => row.id === supplier.id)}
+                  onClick={() => void add(supplier.id)}
+                >
+                  <Star size={14} fill="currentColor" />
+                  {String(supplier.name)}
+                  {suppliers.some((row) => row.id === supplier.id) ? ' · добавлен' : ''}
+                </Button>
+              ))}
+            </div>
+          ) : (
+            <p>Отметьте поставщика звёздочкой в его карточке или в списке получателей ниже.</p>
+          )}
+          {(favorites.data?.total || 0) > favoritePageSize && (
+            <Pagination
+              page={favoritePage}
+              pageSize={favoritePageSize}
+              total={favorites.data?.total || 0}
+              onChange={setFavoritePage}
+            />
+          )}
+        </section>
         <DataTable
           rows={suppliers}
           columns={[
             { key: 'name', label: 'Поставщик' },
+            {
+              key: 'is_favorite',
+              label: 'Избранный',
+              render: (row) => (
+                <SupplierFavoriteButton
+                  supplier={row}
+                  onChange={(isFavorite) =>
+                    setSuppliers((rows) =>
+                      rows.map((supplier) =>
+                        supplier.id === row.id
+                          ? { ...supplier, is_favorite: isFavorite }
+                          : supplier,
+                      ),
+                    )
+                  }
+                />
+              ),
+            },
             {
               key: 'email',
               label: 'Почта',

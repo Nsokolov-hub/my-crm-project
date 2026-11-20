@@ -1,6 +1,7 @@
 """Tests for R12/R14 Backup, Restore, Role Separation, and Integrity."""
 
 import os
+import shlex
 import shutil
 import subprocess
 import tarfile
@@ -262,7 +263,7 @@ def fake_age(tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     tool = bin_dir / "age"
-    tool.write_text(f"""#!{os.sys.executable}
+    tool.write_text("""#!/usr/bin/env python3
 import sys
 args = sys.argv[1:]
 output, source = args[args.index("-o") + 1], args[-1]
@@ -314,11 +315,11 @@ def test_upload_command_gets_the_archive_and_failures_keep_the_local_copy(tmp_pa
     archive.write_bytes(b"encrypted")
     offsite = tmp_path / "offsite"
     offsite.mkdir()
-    copy = f"{os.sys.executable} -c \"import shutil, sys; shutil.copy(sys.argv[1], sys.argv[2])\""
-    recovery.upload(archive, f"{copy} {{archive}} {offsite}")
+    copy = shlex.join([os.sys.executable, '-c', 'import shutil, sys; shutil.copy(sys.argv[1], sys.argv[2])'])
+    recovery.upload(archive, f"{copy} {{archive}} {shlex.quote(str(offsite))}")
     assert (offsite / archive.name).read_bytes() == b"encrypted"
     with pytest.raises(SystemExit, match="Upload command failed"):
-        recovery.upload(archive, f"{os.sys.executable} -c \"raise SystemExit(3)\"")
+        recovery.upload(archive, shlex.join([os.sys.executable, '-c', 'raise SystemExit(3)']))
     assert archive.exists()
 
 

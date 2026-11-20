@@ -41,7 +41,8 @@ def test_report_by_channels(site):
     with site['sessions'].begin() as db:
         request = db.get(Request, created['request_id'])
         request.commercial_stage, request.sale_confirmed_at = 'proposal_sent', utcnow()
-    report = site['client'].get('/api/v1/site-requests/report').json()
+    # The fixture's submissions are on 18 October; this assertion must not expire after 30 days.
+    report = site['client'].get('/api/v1/site-requests/report?date_from=2026-10-18&date_to=2026-10-18').json()
     channels = {line['channel']: line for line in report['channels']}
     assert channels['cpc']['leads'] == 2 and channels['cpc']['rejected'] == 1 and channels['cpc']['sales'] == 1
     assert channels['cpc']['proposals'] == 1 and channels['organic']['leads'] == 1

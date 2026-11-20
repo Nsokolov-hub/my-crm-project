@@ -13,6 +13,13 @@ from pydantic import (
 )
 
 from app.core.schemas import Input
+from app.crm.transport import storage_temperature as normalize_storage_temperature
+from app.crm.transport import transport_hazard as normalize_transport_hazard
+
+
+class SupplierFavoriteInput(Input):
+    favorite: bool
+
 
 # Supplier card details that calculations and supplier mail use. They are checked when the card is
 # saved instead of failing later in a calculation; every other key stays free text as entered.
@@ -409,7 +416,12 @@ class NomenclatureInput(Input):
     cas: str | None = Field(default=None, max_length=30)
     linear_formula: str | None = Field(default=None, max_length=500)
     description: str | None = Field(default=None, max_length=10000)
+    storage_temperature: str | None = Field(default=None, max_length=80)
+    transport_hazard: str | None = Field(default=None, max_length=32)
     packings: list[PackingInput] = Field(min_length=1, max_length=100)
+
+    _temperature = field_validator('storage_temperature')(normalize_storage_temperature)
+    _hazard = field_validator('transport_hazard')(normalize_transport_hazard)
 
 
 class NomenclaturePatch(Input):
@@ -425,7 +437,12 @@ class NomenclaturePatch(Input):
     cas: str | None = Field(default=None, max_length=30)
     linear_formula: str | None = Field(default=None, max_length=500)
     description: str | None = Field(default=None, max_length=10000)
+    storage_temperature: str | None = Field(default=None, max_length=80)
+    transport_hazard: str | None = Field(default=None, max_length=32)
     active: bool | None = None
+
+    _temperature = field_validator('storage_temperature')(normalize_storage_temperature)
+    _hazard = field_validator('transport_hazard')(normalize_transport_hazard)
 
 
 class QuoteItemInput(Input):

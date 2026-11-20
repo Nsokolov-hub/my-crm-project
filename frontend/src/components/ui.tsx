@@ -7,7 +7,7 @@ import {
   LoaderCircle,
   X,
 } from 'lucide-react';
-import { Fragment, useEffect, useRef } from 'react';
+import { Fragment, useEffect, useId, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiError, errorMessage } from '../lib/api';
 import { display } from '../lib/format';
@@ -161,6 +161,7 @@ export function Modal({
   className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const headingId = useId();
   useEffect(() => {
     const dialog = ref.current;
     dialog?.showModal();
@@ -170,9 +171,10 @@ export function Modal({
     <dialog
       ref={ref}
       className={`modal ${wide ? 'wide' : ''} ${className}`}
-      aria-labelledby="modal-title"
+      aria-labelledby={headingId}
       onCancel={(e) => {
         e.preventDefault();
+        e.stopPropagation();
         onClose();
       }}
       onClick={(e) => {
@@ -180,7 +182,7 @@ export function Modal({
       }}
     >
       <div className="modal-header">
-        <h2 id="modal-title">{title}</h2>
+        <h2 id={headingId}>{title}</h2>
         <button type="button" className="icon-button" aria-label="Закрыть" onClick={onClose}>
           <X size={20} />
         </button>

@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.commerce.models import Approval, Execution, Wave, WaveAllocation
-from app.core.service import advisory, lock, notify
+from app.core.service import advisory, audit, lock, notify
 from app.crm.models import Request as CRMRequest
 
 
@@ -94,8 +94,11 @@ def recalculate_fulfillment(db: Session, request_id: str, *, wave_id: str | None
         elif status == "shipped" and not shipped:
             status = "closed"
         if status != wave.status:
+            previous = wave.status
             wave.status = status
             wave.version += 1
+            audit(db, None, "wave", wave.id, "update", before={"status": previous}, after={"status": status},
+                  reason="Состояние волны пересчитано после изменения фактических событий поставки")
 
     # Commercial and delivery states are separate. Delivery/claims are exposed
     # on executions; commercial stages stay within the request workflow.

@@ -61,6 +61,16 @@ class Counterparty(Entity):
                                                           info={'internal': True})
 
 
+class SupplierFavorite(Base):
+    """An employee's quick-access suppliers; this never changes the shared counterparty card."""
+
+    __tablename__ = 'supplier_favorites'
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), primary_key=True)
+    supplier_id: Mapped[str] = mapped_column(ForeignKey('counterparties.id', ondelete='CASCADE'),
+                                           primary_key=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 @event.listens_for(Counterparty, 'before_insert')
 @event.listens_for(Counterparty, 'before_update')
 def _refresh_counterparty_search(_mapper: Any, _connection: Any, target: Counterparty) -> None:
@@ -218,6 +228,8 @@ class Nomenclature(Entity):
     cas: Mapped[str | None] = mapped_column(String(30), index=True)
     linear_formula: Mapped[str | None] = mapped_column(String(500))
     description: Mapped[str | None] = mapped_column(Text)
+    storage_temperature: Mapped[str | None] = mapped_column(String(80))
+    transport_hazard: Mapped[str | None] = mapped_column(String(32))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Flow F4: the position goes to the site as a draft card «Под заказ» (the site's moderation publishes it).
     publish_to_site: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())

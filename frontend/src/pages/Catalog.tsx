@@ -32,6 +32,8 @@ type Nomenclature = Entity & {
   cas?: string;
   linear_formula?: string;
   description?: string;
+  storage_temperature?: string;
+  transport_hazard?: string;
   created_by_id?: string;
   publish_to_site?: boolean;
   site_product_id?: string | null;
@@ -58,6 +60,18 @@ const nomenclatureFields: Field[] = [
   { name: 'product_group_id', label: 'Товарная группа', type: 'select', source: '/product-groups' },
   { name: 'cas', label: 'CAS' },
   { name: 'linear_formula', label: 'Линейная формула' },
+  {
+    name: 'storage_temperature',
+    label: 'Температурный режим',
+    placeholder: '2-8; -20; -70; 1-25',
+    help: 'Температура или диапазон в °C. Обязательно при загрузке квот для товаров, кроме колонок.',
+  },
+  {
+    name: 'transport_hazard',
+    label: 'UN (опасность)',
+    placeholder: 'UN, UN1234 или Не опасный',
+    help: 'Укажите данные поставщика; неизвестное значение не считается «Не опасный».',
+  },
   { name: 'description', label: 'Описание', type: 'textarea' },
   { name: 'packing_value', label: 'Первая фасовка — значение', type: 'decimal', required: true },
   {
@@ -361,6 +375,10 @@ export function Catalog() {
                 'Товарная группа': selected.product_group_name || 'Другое',
                 CAS: selected.cas || '—',
                 'Линейная формула': selected.linear_formula || '—',
+                'Температурный режим': selected.storage_temperature
+                  ? `${selected.storage_temperature} °C`
+                  : 'Не указан',
+                'UN (опасность)': selected.transport_hazard || 'Не указана',
                 Описание: selected.description || '—',
               }}
             />

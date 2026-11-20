@@ -652,6 +652,23 @@ export interface paths {
         patch: operations["edit_client_api_v1_counterparties__entity_id__patch"];
         trace?: never;
     };
+    "/api/v1/counterparties/{entity_id}/favorite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Favorite Supplier */
+        put: operations["favorite_supplier_api_v1_counterparties__entity_id__favorite_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/counterparties/{entity_id}/promote": {
         parameters: {
             query?: never;
@@ -1393,6 +1410,26 @@ export interface paths {
         put?: never;
         /** Preview */
         post: operations["preview_api_v1_requests__request_id__table_imports_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/requests/{request_id}/table-imports/{batch_id}/transport": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Update Row Transport
+         * @description Complete a legacy file in its preview, without writing quotes or catalogue entries yet.
+         */
+        post: operations["update_row_transport_api_v1_requests__request_id__table_imports__batch_id__transport_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5009,6 +5046,10 @@ export interface components {
             linear_formula?: string | null;
             /** Description */
             description?: string | null;
+            /** Storage Temperature */
+            storage_temperature?: string | null;
+            /** Transport Hazard */
+            transport_hazard?: string | null;
             /** Packings */
             packings: components["schemas"]["PackingInput"][];
         };
@@ -5036,6 +5077,10 @@ export interface components {
             linear_formula?: string | null;
             /** Description */
             description?: string | null;
+            /** Storage Temperature */
+            storage_temperature?: string | null;
+            /** Transport Hazard */
+            transport_hazard?: string | null;
             /** Active */
             active?: boolean | null;
         };
@@ -5753,6 +5798,23 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** RowTransportInput */
+        RowTransportInput: {
+            /** Version */
+            version: number;
+            /** Row Number */
+            row_number: number;
+            /**
+             * Storage Temperature
+             * @default
+             */
+            storage_temperature: string;
+            /**
+             * Transport Hazard
+             * @default
+             */
+            transport_hazard: string;
+        };
         /** SalePriceHistory */
         SalePriceHistory: {
             /** Items */
@@ -6213,6 +6275,11 @@ export interface components {
              * @default Передача позиций в работу
              */
             reason: string;
+        };
+        /** SupplierFavoriteInput */
+        SupplierFavoriteInput: {
+            /** Favorite */
+            favorite: boolean;
         };
         /** TaskInput */
         TaskInput: {
@@ -9025,6 +9092,7 @@ export interface operations {
                 kind?: string | null;
                 client_base?: string | null;
                 contact_eligible?: boolean;
+                favorite?: boolean;
                 page?: number;
                 page_size?: number;
                 sort?: string;
@@ -9252,6 +9320,62 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ClientPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    favorite_supplier_api_v1_counterparties__entity_id__favorite_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SupplierFavoriteInput"];
             };
         };
         responses: {
@@ -12193,6 +12317,61 @@ export interface operations {
             };
         };
     };
+    update_row_transport_api_v1_requests__request_id__table_imports__batch_id__transport_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RowTransportInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Сеанс отсутствует или отозван */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Недостаточно прав */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Конфликт версии или повторяемости */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка предметной валидации */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     remove_rows_api_v1_requests__request_id__table_imports__batch_id__remove_rows_post: {
         parameters: {
             query?: never;
@@ -14828,6 +15007,7 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                cursor?: string | null;
             };
             header?: never;
             path: {

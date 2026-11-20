@@ -2462,6 +2462,16 @@
             }
           },
           {
+            "name": "favorite",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Favorite"
+            }
+          },
+          {
             "name": "page",
             "in": "query",
             "required": false,
@@ -2759,6 +2769,62 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Edit Client Api V1 Counterparties  Entity Id  Patch"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/counterparties/{entity_id}/favorite": {
+      "put": {
+        "tags": [
+          "CRM"
+        ],
+        "summary": "Favorite Supplier",
+        "operationId": "favorite_supplier_api_v1_counterparties__entity_id__favorite_put",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupplierFavoriteInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Favorite Supplier Api V1 Counterparties  Entity Id  Favorite Put"
                 }
               }
             }
@@ -6087,6 +6153,68 @@
         }
       }
     },
+    "/api/v1/requests/{request_id}/table-imports/{batch_id}/transport": {
+      "post": {
+        "tags": [
+          "Импорт заявок и квот"
+        ],
+        "summary": "Update Row Transport",
+        "description": "Complete a legacy file in its preview, without writing quotes or catalogue entries yet.",
+        "operationId": "update_row_transport_api_v1_requests__request_id__table_imports__batch_id__transport_post",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "batch_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Batch Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RowTransportInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/requests/{request_id}/table-imports/{batch_id}/remove-rows": {
       "post": {
         "tags": [
@@ -8866,6 +8994,23 @@
               "minimum": 1,
               "default": 200,
               "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],
@@ -18484,6 +18629,30 @@
             ],
             "title": "Description"
           },
+          "storage_temperature": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Temperature"
+          },
+          "transport_hazard": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transport Hazard"
+          },
           "packings": {
             "items": {
               "$ref": "#/components/schemas/PackingInput"
@@ -18619,6 +18788,30 @@
               }
             ],
             "title": "Description"
+          },
+          "storage_temperature": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Temperature"
+          },
+          "transport_hazard": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transport Hazard"
           },
           "active": {
             "anyOf": [
@@ -20669,6 +20862,40 @@
         ],
         "title": "RoleRef"
       },
+      "RowTransportInput": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "row_number": {
+            "type": "integer",
+            "maximum": 10001.0,
+            "minimum": 2.0,
+            "title": "Row Number"
+          },
+          "storage_temperature": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Storage Temperature",
+            "default": ""
+          },
+          "transport_hazard": {
+            "type": "string",
+            "maxLength": 32,
+            "title": "Transport Hazard",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version",
+          "row_number"
+        ],
+        "title": "RowTransportInput"
+      },
       "SalePriceHistory": {
         "properties": {
           "items": {
@@ -21974,6 +22201,20 @@
           "item_ids"
         ],
         "title": "StartItemsInput"
+      },
+      "SupplierFavoriteInput": {
+        "properties": {
+          "favorite": {
+            "type": "boolean",
+            "title": "Favorite"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "favorite"
+        ],
+        "title": "SupplierFavoriteInput"
       },
       "TaskInput": {
         "properties": {

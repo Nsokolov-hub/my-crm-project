@@ -148,6 +148,77 @@ it('shows the actual imported count after confirmation', async () => {
   expect(saved).toHaveBeenCalledOnce();
 });
 
+it('completes mandatory transport values in a legacy quote preview before confirmation', async () => {
+  const row = {
+    row_number: 2,
+    action: 'error',
+    data: { name: 'Реактив', product_group_slug: 'other' },
+    errors: ['Заполните температурный режим и UN (опасность)'],
+  };
+  const batch = {
+    id: 'legacy',
+    version: 1,
+    columns: ['Артикул'],
+    mapping: { article: 'Артикул' },
+    status: 'preview',
+    rows: [
+      row,
+      {
+        row_number: 3,
+        action: 'checked',
+        data: { name: 'Колонка', product_group_slug: 'columns' },
+        errors: [],
+      },
+    ],
+    summary: { total: 2, checked: 1, create_nomenclature: 0, errors: 1 },
+    result: {},
+  };
+  const repaired = {
+    ...batch,
+    version: 2,
+    rows: [
+      {
+        ...row,
+        action: 'create_nomenclature',
+        errors: [],
+        data: { ...row.data, storage_temperature: '2-8', transport_hazard: 'UN' },
+      },
+      batch.rows[1],
+    ],
+    summary: { ...batch.summary, create_nomenclature: 1, errors: 0 },
+  };
+  vi.mocked(api).mockResolvedValueOnce(batch).mockResolvedValueOnce(repaired);
+  render(
+    <TableImportDialog requestId="request" kind="quotes" onClose={vi.fn()} onSuccess={vi.fn()} />,
+  );
+  const file = screen.getByLabelText('Файл таблицы');
+  fireEvent.change(file, { target: { files: [new File(['test'], 'legacy.xlsx')] } });
+  fireEvent.submit(file.closest('form')!);
+  expect(await screen.findByRole('button', { name: 'Записать позиции: 2' })).toBeDisabled();
+  expect(screen.getAllByText('Не требуется для колонки')).toHaveLength(2);
+  expect(screen.queryByLabelText('Температурный режим, строка 3')).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Температурный режим, строка 2'), {
+    target: { value: '2-8' },
+  });
+  fireEvent.change(screen.getByLabelText('UN (опасность), строка 2'), { target: { value: 'UN' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить параметры' }));
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Записать позиции: 2' })).toBeEnabled(),
+  );
+  expect(api).toHaveBeenCalledWith(
+    '/requests/request/table-imports/legacy/transport',
+    expect.objectContaining({
+      method: 'POST',
+      body: { version: 1, row_number: 2, storage_temperature: '2-8', transport_hazard: 'UN' },
+    }),
+  );
+  // A local change must be saved before the already checked values can be confirmed.
+  fireEvent.change(screen.getByLabelText('Температурный режим, строка 2'), {
+    target: { value: '-20' },
+  });
+  expect(screen.getByRole('button', { name: 'Записать позиции: 2' })).toBeDisabled();
+});
+
 it('maps a product group column and previews each item’s actual group before confirming', async () => {
   const batch = {
     id: 'batch',

@@ -239,9 +239,12 @@ def test_quote_file_classifies_nomenclature_from_other_without_catalogue_right(c
     req, supplier = demand(crm)
     standards = group(crm, "Стандартные образцы", "reference_standards")
     known = known_nomenclature(crm)
-    with crm["sessions"]() as db:
+    with crm["sessions"].begin() as db:
         other = db.scalar(select(ProductGroup).where(ProductGroup.slug == "other"))
-        assert db.get(Nomenclature, known["id"]).product_group_id in (None, other.id)
+        n = db.get(Nomenclature, known["id"])
+        assert n.product_group_id in (None, other.id)
+        # Repeating known transport values does not edit the catalogue while the group is classified.
+        n.storage_temperature, n.transport_hazard = "1-25", "Не опасный"
     grant_quotes_without_catalogue(crm)
     batch = quote_preview(crm, req, supplier, "Стандартные образцы")
     assert batch["summary"]["errors"] == 0, batch["rows"]
@@ -368,7 +371,7 @@ def test_quote_template_has_group_column_directory_dropdown_and_prefilled_groups
     sheet = book.active
     headers = [cell.value for cell in sheet[1]]
     assert headers == list(QUOTE_COLUMNS.values())
-    assert headers[-1] == "Товарная группа"
+    assert headers[-3:] == ["Товарная группа", "Температурный режим", "UN (опасность)"]
     group_column = headers.index("Товарная группа") + 1
     assert {sheet.cell(row, group_column).value for row in (2, 3)} == {
         source_group["name"],

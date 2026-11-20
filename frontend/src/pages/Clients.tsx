@@ -23,6 +23,7 @@ import { api } from '../lib/api';
 import { useApi, useCommand } from '../lib/hooks';
 import type { Entity, Field, Page, User } from '../lib/types';
 import { CounterpartyDocuments } from '../components/CounterpartyDocuments';
+import { SupplierFavoriteButton } from '../components/SupplierFavoriteButton';
 // The API requires a reason to change the owner and keeps it in the counterparty history.
 const reassignmentReasonField: Field = {
   name: 'reason',
@@ -213,6 +214,17 @@ export function Clients() {
               </p>
             )}
             <div className="inline-actions">
+              {['supplier', 'both'].includes(String(selected.kind)) &&
+                (!selected.archived || Boolean(selected.is_favorite)) && (
+                  <SupplierFavoriteButton
+                    supplier={selected}
+                    onChange={(isFavorite) =>
+                      setSelected((row) =>
+                        row?.id === selected.id ? { ...row, is_favorite: isFavorite } : row,
+                      )
+                    }
+                  />
+                )}
               {!selected.archived && auth.can('clients.write') && (
                 <Button variant="secondary" onClick={() => setForm('edit')}>
                   <Pencil size={15} />

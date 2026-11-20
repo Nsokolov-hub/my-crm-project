@@ -293,6 +293,15 @@ def test_completed_wave_reopens_after_correction_or_claim(commerce, kind):
     current = read_wave(commerce, shipment)
     assert current["status"] == "arrived"
     assert current["version"] > shipment["version"]
+    history = get(commerce, f"/waves/{shipment['id']}/history")['items']
+    [automatic] = [row for row in history if row['comment'] ==
+                   'Состояние волны пересчитано после изменения фактических событий поставки']
+    assert automatic['actor_name'] is None
+    assert automatic['changes'] == [{'label': 'Состояние', 'before': 'Выполнена', 'after': 'Прибыла'}]
+    # More corrections/claims at the same milestone do not invent another wave status change.
+    command(commerce, f"/allocations/{allocation['id']}/events", payload)
+    unchanged = get(commerce, f"/waves/{shipment['id']}/history")['items']
+    assert [row['id'] for row in unchanged if row['comment'] == automatic['comment']] == [automatic['id']]
 
 
 def test_revision_cannot_overfill_demand_across_proposals(commerce):

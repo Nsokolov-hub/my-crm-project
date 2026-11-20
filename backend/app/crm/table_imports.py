@@ -27,7 +27,7 @@ from app.core.errors import DomainError
 from app.core.models import User
 from app.core.schemas import Input
 from app.core.security import can, check_request, current_user, require_permission
-from app.core.service import advisory, audit, idem, lock, serialize
+from app.core.service import advisory, audit, check_version, idem, lock, serialize
 from app.crm.catalogue import packing_name
 from app.crm.imports import string_value, xlsx
 from app.crm.manufacturers import find_manufacturer, manufacturer_fields, normalized
@@ -46,6 +46,7 @@ from app.crm.models import (
 from app.crm.quotes import record_quote_sheet
 from app.crm.requests import structured_item_fields
 from app.crm.schemas import ItemInput, QuoteItemInput, QuoteSheetInput
+from app.crm.transport import storage_temperature, transport_hazard
 
 router = APIRouter(tags=["Импорт заявок и квот"])
 QUOTE_COLUMNS = {
@@ -64,6 +65,8 @@ QUOTE_COLUMNS = {
     "currency": "Валюта",
     "delivery_days": "Срок поставки, дней",
     "product_group": "Товарная группа",
+    "storage_temperature": "Температурный режим",
+    "transport_hazard": "UN (опасность)",
 }
 ALIASES = {
     "description": [
@@ -92,6 +95,8 @@ ALIASES = {
     "currency": ["валюта", "currency"],
     "delivery_days": ["срок поставки, дней", "срок поставки", "delivery days"],
     "product_group": ["товарная группа", "группа товаров", "группа", "код группы", "product group", "product_group"],
+    "storage_temperature": ["температурный режим", "температура", "storage temperature", "temperature", "storage_temperature"],
+    "transport_hazard": ["un (опасность)", "un", "опасность", "un number", "hazard", "transport_hazard"],
 }
 UNITS = {
     "шт": "pcs",
@@ -416,6 +421,7 @@ def quote_plan(db, request_id, columns, rows, mapping, catalog_write=True):
     new_definitions = {}
     regrouped = {}
     filled_makers = {}
+    transport_definitions = {}
     positions = Positions(db, items)
     plan = []
     for i, raw in enumerate(rows, 2):
@@ -499,6 +505,8 @@ def quote_plan(db, request_id, columns, rows, mapping, catalog_write=True):
             data["product_group_id"] = group.id if group else None
             data["product_group_name"] = group.name if group else None
             data["product_group_slug"] = group.slug if group else None
+            # The calculator and commercial documents use this same system group for chromatography columns.
+            data["requires_transport"] = not group or group.slug != "columns"
             if not n:
                 if not data.get("name"):
                     raise ValueError("Для новой номенклатуры заполните наименование")
@@ -575,9 +583,27 @@ def quote_plan(db, request_id, columns, rows, mapping, catalog_write=True):
                 whole=True,
                 places=6,
             )
+            for key, normalizer in (("storage_temperature", storage_temperature),
+                                    ("transport_hazard", transport_hazard)):
+                stated = values.get(key, "").strip()
+                data[key] = normalizer(stated if stated else getattr(n, key, None))
+            missing = [label for key, label in (("storage_temperature", "температурный режим"),
+                                               ("transport_hazard", "UN (опасность)")) if not data[key]]
+            if data["requires_transport"] and missing:
+                raise ValueError("Для товара, кроме колонки, заполните: " + ", ".join(missing))
+            transport_values = tuple(data[key] for key in ("storage_temperature", "transport_hazard"))
+            if n:
+                if transport_definitions.setdefault(n.id, transport_values) != transport_values:
+                    raise ValueError("Для одного артикула указаны разные температурные режимы или опасность")
+                data["transport_properties_changed"] = any(
+                    data[key] != getattr(n, key) for key in ("storage_temperature", "transport_hazard"))
+                if data["transport_properties_changed"] and not catalog_write:
+                    raise ValueError("Дополнить или изменить температурный режим и UN номенклатуры может "
+                                     "сотрудник с правом «Изменение каталога»")
             if not n:
                 definition = {
-                    key: data.get(key) for key in ("name", "cas", "linear_formula", "purity", "product_group_id")
+                    key: data.get(key) for key in ("name", "cas", "linear_formula", "purity", "product_group_id",
+                                                   "storage_temperature", "transport_hazard")
                 }
                 definition["manufacturer"] = data["manufacturer_id"] or normalized(data.get("manufacturer") or "")
                 old = new_definitions.setdefault(article.casefold(), definition)
@@ -626,6 +652,25 @@ def fill_manufacturers(db, user, batch) -> set[str]:
         audit(db, user, "nomenclature", n.id, "manufacturer", before, serialize(n),
               reason=f"Производитель из файла квот {batch.source_name}")
     return created
+
+
+def fill_transport_properties(db, user, batch):
+    """Apply only the explicit, reviewed catalogue changes of a checked import."""
+    updated = set()
+    for entry in batch.plan:
+        data = entry["data"]
+        identifier = data.get("nomenclature_id")
+        if not identifier or identifier in updated or not data.get("transport_properties_changed"):
+            continue
+        require_permission(db, user, "catalog.write")
+        n = lock(db, Nomenclature, identifier)
+        before = serialize(n)
+        for key in ("storage_temperature", "transport_hazard"):
+            setattr(n, key, data[key])
+        n.version += 1
+        updated.add(identifier)
+        audit(db, user, "nomenclature", n.id, "transport_properties", before, serialize(n),
+              reason=f"Параметры из файла квот {batch.source_name}")
 
 
 def live_quotes(db, batch) -> bool:
@@ -740,6 +785,49 @@ class RemoveRows(Input):
     row_numbers: list[int] = Field(min_length=1, max_length=10000)
 
 
+class RowTransportInput(Input):
+    version: int = Field(ge=1)
+    row_number: int = Field(ge=2, le=MAX_ROWS + 1)
+    storage_temperature: str = Field(default="", max_length=80)
+    transport_hazard: str = Field(default="", max_length=32)
+
+
+@router.post("/requests/{request_id}/table-imports/{batch_id}/transport")
+def update_row_transport(
+    request_id: str, batch_id: str, body: RowTransportInput,
+    user: User = Depends(current_user), db: Session = Depends(get_db, scope="function"),
+):
+    """Complete a legacy file in its preview, without writing quotes or catalogue entries yet."""
+    owned_batch(db, user, request_id, batch_id)
+    batch = lock(db, TableImport, batch_id)
+    check_version(batch, body.version)
+    if batch.kind != "quotes" or batch.status != "preview":
+        raise DomainError("IMPORT_DONE", "Параметры можно изменить только в проверке файла квот", 409)
+    numbers = (batch.file_metadata or {}).get("row_numbers") or [entry["row_number"] for entry in batch.plan]
+    if body.row_number not in numbers:
+        raise DomainError("IMPORT_ROWS", "Строка не найдена в проверенном файле", 422, field="row_number")
+    row_index = numbers.index(body.row_number)
+    columns, mapping = list(batch.columns), dict(batch.mapping)
+    rows = [list(row) for row in batch.rows]
+    for key in ("storage_temperature", "transport_hazard"):
+        column = mapping.get(key) or QUOTE_COLUMNS[key]
+        if column not in columns:
+            columns.append(column)
+            for row in rows:
+                row.append("")
+        mapping[key] = column
+        rows[row_index][columns.index(column)] = getattr(body, key).strip()
+    batch.columns, batch.mapping, batch.rows = columns, mapping, rows
+    batch.plan = renumbered(quote_plan(db, request_id, columns, rows, mapping,
+                                     can(db, user, "catalog.write")), batch)
+    batch.summary = {**summarize(batch.plan), **uncovered_positions(db, request_id, batch.plan)}
+    batch.version += 1
+    audit(db, user, "table_import", batch.id, "transport_edited",
+          after={"row_number": body.row_number, "storage_temperature": body.storage_temperature,
+                 "transport_hazard": body.transport_hazard, **batch.summary})
+    return batch_view(batch)
+
+
 @router.post("/requests/{request_id}/table-imports/{batch_id}/remove-rows")
 def remove_rows(
     request_id: str,
@@ -833,6 +921,8 @@ def quote_template(request_id: str, user: User = Depends(current_user), db: Sess
             "packing_unit": p.unit if p else "0",
             "quantity": item.quantity,
             "product_group": group.name if group else "",
+            "storage_temperature": n.storage_temperature if n else "",
+            "transport_hazard": n.transport_hazard if n else "",
         }
         rows.append([values.get(key, "") for key in QUOTE_COLUMNS])
     book = load_workbook(io.BytesIO(xlsx([list(QUOTE_COLUMNS.values()), *rows])))
@@ -890,9 +980,42 @@ def quote_template(request_id: str, user: User = Depends(current_user), db: Sess
         # Codes and 0 are valid typed inputs too; the import preview validates every value.
         validation.showErrorMessage = False
         sheet.add_data_validation(validation)
-        column = sheet.cell(1, len(QUOTE_COLUMNS)).column_letter
+        column = sheet.cell(1, list(QUOTE_COLUMNS).index("product_group") + 1).column_letter
         validation.add(f"{column}2:{column}{MAX_ROWS + 1}")
         sheet.column_dimensions[column].width = 40
+    for key, prompt in (
+        ("storage_temperature", "Температура или диапазон в °C: 2-8; -20; -70; 1-25. Неизвестное значение оставьте пустым и уточните."),
+        ("transport_hazard", "Укажите UN, UN1234 либо явно «Не опасный». Не выбирайте «Не опасный», если данных нет."),
+    ):
+        index = list(QUOTE_COLUMNS).index(key) + 1
+        letter = sheet.cell(1, index).column_letter
+        sheet.column_dimensions[letter].width = 30
+        sheet.column_dimensions[letter].number_format = "@"
+        for row in range(2, max(2, len(rows) + 1) + 1):
+            cell = sheet.cell(row, index)
+            cell.number_format = "@"
+            if cell.value is not None:
+                cell.value, cell.data_type = str(cell.value), "s"
+        message = DataValidation(allow_blank=True)
+        message.showInputMessage = True
+        message.promptTitle = "Обязательно, кроме колонок"
+        message.prompt = prompt
+        sheet.add_data_validation(message)
+        message.add(f"{letter}2:{letter}{MAX_ROWS + 1}")
+    instructions = book.create_sheet("Заполнение")
+    column_group = next((group.name for group in groups if group.slug == "columns"), "Колонки")
+    for line in [
+        ["Параметр", "Правило"],
+        ["Температурный режим", f"Для всех товаров, кроме группы «{column_group}»: температура или диапазон в °C, например 2-8; -20; -70; 1-25."],
+        ["UN (опасность)", "Для всех товаров, кроме колонок: UN, номер UN1234 либо явно «Не опасный». Данные не выводятся из названия или CAS."],
+        ["Неизвестные данные", "Не заполняйте предположениями. Уточните у поставщика; дополнить строку можно в окне проверки до записи квот."],
+        ["Номенклатура", "Известные значения подставляются из справочника. Дополнение и изменение справочника требует права «Изменение каталога»."],
+        ["Колонки", f"Освобождение определяется товарной группой «{column_group}», а не совпадением слова в названии товара."],
+    ]:
+        instructions.append(line)
+    instructions.column_dimensions["A"].width = 28
+    instructions.column_dimensions["B"].width = 120
+    instructions.freeze_panes = "A2"
     stream = io.BytesIO()
     book.save(stream)
     book.close()
@@ -930,14 +1053,20 @@ def confirm(
                 TableImport.id != batch.id,
             )
         )
+        # Completing transport metadata in a legacy preview adds columns to its mapping;
+        # these catalogue-only edits must not import the same price quotes a second time.
+        transport_keys = {"storage_temperature", "transport_hazard"} if batch.kind == "quotes" else set()
+
+        def quote_mapping(mapping):
+            return {key: value for key, value in mapping.items() if value and key not in transport_keys}
+
         duplicate = next(
             (
                 row
                 for row in previous
                 if (row.file_metadata["sha256"] == batch.file_metadata["sha256"]
                     or (batch.kind == "items" and row.columns == batch.columns and row.rows == batch.rows))
-                and {key: value for key, value in row.mapping.items() if value}
-                == {key: value for key, value in batch.mapping.items() if value}
+                and quote_mapping(row.mapping) == quote_mapping(batch.mapping)
                 # A file whose quotes were all deleted may be loaded again, e.g. to place its rows anew.
                 and (batch.kind != "quotes" or live_quotes(db, row))
             ),
@@ -947,8 +1076,15 @@ def confirm(
             # The same file loaded again still corrects the groups and manufacturers it names; quotes are not
             # duplicated.
             if batch.kind == "quotes":
+                if any(row["data"].get("transport_properties_changed") for row in batch.plan):
+                    advisory(db, "catalog.article-import")
+                    fresh = renumbered(quote_plan(db, request_id, batch.columns, batch.rows, batch.mapping,
+                                                 can(db, user, "catalog.write")), batch)
+                    if fresh != batch.plan:
+                        raise DomainError("IMPORT_STALE", "Данные изменились после проверки. Загрузите файл ещё раз", 409)
                 regroup_nomenclatures(db, user, batch)
                 fill_manufacturers(db, user, batch)
+                fill_transport_properties(db, user, batch)
             batch.status = "completed"
             batch.result = {**duplicate.result, "already_imported": True}
             audit(db, user, "table_import", batch.id, "duplicate_skipped", after=batch.result)
@@ -979,6 +1115,7 @@ def confirm(
                 )
             regroup_nomenclatures(db, user, batch)
             filled_makers = fill_manufacturers(db, user, batch)
+            fill_transport_properties(db, user, batch)
             if any(not row["data"]["nomenclature_id"] or not row["data"]["packing_id"] for row in fresh):
                 require_permission(db, user, "catalog.write")
             groups = defaultdict(list)
@@ -991,7 +1128,7 @@ def confirm(
                     fields = manufacturer_fields(db, user, {
                         key: data.get(key)
                         for key in ("name", "article", "manufacturer", "manufacturer_id", "cas", "linear_formula",
-                                    "purity")
+                                    "purity", "storage_temperature", "transport_hazard")
                     })
                     if data.get("manufacturer_new"):
                         new_makers.add(fields["manufacturer_id"])

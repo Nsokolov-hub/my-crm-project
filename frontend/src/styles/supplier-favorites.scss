@@ -1,0 +1,44 @@
+.supplier-favorite-control {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.supplier-favorite-control .button[aria-pressed='true'] {
+  color: #7254cd;
+}
+
+.supplier-favorites {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid #e9eaf0;
+  border-radius: 14px;
+  background: #faf9fe;
+
+  h3,
+  p {
+    margin: 0;
+  }
+
+  h3 {
+    font-size: 14px;
+  }
+
+  p {
+    color: #808394;
+    font-size: 12px;
+  }
+
+  .inline-actions {
+    margin: 0;
+  }
+
+  .button {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    text-align: left;
+    white-space: normal;
+  }
+}

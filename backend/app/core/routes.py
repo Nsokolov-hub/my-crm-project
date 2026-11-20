@@ -424,7 +424,12 @@ def edit_user(
     from app.crm.models import Request as CRMRequest
 
     require_permission(db, user, "admin.users")
-    row = lock(db, User, entity_id)
+    # Account fields never change its key. Allow concurrent FK inserts (e.g. personal favorites)
+    # while reassignment below waits for working records, avoiding a user/counterparty lock cycle.
+    row = db.scalar(select(User).where(User.id == entity_id).with_for_update(key_share=True)
+                    .execution_options(populate_existing=True))
+    if row is None:
+        raise DomainError("NOT_FOUND", "Объект не найден или недоступен", 404)
     check_version(row, body.version)
     before = user_view(db, row)
     if body.active is False:

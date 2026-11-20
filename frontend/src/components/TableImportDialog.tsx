@@ -41,6 +41,8 @@ const quoteFields: Record<string, string> = {
   currency: 'Валюта',
   delivery_days: 'Срок поставки, дней',
   product_group: 'Товарная группа',
+  storage_temperature: 'Температурный режим',
+  transport_hazard: 'UN (опасность)',
 };
 const itemFields: Record<string, string> = {
   description: 'Наименование',
@@ -70,6 +72,60 @@ export function TableImportDialog({
   const confirm = useCommand();
   // Business remark of 13 November 2026: rows that should not get into the request are removed before writing.
   const removing = useCommand();
+  const transport = useCommand();
+  const [transportDrafts, setTransportDrafts] = useState<
+    Record<number, { storage_temperature: string; transport_hazard: string }>
+  >({});
+  function transportValues(row: Entity) {
+    const data = row.data as Record<string, unknown>;
+    return (
+      transportDrafts[Number(row.row_number)] || {
+        storage_temperature: String(data.storage_temperature || ''),
+        transport_hazard: String(data.transport_hazard || ''),
+      }
+    );
+  }
+  function editTransport(
+    row: Entity,
+    key: 'storage_temperature' | 'transport_hazard',
+    value: string,
+  ) {
+    const number = Number(row.row_number);
+    const data = row.data as Record<string, unknown>;
+    setTransportDrafts((current) => ({
+      ...current,
+      [number]: {
+        ...(current[number] || {
+          storage_temperature: String(data.storage_temperature || ''),
+          transport_hazard: String(data.transport_hazard || ''),
+        }),
+        [key]: value,
+      },
+    }));
+  }
+  async function saveTransport(row: Entity) {
+    if (!batch) return;
+    try {
+      const result = await transport.run<Batch>(
+        `/requests/${requestId}/table-imports/${batch.id}/transport`,
+        {
+          version: batch.version,
+          row_number: Number(row.row_number),
+          ...transportValues(row),
+        },
+      );
+      if (result) {
+        setBatch(result);
+        setTransportDrafts((current) => {
+          const next = { ...current };
+          delete next[Number(row.row_number)];
+          return next;
+        });
+      }
+    } catch {
+      /* displayed below */
+    }
+  }
   async function removeRow(rowNumber: number) {
     if (!batch) return;
     try {
@@ -77,7 +133,14 @@ export function TableImportDialog({
         `/requests/${requestId}/table-imports/${batch.id}/remove-rows`,
         { row_numbers: [rowNumber] },
       );
-      if (result) setBatch(result);
+      if (result) {
+        setBatch(result);
+        setTransportDrafts((current) => {
+          const next = { ...current };
+          delete next[rowNumber];
+          return next;
+        });
+      }
     } catch {
       /* displayed below */
     }
@@ -101,6 +164,7 @@ export function TableImportDialog({
       setBatch(result);
       setMapping(result.mapping);
       setMappingChanged(false);
+      setTransportDrafts({});
     } catch (cause) {
       setError(cause);
     } finally {
@@ -128,13 +192,13 @@ export function TableImportDialog({
       title={kind === 'quotes' ? 'Загрузить квоты из Excel' : 'Загрузить таблицу заявки'}
       wide
       onClose={() => {
-        if (!busy && !confirm.busy) onClose();
+        if (!busy && !confirm.busy && !transport.busy) onClose();
       }}
     >
       <form className="form-body" id="table-import-form" onSubmit={(event) => void preview(event)}>
         <p>
           {kind === 'quotes'
-            ? 'Поставщик определяется по внутреннему коду, номенклатура — по артикулу. Нули в необязательных характеристиках оставят их пустыми. Если фасовка не указана, используется имеющаяся единственная фасовка или 1 шт.'
+            ? 'Поставщик определяется по внутреннему коду, номенклатура — по артикулу. Нули в CAS, формуле, чистоте и производителе оставят эти поля пустыми. Если фасовка не указана, используется имеющаяся единственная фасовка или 1 шт.'
             : 'Загрузите XLSX или текст UTF-8 с колонками через табуляцию (TSV). Все исходные столбцы сохранятся и попадут в Excel запроса поставщику.'}
         </p>
         {kind === 'quotes' && (
@@ -164,13 +228,14 @@ export function TableImportDialog({
             type="file"
             accept={kind === 'quotes' ? '.xlsx' : '.xlsx,.txt,.tsv,.csv'}
             required
-            disabled={busy || confirm.busy}
+            disabled={busy || confirm.busy || transport.busy}
             onChange={(event) => {
               setFile(event.target.files?.[0]);
               setBatch(undefined);
               setMapping({});
               setError(undefined);
               confirm.setError(undefined);
+              setTransportDrafts({});
             }}
           />
         </label>
@@ -210,6 +275,19 @@ export function TableImportDialog({
                 Строк в файле: {batch.summary.total}. В заявке позиций:{' '}
                 {batch.summary.request_positions}. Без строки в файле остались позиции заявки:{' '}
                 {batch.summary.missing_positions?.join(', ')}.
+              </p>
+            )}
+            {kind === 'quotes' && batch.status === 'preview' && (
+              <p className="info-note" role="note">
+                Для товаров, кроме колонок, обязательны температурный режим и UN (опасность).
+                Известные значения подставлены из номенклатуры. Недостающее можно заполнить в строке
+                ниже и нажать «Сохранить параметры». Данные сохранятся в номенклатуре при записи
+                квот; изменение справочника требует права «Изменение каталога».
+              </p>
+            )}
+            {Object.keys(transportDrafts).length > 0 && (
+              <p className="info-note" role="status">
+                Сохраните параметры изменённых строк перед записью позиций.
               </p>
             )}
             {batch.status === 'preview' && (
@@ -297,6 +375,62 @@ export function TableImportDialog({
                             : name;
                         },
                       },
+                      ...(['storage_temperature', 'transport_hazard'] as const).map((key) => ({
+                        key,
+                        label: quoteFields[key],
+                        render: (row: Entity) => {
+                          const data = row.data as Record<string, unknown>;
+                          if (data.product_group_slug === 'columns')
+                            return 'Не требуется для колонки';
+                          if (batch.status !== 'preview') return String(data[key] || '—');
+                          return (
+                            <input
+                              aria-label={`${quoteFields[key]}, строка ${String(row.row_number)}`}
+                              value={transportValues(row)[key]}
+                              maxLength={key === 'storage_temperature' ? 80 : 32}
+                              placeholder={
+                                key === 'storage_temperature'
+                                  ? '2-8; -20; -70; 1-25'
+                                  : 'UN, UN1234 или Не опасный'
+                              }
+                              disabled={
+                                busy ||
+                                mappingChanged ||
+                                transport.busy ||
+                                confirm.busy ||
+                                removing.busy
+                              }
+                              onChange={(event) => editTransport(row, key, event.target.value)}
+                            />
+                          );
+                        },
+                      })),
+                      ...(batch.status === 'preview'
+                        ? [
+                            {
+                              key: 'save_transport',
+                              label: '',
+                              render: (row: Entity) =>
+                                (row.data as Record<string, unknown>).product_group_slug ===
+                                'columns' ? null : (
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    disabled={
+                                      busy ||
+                                      mappingChanged ||
+                                      transport.busy ||
+                                      confirm.busy ||
+                                      removing.busy
+                                    }
+                                    onClick={() => void saveTransport(row)}
+                                  >
+                                    Сохранить параметры
+                                  </Button>
+                                ),
+                            },
+                          ]
+                        : []),
                     ]
                   : []),
                 {
@@ -315,7 +449,7 @@ export function TableImportDialog({
                             className="icon-button"
                             aria-label={`Убрать строку ${String(row.row_number)}`}
                             title="Убрать строку: она не попадёт в заявку"
-                            disabled={removing.busy || confirm.busy}
+                            disabled={removing.busy || confirm.busy || transport.busy}
                             onClick={() => void removeRow(Number(row.row_number))}
                           >
                             <Trash2 size={15} />
@@ -327,10 +461,12 @@ export function TableImportDialog({
               ]}
             />
             <ErrorBox error={removing.error} />
+            <ErrorBox error={transport.error} />
             {batch.status === 'preview' && batch.summary.total > 1 && (
               <p className="muted">
                 Лишнюю строку можно убрать корзиной справа — проверка пересчитается без неё. Если
-                проверить файл заново, убранные строки вернутся.
+                проверить файл заново, убранные строки вернутся, а правки параметров в этом окне
+                сбросятся.
               </p>
             )}
             {batch.summary.total > 100 && (
@@ -354,7 +490,11 @@ export function TableImportDialog({
         )}
       </form>
       <div className="modal-footer">
-        <Button variant="secondary" disabled={busy || confirm.busy} onClick={onClose}>
+        <Button
+          variant="secondary"
+          disabled={busy || confirm.busy || transport.busy}
+          onClick={onClose}
+        >
           Закрыть
         </Button>
         {batch?.status !== 'completed' && (
@@ -362,7 +502,7 @@ export function TableImportDialog({
             type="submit"
             form="table-import-form"
             busy={busy}
-            disabled={!file || confirm.busy}
+            disabled={!file || confirm.busy || transport.busy || removing.busy}
           >
             Проверить файл
           </Button>
@@ -370,7 +510,14 @@ export function TableImportDialog({
         {batch?.status === 'preview' && (
           <Button
             busy={confirm.busy}
-            disabled={busy || mappingChanged || batch.summary.errors > 0 || !batch.summary.total}
+            disabled={
+              busy ||
+              transport.busy ||
+              mappingChanged ||
+              Object.keys(transportDrafts).length > 0 ||
+              batch.summary.errors > 0 ||
+              !batch.summary.total
+            }
             onClick={() => void apply()}
           >
             Записать позиции: {batch.summary.total}

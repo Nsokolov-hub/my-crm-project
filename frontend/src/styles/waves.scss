@@ -418,9 +418,10 @@
 
 /* Business remark of 13 November 2026: the history of the wave — a tab on the side of its card, a panel on the right. */
 .modal.wave-modal .wave-history-tab {
-  position: absolute;
+  position: sticky;
   top: 78px;
-  right: 0;
+  float: right;
+  margin-top: 12px;
   z-index: 4;
   display: flex;
   align-items: center;
@@ -439,6 +440,15 @@
   &:hover {
     background: #ebe4fb;
   }
+
+  &:focus-visible {
+    outline: 2px solid #7960d6;
+    outline-offset: 2px;
+  }
+}
+
+.modal.wave-modal > .form-body {
+  padding-right: 64px;
 }
 
 .modal.side-drawer {
