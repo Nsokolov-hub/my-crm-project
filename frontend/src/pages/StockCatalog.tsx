@@ -42,7 +42,14 @@ type Source = {
   status: string;
   reason: string;
   last_check?: {
-    checked_at?: string;
+    checked_at?: string | null;
+    running?: boolean;
+    started_at?: string;
+    pending_pages?: number;
+    stored_offers?: number;
+    fresh_offers?: number;
+    exact_packagings?: number;
+    pending_review?: number;
     error?: string;
     errors?: number;
     refused?: string | null;
@@ -121,9 +128,14 @@ function SourceCheck({ source }: { source: Source }) {
         <span className="stock-source-warning">Ошибок: {check!.errors}</span>
       )}
       {check?.error && <span className="stock-source-warning">{sourceReason(check.error)}</span>}
-      {check?.complete === false && !check.refused && !check.incomplete && !check.errors && (
-        <span className="stock-source-warning">Проверка не завершена</span>
+      {check?.running && (
+        <span>Идёт обход источников. В очереди страниц: {check.pending_pages ?? 0}</span>
       )}
+      {check?.complete === false &&
+        !check.running &&
+        !check.refused &&
+        !check.incomplete &&
+        !check.errors && <span className="stock-source-warning">Проверка не завершена</span>}
       {check?.complete === true && <span>Проверка завершена</span>}
       {check?.offers !== undefined && (
         <span>
@@ -131,10 +143,22 @@ function SourceCheck({ source }: { source: Source }) {
           {check.matched !== undefined ? `. Сопоставлено: ${check.matched}` : ''}
         </span>
       )}
+      {check?.stored_offers !== undefined && (
+        <span>
+          Сохранено предложений: {check.stored_offers}
+          {check.fresh_offers !== undefined ? `. Свежих: ${check.fresh_offers}` : ''}
+          {check.exact_packagings !== undefined
+            ? `. Точных фасовок: ${check.exact_packagings}`
+            : ''}
+          {check.pending_review !== undefined ? `. На проверке: ${check.pending_review}` : ''}
+        </span>
+      )}
       <small>
-        {check?.checked_at
-          ? `Последняя проверка: ${date(check.checked_at, true)}`
-          : 'Проверка ещё не выполнялась'}
+        {check?.running && check.started_at
+          ? `Текущий обход начат: ${date(check.started_at, true)}`
+          : check?.checked_at
+            ? `Последняя проверка: ${date(check.checked_at, true)}`
+            : 'Проверка ещё не выполнялась'}
       </small>
     </li>
   );

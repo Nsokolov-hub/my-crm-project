@@ -179,6 +179,47 @@ describe('stock catalogue', () => {
     expect(screen.queryByText('Проверка завершена')).not.toBeInTheDocument();
   });
 
+  it('shows current crawl coverage and review counts before the whole run finishes', () => {
+    const sample = vi.mocked(useApi).getMockImplementation()!('/stock-catalog');
+    vi.mocked(useApi).mockReturnValue({
+      ...sample,
+      data: {
+        ...(sample.data as Record<string, unknown>),
+        sources: [
+          {
+            id: 'skygen',
+            name: 'Скайклад',
+            status: 'supported',
+            reason: '',
+            last_check: {
+              running: true,
+              complete: false,
+              checked_at: null,
+              started_at: AT,
+              pending_pages: 420,
+              offers: 30,
+              matched: 2,
+              stored_offers: 28,
+              fresh_offers: 27,
+              exact_packagings: 2,
+              pending_review: 26,
+            },
+          },
+        ],
+      },
+    });
+    open();
+    fireEvent.click(screen.getByText('Состояние источников'));
+    expect(screen.getByText('Идёт обход источников. В очереди страниц: 420')).toBeVisible();
+    expect(
+      screen.getByText('Сохранено предложений: 28. Свежих: 27. Точных фасовок: 2. На проверке: 26'),
+    ).toBeVisible();
+    expect(screen.getByText(/^Текущий обход начат:/)).toBeVisible();
+    expect(screen.queryByText('Проверка ещё не выполнялась')).not.toBeInTheDocument();
+    expect(screen.queryByText('Проверка не завершена')).not.toBeInTheDocument();
+    expect(screen.queryByText('Проверка завершена')).not.toBeInTheDocument();
+  });
+
   it('hides source data, review and internal download without counterparty rights', () => {
     signIn(['catalog.read', 'exports.download']);
     open();
