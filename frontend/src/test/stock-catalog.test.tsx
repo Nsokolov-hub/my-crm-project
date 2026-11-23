@@ -220,6 +220,56 @@ describe('stock catalogue', () => {
     expect(screen.queryByText('Проверка завершена')).not.toBeInTheDocument();
   });
 
+  it('shows a frequent stock refresh separately from incomplete catalogue coverage', () => {
+    const sample = vi.mocked(useApi).getMockImplementation()!('/stock-catalog');
+    vi.mocked(useApi).mockReturnValue({
+      ...sample,
+      data: {
+        ...(sample.data as Record<string, unknown>),
+        sources: [
+          {
+            id: 'chimmed',
+            name: 'Химмед',
+            status: 'supported',
+            reason: '',
+            last_check: {
+              checked_at: AT,
+              complete: false,
+              offers: 18800,
+              matched: 5680,
+              refresh: {
+                running: true,
+                checked_at: null,
+                started_at: AT,
+                pending_pages: 20,
+                pages: 2,
+                offers: 5,
+                withdrawn: 15,
+                interval_hours: 2,
+                fresh_hours: 6,
+                scope: 'known_stock',
+                complete: false,
+              },
+            },
+          },
+        ],
+      },
+    });
+    open();
+    fireEvent.click(screen.getByText('Состояние источников'));
+    expect(screen.getByText(/Перепроверка известного наличия — каждые 2 ч/)).toBeVisible();
+    expect(screen.getByText(/Подтверждение действует не более 6 ч/)).toBeVisible();
+    expect(screen.getByText('Идёт перепроверка остатков. В очереди страниц: 20')).toBeVisible();
+    expect(
+      screen.getByText(
+        'Перепроверено страниц: 2. Подтверждено предложений: 5. Снято подтверждений: 15',
+      ),
+    ).toBeVisible();
+    expect(screen.getByText('Предложений: 18800. Сопоставлено: 5680')).toBeVisible();
+    expect(screen.getByText('Проверка не завершена')).toBeVisible();
+    expect(screen.queryByText('Проверка завершена')).not.toBeInTheDocument();
+  });
+
   it('hides source data, review and internal download without counterparty rights', () => {
     signIn(['catalog.read', 'exports.download']);
     open();

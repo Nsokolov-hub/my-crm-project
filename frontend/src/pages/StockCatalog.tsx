@@ -57,6 +57,22 @@ type Source = {
     complete?: boolean;
     offers?: number;
     matched?: number;
+    refresh?: {
+      running?: boolean;
+      started_at?: string | null;
+      checked_at?: string | null;
+      pending_pages?: number;
+      pages?: number;
+      offers?: number;
+      withdrawn?: number;
+      errors?: number;
+      refused?: string | null;
+      incomplete?: string | null;
+      complete?: boolean;
+      interval_hours?: number;
+      fresh_hours?: number;
+      scope?: string;
+    };
   } | null;
 };
 type StockPage = {
@@ -108,6 +124,7 @@ function sourceReason(value: string) {
 
 function SourceCheck({ source }: { source: Source }) {
   const check = source.last_check;
+  const refresh = check?.refresh;
   const reason = sourceReason(source.reason);
   return (
     <li>
@@ -152,6 +169,42 @@ function SourceCheck({ source }: { source: Source }) {
             : ''}
           {check.pending_review !== undefined ? `. На проверке: ${check.pending_review}` : ''}
         </span>
+      )}
+      {refresh && (
+        <>
+          <span>
+            Перепроверка известного наличия — каждые {refresh.interval_hours ?? 2} ч. Подтверждение
+            действует не более {refresh.fresh_hours ?? 6} ч.
+          </span>
+          <span>
+            {refresh.running
+              ? `Идёт перепроверка остатков. В очереди страниц: ${refresh.pending_pages ?? 0}`
+              : refresh.checked_at
+                ? `Последняя перепроверка остатков: ${date(refresh.checked_at, true)}`
+                : 'Перепроверка остатков запланирована'}
+          </span>
+          {refresh.pages !== undefined && (
+            <span>
+              Перепроверено страниц: {refresh.pages}. Подтверждено предложений:{' '}
+              {refresh.offers ?? 0}. Снято подтверждений: {refresh.withdrawn ?? 0}
+            </span>
+          )}
+          {(refresh.refused ||
+            refresh.incomplete ||
+            refresh.errors ||
+            (refresh.complete === false && !refresh.running)) && (
+            <span className="stock-source-warning">
+              Перепроверка остатков ограничена
+              {refresh.refused
+                ? `: ${sourceReason(refresh.refused)}`
+                : refresh.incomplete
+                  ? `: ${sourceReason(refresh.incomplete)}`
+                  : refresh.errors
+                    ? `. Ошибок: ${refresh.errors}`
+                    : ''}
+            </span>
+          )}
+        </>
       )}
       <small>
         {check?.running && check.started_at
