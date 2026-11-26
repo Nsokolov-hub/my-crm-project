@@ -219,9 +219,12 @@ it('offers open waves grouped by kind and flags an archived wave the request sti
   );
   const picker = screen.getByLabelText('Волна поставки');
   await waitFor(() => expect(picker).toHaveValue('old'));
-  expect(within(picker).getByRole('option', { name: /Поставщик старый · в архиве/ })).toBeVisible();
-  const groups = within(picker).getAllByRole('group');
-  expect(groups.map((group) => group.getAttribute('label'))).toEqual(['Плановые', 'Рабочие']);
-  expect(within(groups[1]).getByRole('option', { name: /рабочая 1/ })).toBeVisible();
+  fireEvent.click(picker);
+  const dialog = await screen.findByRole('dialog', { name: 'Выбор волны поставки' });
+  expect(within(dialog).getByRole('button', { name: /Поставщик старый/ })).toBeVisible();
+  expect(within(dialog).getByRole('heading', { name: 'Плановые волны' })).toBeVisible();
+  expect(within(dialog).getByRole('heading', { name: 'Рабочие волны' })).toBeVisible();
+  const working = within(dialog).getByRole('heading', { name: 'Рабочие волны' }).parentElement!;
+  expect(within(working).getByRole('button', { name: /рабочая 1/ })).toBeVisible();
   expect(screen.getByText(/Назначенная волна в архиве/)).toBeVisible();
 });

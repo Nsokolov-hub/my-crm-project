@@ -88,7 +88,9 @@ export const requestEditFields: Field[] = [
     name: 'commercial_stage',
     label: 'Коммерческий этап',
     type: 'select',
-    options: stages.map((value) => ({ value, label: stageLabels[value] })),
+    options: stages
+      .filter((value) => value !== 'awaiting_price_reduction')
+      .map((value) => ({ value, label: stageLabels[value] })),
   },
   { name: 'owner_id', label: 'Ответственный', type: 'select', source: '/users' },
   { name: 'due_at', label: 'Срок', type: 'datetime-local' },

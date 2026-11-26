@@ -24,6 +24,7 @@ import { RequestRfqs, RequestQuotes } from './RequestProcurement';
 import { RequestCalculations } from './RequestCalculations';
 import { RequestItemEditor } from './RequestItemEditor';
 import { RequestDocuments } from './RequestDocuments';
+import { RequestPriceReductions } from './RequestPriceReductions';
 import { RequestPayments } from './RequestPayments';
 import { RequestFulfillment } from './Fulfillment';
 import { Chats, FilesPanel } from './Communication';
@@ -74,12 +75,17 @@ export function RequestDetail() {
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [rfqItemIds, setRfqItemIds] = useState<string[]>([]);
   const [quoteItemIds, setQuoteItemIds] = useState<string[]>([]);
+  const [reductionQuoteItemIds, setReductionQuoteItemIds] = useState<string[]>([]);
+  const reductions = useApi<Page>(
+    auth.can('finance.purchase.read') ? `/requests/${id}/price-reductions` : null,
+  );
   const counts = useApi<Page>(`/requests/${id}/items?ui_revision=${revision}`);
   // The same list the attachments panel loads, so the count costs no extra request.
   const files = useApi<Page>(`/files?entity_type=request&entity_id=${id}&page_size=100`);
   const [filesOpen, setFilesOpen] = useState(false);
   const refresh = () => {
     request.refresh();
+    reductions.refresh();
     counts.refresh();
     setRevision((v) => v + 1);
   };
@@ -87,6 +93,16 @@ export function RequestDetail() {
   if (request.error) return <ErrorBox error={request.error} retry={request.refresh} />;
   if (!request.data) return null;
   const row = request.data;
+  const reductionVisible =
+    tab === 'price-reductions' ||
+    (reductions.data?.items || []).some((item) =>
+      ['approved', 'awaiting_price_reduction', 'completed'].includes(String(item.status)),
+    );
+  const visibleTabs = [
+    ...tabs.slice(0, 4),
+    ...(reductionVisible ? [['price-reductions', 'Запрос на снижение']] : []),
+    ...tabs.slice(4),
+  ];
   const sourceColumns = (row.source_columns || []) as string[];
   return (
     <>
@@ -113,7 +129,7 @@ export function RequestDetail() {
         }
       />
       <nav className="tabs" aria-label="Разделы заявки">
-        {tabs.map(([key, title]) => (
+        {visibleTabs.map(([key, title]) => (
           <button
             key={key}
             className={tab === key ? 'active' : ''}
@@ -170,7 +186,7 @@ export function RequestDetail() {
             description="Откройте этап, чтобы перейти к связанным записям."
           >
             <div className="workflow-links">
-              {tabs.slice(2, 8).map(([key, title], i) => (
+              {visibleTabs.slice(2, 8).map(([key, title], i) => (
                 <button key={key} onClick={() => setParams({ tab: key })}>
                   <span>{String(i + 1).padStart(2, '0')}</span>
                   <strong>{title}</strong>
@@ -338,6 +354,18 @@ export function RequestDetail() {
             setQuoteItemIds(ids);
             setParams({ tab: 'calculations' });
           }}
+          onPriceReduction={(ids) => {
+            setReductionQuoteItemIds(ids);
+            setParams({ tab: 'price-reductions' });
+          }}
+        />
+      )}
+      {tab === 'price-reductions' && (
+        <RequestPriceReductions
+          request={row}
+          launchQuoteItemIds={reductionQuoteItemIds}
+          onLaunchConsumed={() => setReductionQuoteItemIds([])}
+          onChanged={refresh}
         />
       )}
       {tab === 'calculations' && (

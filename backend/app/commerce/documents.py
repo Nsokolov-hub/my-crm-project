@@ -13,13 +13,14 @@ from app.core.config import settings
 from app.core.db import DB
 from app.core.errors import DomainError, error
 from app.core.security import Actor, check_request, has_request_permission, require_permission
-from app.core.service import advisory, audit, check_version, idem, lock, serialize
+from app.core.service import advisory, audit, check_version, idem, lock, prefetch, serialize
 from app.crm.common import party_root
 from app.crm.models import Counterparty, QuoteItem, QuoteSheet, RequestItem, Seller
 from app.crm.models import Request as CRMRequest
 from app.crm.stages import advance_stage
 
 from .calculator import ROUNDING, convert, dec
+from .commerce_summary import calculation_commerce_summary
 from .files import (
     BELARUS_VAT_NOTE,
     PROPOSAL_NOTICE,
@@ -63,6 +64,62 @@ def document_view(document: CommercialDocument) -> dict:
     value["display_number"] = document.snapshot.get("display_number", document.number)
     value["file_name"] = document_file_name(document)
     return value
+
+
+def _invoice_calculation_snapshot(document: CommercialDocument, snapshot: dict) -> dict:
+    """Scale source calculation lines to the quantities issued in this particular invoice."""
+    source = {line.get("line_id"): line for line in snapshot.get("lines", [])}
+    lines = []
+    for issued in document.snapshot.get("lines", []):
+        original = source.get(issued.get("line_id"))
+        quantity = dec(issued.get("quantity") or "0")
+        original_quantity = dec((original or {}).get("quantity") or "0")
+        if not original or not original_quantity:
+            continue
+        factor = quantity / original_quantity
+        line = copy.deepcopy(original)
+        line["quantity"] = str(quantity)
+        for key in ("net", "tax", "total"):
+            if line.get(key) not in (None, ""):
+                line[key] = str(dec(line[key]) * factor)
+        detail = line.get("detail") or {}
+        for key in ("purchase", "purchase_rub", "cost", "profit"):
+            if detail.get(key) not in (None, ""):
+                detail[key] = str(dec(detail[key]) * factor)
+        line["detail"] = detail
+        lines.append(line)
+    return {**snapshot, "totals": {}, "lines": lines}
+
+
+def document_commerce_view(db, user, document: CommercialDocument, access=None) -> dict:
+    """Internal list columns only; the immutable customer snapshot and files stay untouched."""
+    from .financial import RequestAccess, filter_calculation_snapshot
+
+    result = document_view(document)
+    calculation = db.get(Calculation, document.calculation_id) if document.calculation_id else None
+    access = access or RequestAccess(db, user)
+    empty = {
+        "supplier_names": [],
+        "delivery_days": document.snapshot.get("delivery_days"),
+        "profitability_percent": None,
+        "purchase_amount": None,
+        "purchase_currency": None,
+        "sale_amount": format(document.total.quantize(Decimal("0.01")), "f"),
+        "sale_currency": document.currency,
+    }
+    if not calculation:
+        result.update(empty)
+        return result
+    snapshot = filter_calculation_snapshot(db, user, document.request_id, calculation.snapshot, access)
+    if document.kind == "invoice":
+        snapshot = _invoice_calculation_snapshot(document, snapshot)
+    result.update(calculation_commerce_summary(
+        snapshot, access.supplier_name
+    ))
+    # The invoice may be partial: its actual sale always comes from the document, not the full calculation.
+    result["sale_amount"] = format(document.total.quantize(Decimal("0.01")), "f")
+    result["sale_currency"] = document.currency
+    return result
 
 
 def document_file_name(document: CommercialDocument) -> str:
@@ -509,19 +566,23 @@ def issue_invoice(request_id: str, data: InvoiceIn, db: DB, user: Actor):
     )
 
 
+def _document_list(db, user, request_id: str, kind: str):
+    from .financial import RequestAccess
+
+    rows = db.scalars(
+        select(CommercialDocument)
+        .where(CommercialDocument.request_id == request_id, CommercialDocument.kind == kind)
+        .order_by(CommercialDocument.created_at.desc())
+    ).all()
+    prefetch(db, Calculation, (row.calculation_id for row in rows))
+    return rows, RequestAccess(db, user)
+
+
 @router.get("/requests/{request_id}/proposals")
 def list_proposals(request_id: str, db: DB, user: Actor):
     check_request(db, user, request_id)
-    return {
-        "items": [
-            document_view(row)
-            for row in db.scalars(
-                select(CommercialDocument)
-                .where(CommercialDocument.request_id == request_id, CommercialDocument.kind == "proposal")
-                .order_by(CommercialDocument.created_at.desc())
-            ).all()
-        ]
-    }
+    rows, access = _document_list(db, user, request_id, "proposal")
+    return {"items": [document_commerce_view(db, user, row, access) for row in rows]}
 
 
 @router.get("/requests/{request_id}/invoices")
@@ -529,21 +590,18 @@ def list_invoices(request_id: str, db: DB, user: Actor):
     from .payments import invoice_balance
 
     check_request(db, user, request_id)
+    rows, access = _document_list(db, user, request_id, "invoice")
     return {
         "items": [
             {
-                **document_view(row),
+                **document_commerce_view(db, user, row, access),
                 **(
                     {"paid": "0", "remaining": "0", "payment_status": "cancelled"}
                     if row.status == "cancelled"
                     else invoice_balance(db, row)
                 ),
             }
-            for row in db.scalars(
-                select(CommercialDocument)
-                .where(CommercialDocument.request_id == request_id, CommercialDocument.kind == "invoice")
-                .order_by(CommercialDocument.created_at.desc())
-            ).all()
+            for row in rows
         ]
     }
 

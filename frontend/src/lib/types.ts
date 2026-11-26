@@ -60,3 +60,14 @@ export type Column<T = Entity> = {
   render?: (row: T) => React.ReactNode;
   sortable?: boolean;
 };
+
+/** List-only commercial metrics. Null means that a value is unavailable or hidden by access rights. */
+export type CommerceSummary = Entity & {
+  supplier_names?: string[] | null;
+  delivery_days?: number | null;
+  profitability_percent?: string | number | null;
+  purchase_amount?: string | number | null;
+  purchase_currency?: string | null;
+  sale_amount?: string | number | null;
+  sale_currency?: string | null;
+};

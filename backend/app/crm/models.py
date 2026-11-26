@@ -297,6 +297,12 @@ class QuoteItem(Entity):
     valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     source_request_item_id: Mapped[str] = mapped_column(ForeignKey('request_items.id'))
     price_source_id: Mapped[str | None] = mapped_column(ForeignKey('quote_items.id'))
+    # A price-reduction import creates a new row and supersedes, never rewrites, the old quote.
+    previous_id: Mapped[str | None] = mapped_column(ForeignKey('quote_items.id'), index=True, unique=True)
+    price_reduction_id: Mapped[str | None] = mapped_column(
+        ForeignKey('price_reduction_requests.id'), index=True
+    )
+    archive_status: Mapped[str] = mapped_column(String(20), default='active', server_default='active')
     author_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
 
 

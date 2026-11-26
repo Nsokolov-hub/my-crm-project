@@ -211,16 +211,17 @@ def calculate_itemized(
     wave_existing_quantity: Decimal = Decimal("0"),
     wave_existing_components: dict[str, Decimal] | None = None,
     wave_existing_selections: list[dict] | None = None,
+    wave_existing_share: Decimal = Decimal("1"),
 ) -> dict:
     with localcontext() as context:
         context.prec = 48
         return _calculate_itemized(profile, selections, expenses, rates, internal_adjustment or {},
                                    payment_terms or {}, wave_existing_quantity,
-                                   wave_existing_components or {}, wave_existing_selections or [])
+                                   wave_existing_components or {}, wave_existing_selections or [], wave_existing_share)
 
 
 def _calculate_itemized(profile, selections, expenses, rates, internal_adjustment, payment_terms,
-                        wave_existing_quantity, wave_existing_components, wave_existing_selections):
+                        wave_existing_quantity, wave_existing_components, wave_existing_selections, wave_existing_share):
     expenses = normalize_logistics_expenses(expenses)
     validate_itemized_profile(profile)
     rounding = profile.get("rounding", "half_up")
@@ -229,8 +230,11 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     if not selections:
         error("SELECTION_REQUIRED", "Выберите хотя бы одну позицию квоты", field="selections")
     wave_existing_quantity = dec(wave_existing_quantity)
+    wave_existing_share = dec(wave_existing_share)
     if wave_existing_quantity < 0:
         error("WAVE_QUANTITY", "Количество в волне не может быть отрицательным")
+    if not 0 < wave_existing_share <= 1:
+        error("WAVE_QUANTITY", "Доля ранее принятых позиций в сценарии должна быть от 0 до 1")
     ids = [selection["quote_item"]["id"] for selection in selections]
     all_ids = ids + [selection["quote_item"]["id"] for selection in wave_existing_selections]
     if len(all_ids) != len(set(all_ids)):
@@ -238,7 +242,7 @@ def _calculate_itemized(profile, selections, expenses, rates, internal_adjustmen
     fx = _rate_map(rates, selections)
     rows = [_position(profile, selection, index, fx, rounding)
             for index, selection in enumerate([*selections, *wave_existing_selections])]
-    wave = _Wave(rows, set(ids), wave_existing_quantity, wave_existing_components)
+    wave = _Wave(rows, set(ids), wave_existing_quantity, wave_existing_components, wave_existing_share)
     ledger = _ExpenseLedger(wave, fx, rounding)
 
     names = [expense["name"].strip() for expense in expenses]
@@ -319,16 +323,17 @@ class _Wave:
     expenses and of the customs fee as these are spread.
     """
 
-    def __init__(self, rows, selected_ids, existing_quantity, existing_components):
+    def __init__(self, rows, selected_ids, existing_quantity, existing_components, existing_share=Decimal("1")):
         self.rows, self.selected_ids, self.existing_quantity = rows, selected_ids, existing_quantity
+        self.existing_basis_quantity = existing_quantity * existing_share
         self.selected_rows = [row for row in rows if row["id"] in selected_ids]
         # The pieces of the proposal, and those of them that ship (the client may take fewer, see `_spread`).
         self.offered_quantity = sum(row["quantity"] for row in self.selected_rows)
         self.selected_quantity = sum(row["quantity"] * row["share"] for row in self.selected_rows)
         self.forecast_quantity = sum(row["quantity"] for row in rows if row["source"].get("_forecast"))
         peer_quantity = sum(row["quantity"] * row["share"] for row in rows if row["id"] not in selected_ids)
-        self.total_quantity = self.selected_quantity + peer_quantity + existing_quantity
-        if any(row["share"] != 1 for row in rows if row["id"] not in selected_ids):
+        self.total_quantity = self.selected_quantity + peer_quantity + self.existing_basis_quantity
+        if existing_share != 1 or any(row["share"] != 1 for row in rows if row["id"] not in selected_ids):
             # A scenario may scale existing positions by a repeating ratio. Keep its displayed denominator
             # at quantity precision instead of exposing e.g. 9.9999999999999999999999999996 pieces.
             self.total_quantity = self.total_quantity.quantize(Decimal("0.000001"))
@@ -349,8 +354,8 @@ class _ExpenseLedger:
     def shared_by_quantity(self, amount: Decimal) -> tuple[dict[str, Decimal], Decimal]:
         rows = self.wave.rows
         bases = {row["id"]: row["quantity"] for row in rows}
-        if self.wave.existing_quantity:
-            bases["__wave_existing__"] = self.wave.existing_quantity
+        if self.wave.existing_basis_quantity:
+            bases["__wave_existing__"] = self.wave.existing_basis_quantity
         parts = _spread(amount, bases, rows, self.rounding)
         return ({row["id"]: parts[row["id"]] for row in rows},
                 parts.get("__wave_existing__", Decimal("0")))
@@ -513,8 +518,8 @@ def _apply_customs_fee(profile, overrides: dict[str, Decimal], wave: _Wave, roun
     bracket_fee = (_money(_bracket_amount(profile['customs_fee_brackets'], _money(ordinary_basis, rounding), field='customs_fee_brackets'), rounding)
                    if (ordinary_rows or wave.existing_quantity) and not fixed_fee_paid else Decimal('0'))
     fee_bases = {row['id']: row['quantity'] for row in ordinary_rows}
-    if wave.existing_quantity:
-        fee_bases['__wave_existing__'] = wave.existing_quantity
+    if wave.existing_basis_quantity:
+        fee_bases['__wave_existing__'] = wave.existing_basis_quantity
     parts = _spread(bracket_fee, fee_bases, rows, rounding) if fee_bases else {}
     fixed_fee = Decimal('0')
     fixed_parts = {}
@@ -711,6 +716,8 @@ def _priced_line(row, profile, rules, terms: _Terms, selected_ids, rounding) -> 
             "name": name, "article": source["nomenclature"].get("article"),
             "manufacturer": source["nomenclature"].get("manufacturer"),
             "cas": source["nomenclature"].get("cas"), "packaging": packing,
+            "storage_temperature": source["nomenclature"].get("storage_temperature"),
+            "transport_hazard": source["nomenclature"].get("transport_hazard"),
         },
         "description": f"{name} {packing}", "packing": packing,
         "supplier_id": quote["supplier_id"], "product_group": source["product_group"],

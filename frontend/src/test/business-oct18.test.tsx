@@ -67,10 +67,10 @@ it('repeats the wave assignment on the current request version when only the ver
     </MemoryRouter>,
   );
   const picker = screen.getByLabelText('Волна поставки');
-  await waitFor(() =>
-    expect(within(picker).getByRole('option', { name: /Волна new/ })).toBeVisible(),
-  );
-  fireEvent.change(picker, { target: { value: 'new' } });
+  fireEvent.click(picker);
+  const dialog = await screen.findByRole('dialog', { name: 'Выбор волны поставки' });
+  fireEvent.click(await within(dialog).findByRole('button', { name: /Волна new/ }));
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Выбрать волну' }));
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить волну' }));
 
   await waitFor(() => expect(calls('/requests/request/wave')).toHaveLength(2));

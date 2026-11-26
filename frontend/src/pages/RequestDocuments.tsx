@@ -7,6 +7,7 @@ import { RecordForm } from '../components/Form';
 import { LineCommand } from '../components/LineCommand';
 import { Badge, Button, DataTable, DetailPairs, ErrorBox, Modal } from '../components/ui';
 import { download } from '../lib/api';
+import { commerceColumns } from '../lib/calculations';
 import { date, decimal, nowLocal, today } from '../lib/format';
 import { useApi } from '../lib/hooks';
 import type { Entity, Field, Page } from '../lib/types';
@@ -49,7 +50,7 @@ export function RequestDocuments({
           : String(r.number),
     },
     { key: 'status', label: 'Статус', render: (r: Entity) => <Badge value={r.status} /> },
-    { key: 'total', label: 'Сумма', render: (r: Entity) => `${decimal(r.total)} ${r.currency}` },
+    ...commerceColumns(),
     { key: 'created_at', label: 'Выпущен', render: (r: Entity) => date(r.created_at) },
     {
       key: 'file',

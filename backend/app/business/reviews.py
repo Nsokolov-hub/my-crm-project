@@ -31,7 +31,7 @@ from .models import CalendarEntry, SupplierOrderLine, WorkflowReview
 router = APIRouter(tags=["Платёжный календарь и заказы поставщикам"])
 
 
-def submit_review(db, user, kind, entity, title, snapshot, request_id=None):
+def submit_review(db, user, kind, entity, title, snapshot, request_id=None, reviewer_id=None):
     old = db.scalar(
         select(WorkflowReview).where(
             WorkflowReview.kind == kind,
@@ -41,7 +41,8 @@ def submit_review(db, user, kind, entity, title, snapshot, request_id=None):
     )
     if old:
         return old
-    reviewers = managers(db)
+    reviewers = [db.get(type(user), reviewer_id)] if reviewer_id else managers(db)
+    reviewers = [reviewer for reviewer in reviewers if reviewer and reviewer.active]
     if not reviewers:
         error("MANAGER_REQUIRED", "Назначьте руководителя с правом принятия решений")
     row = WorkflowReview(
@@ -50,6 +51,7 @@ def submit_review(db, user, kind, entity, title, snapshot, request_id=None):
         source_version=entity.version,
         title=title[:250],
         submitted_by=user.id,
+        reviewer_id=reviewer_id,
         snapshot=snapshot,
         request_id=request_id,
     )
@@ -61,7 +63,10 @@ def submit_review(db, user, kind, entity, title, snapshot, request_id=None):
 
             if not db.scalar(select(Task.id).where(Task.id == entity.id, task_predicate(db, target))):
                 continue
-        if not request_id or has_request_permission(db, target, request_id, "approvals.decide"):
+        allowed = has_request_permission(
+            db, target, request_id, "requests.read" if reviewer_id else "approvals.decide"
+        ) if request_id else True
+        if allowed:
             notify(db, target.id, f"review:{row.id}", title[:250], "workflow_review", row.id)
     audit(db, user, "workflow_review", row.id, "submitted", after=serialize(row))
     return row
@@ -128,7 +133,10 @@ class ReviewDecision(VersionCommand):
 def reviews(db: DB, user: Actor, status: str | None = None):
     query = select(WorkflowReview)
     if not can(db, user, "approvals.decide"):
-        query = query.where(WorkflowReview.submitted_by == user.id)
+        query = query.where(or_(
+            WorkflowReview.submitted_by == user.id,
+            WorkflowReview.reviewer_id == user.id,
+        ))
     query = query.where(
         or_(
             WorkflowReview.request_id.is_(None),
@@ -155,18 +163,32 @@ def reviews(db: DB, user: Actor, status: str | None = None):
     )
     if status:
         query = query.where(WorkflowReview.status == status)
-    return page(db, query.order_by(WorkflowReview.created_at.desc()), 1, 100)
+    result = page(db, query.order_by(WorkflowReview.created_at.desc()), 1, 100)
+    global_decision = can(db, user, "approvals.decide")
+    for item in result["items"]:
+        item["can_decide"] = (
+            item.get("reviewer_id") == user.id
+            or (not item.get("reviewer_id") and global_decision)
+        ) and item.get("status") == "pending"
+    return result
 
 
 @router.post("/workflow-approvals/{review_id}/decision")
 def review_decision(review_id: str, data: ReviewDecision, db: DB, user: Actor):
-    require_permission(db, user, "approvals.decide")
+    assigned = db.get(WorkflowReview, review_id)
+    if assigned and assigned.reviewer_id:
+        if assigned.reviewer_id != user.id:
+            error("NOT_FOUND", "Согласование недоступно", 404)
+    else:
+        require_permission(db, user, "approvals.decide")
 
     def operation():
         row = lock(db, WorkflowReview, review_id)
         check_version(row, data.version)
+        if row.reviewer_id and row.reviewer_id != user.id:
+            error("NOT_FOUND", "Согласование недоступно", 404)
         if row.request_id:
-            check_request(db, user, row.request_id, "approvals.decide")
+            check_request(db, user, row.request_id, "requests.read" if row.reviewer_id else "approvals.decide")
         if row.status != "pending":
             error("REVIEW_STATE", "По этому согласованию уже принято решение", 409)
         if row.kind == "calculation":
@@ -200,6 +222,10 @@ def review_decision(review_id: str, data: ReviewDecision, db: DB, user: Actor):
             task.version += 1
         row.status, row.reason, row.decided_by, row.decided_at = data.decision, data.reason, user.id, utcnow()
         row.version += 1
+        if row.kind in ("price_reduction_leader", "price_reduction_manager"):
+            from .price_reductions import process_reduction_decision
+
+            process_reduction_decision(db, user, row, data.decision)
         notify(
             db,
             row.submitted_by,

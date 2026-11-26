@@ -155,7 +155,7 @@ def visible_mails(db, user, date_from: date | None, date_to: date | None, suppli
     start, finish = period(date_from, date_to)
     query = select(SupplierMail).where(
         SupplierMail.request_id.in_(select(Request.id).where(request_predicate(db, user), Request.is_test.is_(False))),
-        SupplierMail.sent_at >= start, SupplierMail.sent_at < finish)
+        SupplierMail.sent_at >= start, SupplierMail.sent_at < finish, SupplierMail.kind == "rfq")
     if supplier_id:
         query = query.where(SupplierMail.supplier_id == supplier_id)
     return list(db.scalars(query)), start, finish
@@ -299,7 +299,9 @@ def request_responses(request_id: str, db: DB, user: Actor):
     show_price = has_request_permission(db, user, request_id, "finance.purchase.read")
     rates = profile_rates(db)
     quotes = latest_quotes(db, request_id)
-    mails = list(db.scalars(select(SupplierMail).where(SupplierMail.request_id == request_id)))
+    mails = list(db.scalars(select(SupplierMail).where(
+        SupplierMail.request_id == request_id, SupplierMail.kind == "rfq"
+    )))
     responses = Responses(db, mails)
     suppliers = prefetch(db, Counterparty, (mail.supplier_id for mail in mails))
     latest: dict[str, SupplierMail] = {}

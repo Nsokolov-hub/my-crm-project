@@ -746,6 +746,8 @@ export function Notifications() {
   }
   function target(row: Entity) {
     if (row.entity_type === 'workflow_review' || row.entity_type === 'payment') return '/approvals';
+    if (row.entity_type === 'price_reduction')
+      return `/requests/${row.entity_id}?tab=price-reductions`;
     if (row.entity_type === 'calendar_entry') return '/payment-calendar';
     if (row.entity_type === 'employee_absence') return '/tasks';
     if (row.entity_type === 'site_request') return `/site-requests?id=${row.entity_id}`;

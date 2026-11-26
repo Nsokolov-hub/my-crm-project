@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from . import (
     absences,
     calendar,
+    price_reductions,
     reports,
     reviews,
     supplier_mail,
@@ -14,6 +15,6 @@ from . import (
 )
 
 router = APIRouter()
-for domain in (calendar, reviews, absences, supplier_orders, supplier_mail, supplier_stats, supplier_prices,
-               reports):
+for domain in (calendar, reviews, price_reductions, absences, supplier_orders, supplier_mail, supplier_stats,
+               supplier_prices, reports):
     router.include_router(domain.router)

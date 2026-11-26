@@ -55,11 +55,13 @@ const itemFields: Record<string, string> = {
 export function TableImportDialog({
   requestId,
   kind,
+  priceReductionId,
   onClose,
   onSuccess,
 }: {
   requestId: string;
   kind: 'items' | 'quotes';
+  priceReductionId?: string;
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -156,6 +158,7 @@ export function TableImportDialog({
       const body = new FormData();
       body.append('file', file);
       body.append('kind', kind);
+      if (priceReductionId) body.append('price_reduction_id', priceReductionId);
       body.append('mapping', JSON.stringify(mapping));
       const result = await api<Batch>(`/requests/${requestId}/table-imports/preview`, {
         method: 'POST',
@@ -189,7 +192,13 @@ export function TableImportDialog({
   }
   return (
     <Modal
-      title={kind === 'quotes' ? 'Загрузить квоты из Excel' : 'Загрузить таблицу заявки'}
+      title={
+        priceReductionId
+          ? 'Загрузить цены со скидкой'
+          : kind === 'quotes'
+            ? 'Загрузить квоты из Excel'
+            : 'Загрузить таблицу заявки'
+      }
       wide
       onClose={() => {
         if (!busy && !confirm.busy && !transport.busy) onClose();
@@ -214,8 +223,10 @@ export function TableImportDialog({
             variant="secondary"
             onClick={() =>
               void download(
-                `/requests/${requestId}/quote-import/template.xlsx`,
-                'Шаблон_квот.xlsx',
+                `/requests/${requestId}/quote-import/template.xlsx${
+                  priceReductionId ? `?price_reduction_id=${priceReductionId}` : ''
+                }`,
+                priceReductionId ? 'Шаблон_снижения_цен.xlsx' : 'Шаблон_квот.xlsx',
               ).catch(setError)
             }
           >

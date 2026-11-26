@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from datetime import timedelta, timezone
-from decimal import ROUND_CEILING, Decimal
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Query
@@ -125,9 +125,23 @@ def quote_item_view(db: Session, row: QuoteItem, show_purchase: bool = True) -> 
         'expired': aware_utc(row.valid_until) <= utcnow(),
         'extra_freight': extra_freight_view(sheet.extra_freight, show_purchase),
     })
+    previous = db.get(QuoteItem, row.previous_id) if row.previous_id else None
+    if previous:
+        discount = previous.unit_price - row.unit_price
+        value.update({
+            'previous_unit_price': str(previous.unit_price),
+            'discount_amount': str(discount),
+            'discount_percent': str((discount / previous.unit_price * 100).quantize(
+                Decimal('0.01'), rounding=ROUND_HALF_UP
+            )) if previous.unit_price else None,
+        })
+    else:
+        value.update(previous_unit_price=None, discount_amount=None, discount_percent=None)
     if not show_purchase:
         value.pop('unit_price', None)
         value.pop('price_source_id', None)
+        for key in ('previous_unit_price', 'discount_amount', 'discount_percent'):
+            value.pop(key, None)
     return value
 
 
@@ -140,6 +154,7 @@ def prefetch_quote_relations(db: Session, rows: list[QuoteItem]) -> None:
     prefetch(db, Currency, (row.currency_id for row in rows))
     prefetch(db, Counterparty, (row.supplier_id for row in rows))
     prefetch(db, RequestItem, (row.source_request_item_id for row in rows))
+    prefetch(db, QuoteItem, (row.previous_id for row in rows))
 
 
 def quote_item_views(db: Session, rows: list[QuoteItem], show_purchase: bool = True) -> list[dict[str, Any]]:

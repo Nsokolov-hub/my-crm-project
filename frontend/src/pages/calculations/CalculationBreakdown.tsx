@@ -1,6 +1,11 @@
 import { useAuth } from '../../app/Auth';
 import { DataTable, DetailPairs } from '../../components/ui';
-import { displayCalculationMetrics } from '../../lib/calculations';
+import {
+  displayCalculationMetrics,
+  positionsLabel,
+  selectedTransportSummary,
+  visibleTransportHazard,
+} from '../../lib/calculations';
 import { date, decimal, metric } from '../../lib/format';
 import type { Entity } from '../../lib/types';
 import { detailLabels } from './model';
@@ -16,6 +21,7 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
     lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
   const allocations = (snapshot.expense_allocations || []) as Entity[];
   const rates = (snapshot.rates || []) as Entity[];
+  const transport = selectedTransportSummary(lines.map((line) => (line.product || {}) as Entity));
   const rows = [
     ...lines.map((line) => ({ ...line, id: String(line.line_id) })),
     ...(Number(distribution.existing_quantity || 0) > 0
@@ -43,6 +49,21 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
           </span>
         )}
       </div>
+      {lines.length > 0 && (
+        <div className="transport-summary" aria-label="Транспортные условия расчёта">
+          <strong>Транспортные условия</strong>
+          {transport.hazards.map((group) => (
+            <span key={`hazard-${group.value}`}>
+              Опасность {group.value}: {positionsLabel(group.count)}
+            </span>
+          ))}
+          {transport.temperatures.map((group) => (
+            <span key={`temperature-${group.value}`}>
+              Температура {group.value}: {positionsLabel(group.count)}
+            </span>
+          ))}
+        </div>
+      )}
       <p>
         Волна: {String(wave.number || '—')}. База распределения общих расходов волны:{' '}
         {decimal(distribution.total_quantity || 0)} шт. В КП {decimal(offeredQuantity)} шт.; ранее
@@ -91,6 +112,17 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
                   {String((row.product as Entity | undefined)?.manufacturer || '—')}
                 </span>
                 <small>Арт. {String((row.product as Entity | undefined)?.article || '—')}</small>
+                {Boolean(row.product) && (
+                  <small>
+                    Температурный режим:{' '}
+                    {String((row.product as Entity).storage_temperature || 'не указан')}
+                  </small>
+                )}
+                {visibleTransportHazard((row.product as Entity | undefined)?.transport_hazard) && (
+                  <small>
+                    Опасность: {visibleTransportHazard((row.product as Entity).transport_hazard)}
+                  </small>
+                )}
               </span>
             ),
           },

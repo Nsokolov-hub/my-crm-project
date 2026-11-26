@@ -36,6 +36,18 @@ def columns_duty_profile(customs_fee_overrides=()):
     return profile
 
 
+def test_new_snapshot_product_keeps_storage_temperature_and_transport_hazard():
+    profile = itemized_profile()
+    profile["import_country_id"] = "country-1"
+    selection = quote_selection("sample", "reference_standards", "1", "100", "1")
+    selection["nomenclature"].update(storage_temperature="2-8", transport_hazard="UN1234")
+
+    result = calculate_itemized(profile, [selection], [], USD_RATE)
+
+    assert result["lines"][0]["product"]["storage_temperature"] == "2-8"
+    assert result["lines"][0]["product"]["transport_hazard"] == "UN1234"
+
+
 def test_wave_quantity_shares_fixed_expenses_and_fee():
     profile = itemized_profile()
     profile["import_country_id"] = "country-1"

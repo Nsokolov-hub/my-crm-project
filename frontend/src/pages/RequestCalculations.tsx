@@ -4,14 +4,21 @@ import { useAuth } from '../app/Auth';
 import { Collection } from '../components/Collection';
 import { Badge, Button, DataTable, DetailPairs, ErrorBox, Modal } from '../components/ui';
 import { api, ApiError } from '../lib/api';
-import { displayCalculationMetrics } from '../lib/calculations';
+import {
+  commerceColumns,
+  displayCalculationMetrics,
+  positionsLabel,
+  selectedTransportSummary,
+  visibleTransportHazard,
+} from '../lib/calculations';
 import { normalizeLogisticsExpense } from '../lib/logistics';
 import { date, decimal, display, label, metric } from '../lib/format';
 import { useApi, useCommand, useDirtyProtection } from '../lib/hooks';
 import type { Entity, Page } from '../lib/types';
-import { waveKindLabel, waveWeekLabel } from '../lib/waves';
+import { waveKindLabel } from '../lib/waves';
 import { CalculationBreakdown } from './calculations/CalculationBreakdown';
 import { SalePriceHistory } from './calculations/SalePriceHistory';
+import { WavePickerDialog } from './calculations/WavePicker';
 import {
   airportPickup,
   currencyOf,
@@ -52,6 +59,38 @@ function fixedFeeGroups(profile: Entity | undefined, rows: Entity[]): FixedFeeGr
   }
   return result;
 }
+export function QuoteTransport({ row }: { row: Entity }) {
+  const hazard = visibleTransportHazard(row.transport_hazard);
+  return (
+    <small className="calculation-transport">
+      <span>
+        Температурный режим: {String(row.storage_temperature ?? '').trim() || 'не указан'}
+      </span>
+      {hazard && <span>Опасность: {hazard}</span>}
+    </small>
+  );
+}
+
+export function TransportSummary({ rows }: { rows: Entity[] }) {
+  const summary = selectedTransportSummary(rows);
+  if (!rows.length) return null;
+  return (
+    <div className="transport-summary" aria-label="Транспортная сводка">
+      <strong>Транспортные условия выбранных позиций</strong>
+      {summary.hazards.map((group) => (
+        <span key={`hazard-${group.value}`}>
+          {group.value}: {positionsLabel(group.count)}
+        </span>
+      ))}
+      {summary.temperatures.map((group) => (
+        <span key={`temperature-${group.value}`}>
+          {group.value}: {positionsLabel(group.count)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 type FreightNote = {
   key: string;
   quote: string;
@@ -150,11 +189,11 @@ function requestedQuantity(row: Entity): string {
 
 type WaveChooser = {
   value: string;
-  options: React.ReactNode;
+  wave?: Entity;
   canChange: boolean;
   busy: boolean;
   error: unknown;
-  onChange: (waveId: string) => void;
+  onOpen: () => void;
 };
 function CalculationEditor({
   request,
@@ -695,17 +734,32 @@ function CalculationEditor({
               </div>
             </dl>
             {wave && (
-              <label className="field calculation-wave">
+              <div className="field calculation-wave">
                 <span>Волна расчёта</span>
-                <select
+                <Button
+                  type="button"
+                  variant="secondary"
                   aria-label="Волна расчёта"
                   value={wave.value}
-                  disabled={!wave.canChange || wave.busy}
-                  onChange={(event) => wave.onChange(event.target.value)}
+                  disabled={wave.busy}
+                  title={
+                    !wave.canChange
+                      ? 'Просмотр волн; изменение требует права waves.write'
+                      : undefined
+                  }
+                  onClick={wave.onOpen}
                 >
-                  {wave.options}
-                </select>
-              </label>
+                  {wave.wave
+                    ? `${waveKindLabel(wave.wave)} · ${String(wave.wave.number)}`
+                    : 'Выбрать волну'}
+                </Button>
+                {wave.wave && (
+                  <small>
+                    {String(wave.wave.supplier_name || 'Поставщик не указан')}
+                    {wave.wave.archived ? ' · в архиве' : ''}
+                  </small>
+                )}
+              </div>
             )}
           </div>
           {wave && <ErrorBox error={wave.error} />}
@@ -883,6 +937,7 @@ function CalculationEditor({
                 </span>
               )}
             </div>
+            <TransportSummary rows={selectedRows} />
             <DataTable<Entity>
               className="calculation-positions"
               rows={rows}
@@ -963,6 +1018,7 @@ function CalculationEditor({
                         {decimal(row.unit_price)} {currencyOf(row)} за шт. · Срок:{' '}
                         {String(row.delivery_days ?? '—')} дней
                       </small>
+                      {Boolean(selections[row.id]) && <QuoteTransport row={row} />}
                       {row.id === serverSelectionId && (
                         <small className="field-error">{serverError?.message}</small>
                       )}
@@ -2133,6 +2189,8 @@ export function RequestCalculations({
 }) {
   const auth = useAuth();
   const waves = useApi<Page>('/waves?open=true');
+  const pickerQuotes = useApi<Page>(`/requests/${request.id}/quote-items?all=true`);
+  const pickerCounterparties = useApi<Page>('/counterparties?kind=supplier&page_size=100');
   const waveCommand = useCommand();
   const [waveId, setWaveId] = useState(String(request.wave_id || ''));
   const [assignedWaveId, setAssignedWaveId] = useState(String(request.wave_id || ''));
@@ -2197,41 +2255,28 @@ export function RequestCalculations({
     openWaves.find((wave) => wave.id === assignedWaveId) ||
     (missingWave.data?.id === assignedWaveId ? missingWave.data : undefined);
   const workingWaves = (assignedWave?.working_waves || []) as Entity[];
-  const waveOptions = (
-    <>
-      <option value="">Выберите волну</option>
-      {assignedWave && !openWaves.includes(assignedWave) && (
-        <option value={assignedWave.id}>
-          {waveKindLabel(assignedWave)} · {String(assignedWave.number)} ·{' '}
-          {assignedWave.archived ? 'в архиве' : display(assignedWave.status)}
-        </option>
-      )}
-      {(['plan', 'work'] as const).map((kind) => {
-        const rows = openWaves.filter((wave) => (wave.kind || 'work') === kind);
-        return rows.length > 0 ? (
-          <optgroup key={kind} label={kind === 'plan' ? 'Плановые' : 'Рабочие'}>
-            {rows.map((wave) => (
-              <option key={wave.id} value={wave.id}>
-                {String(wave.number)} · {String(wave.supplier_name || 'Поставщик не указан')} ·{' '}
-                {waveWeekLabel(wave, 'departure')}
-              </option>
-            ))}
-          </optgroup>
-        ) : null;
-      })}
-    </>
-  );
+  const availableWaves =
+    assignedWave && !openWaves.includes(assignedWave) ? [...openWaves, assignedWave] : openWaves;
+  const shownWave = availableWaves.find((wave) => wave.id === waveId);
   // Business remark of 5 November 2026: the wave is chosen in the calculation window too, next to the volume.
-  async function chooseWaveInEditor(target: string) {
+  async function chooseWaveInEditor(target: string): Promise<boolean> {
     const before = waveId;
     setWaveId(target);
-    if (!(await saveWave(target))) setWaveId(before);
+    const saved = await saveWave(target);
+    if (!saved) setWaveId(before);
+    return saved;
   }
   const [editing, setEditing] = useState(launchQuoteItemIds.length > 0);
   const [initialIds, setInitialIds] = useState(launchQuoteItemIds);
   const [selected, setSelected] = useState<Entity>();
   const [previous, setPrevious] = useState<Entity>();
   const [revision, setRevision] = useState(0);
+  const [wavePicker, setWavePicker] = useState<'list' | 'editor'>();
+  async function chooseWaveFromPicker(target: string): Promise<boolean> {
+    if (wavePicker === 'editor') return chooseWaveInEditor(target);
+    setWaveId(target);
+    return true;
+  }
   function copy(row: Entity) {
     void withSavedWave(() => openCopy(row));
   }
@@ -2269,14 +2314,24 @@ export function RequestCalculations({
         </div>
         <ErrorBox error={waveCommand.error || waves.error} />
         <div className="inline-actions">
-          <select
+          <Button
+            type="button"
+            variant="secondary"
             aria-label="Волна поставки"
             value={waveId}
-            disabled={!auth.can('waves.write') || editing}
-            onChange={(event) => setWaveId(event.target.value)}
+            disabled={editing}
+            onClick={() => setWavePicker('list')}
           >
-            {waveOptions}
-          </select>
+            {shownWave
+              ? `${waveKindLabel(shownWave)} · ${String(shownWave.number)}`
+              : 'Выбрать волну'}
+          </Button>
+          {shownWave && (
+            <span className="muted">
+              {String(shownWave.supplier_name || 'Поставщик не указан')} ·{' '}
+              {shownWave.archived ? 'в архиве' : display(shownWave.status)}
+            </span>
+          )}
           {auth.can('waves.write') && (
             <Button
               type="button"
@@ -2342,6 +2397,7 @@ export function RequestCalculations({
               ),
           },
           { key: 'created_at', label: 'Записан', render: (row) => date(row.created_at, true) },
+          ...commerceColumns(),
           {
             key: 'wave_stale',
             label: 'Расходы волны',
@@ -2453,17 +2509,31 @@ export function RequestCalculations({
           initialIds={initialIds}
           wave={{
             value: assignedWaveId,
-            options: waveOptions,
+            wave: assignedWave,
             canChange: auth.can('waves.write'),
             busy: waveCommand.busy,
             error: waveCommand.error,
-            onChange: (target) => void chooseWaveInEditor(target),
+            onOpen: () => setWavePicker('editor'),
           }}
           onClose={closeEditor}
           onSuccess={() => {
             closeEditor();
             setRevision((value) => value + 1);
           }}
+        />
+      )}
+      {wavePicker && (
+        <WavePickerDialog
+          waves={availableWaves}
+          quoteItems={pickerQuotes.data?.items || []}
+          counterparties={pickerCounterparties.data?.items || []}
+          value={wavePicker === 'editor' ? assignedWaveId : waveId}
+          canWrite={auth.can('waves.write')}
+          busy={waveCommand.busy}
+          loading={pickerQuotes.loading}
+          error={pickerQuotes.error || pickerCounterparties.error}
+          onChoose={chooseWaveFromPicker}
+          onClose={() => setWavePicker(undefined)}
         />
       )}
     </>

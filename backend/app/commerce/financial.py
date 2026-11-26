@@ -30,6 +30,7 @@ from app.crm.models import (
 )
 
 from .calculator import calculate, dec, digest, example_profile, profitability_metrics, validate_profile
+from .commerce_summary import calculation_commerce_summary
 from .itemized import calculate_itemized, fixed_customs_fees, itemized_profile
 from .logistics import normalize_logistics_expenses
 from .models import (
@@ -88,6 +89,15 @@ class RequestAccess:
 
     def __init__(self, db, user):
         self.db, self.user, self.answers = db, user, {}
+        self.suppliers: dict[str, str | None] = {}
+
+    def supplier_name(self, supplier_id: str) -> str | None:
+        """Resolve legacy snapshot suppliers once per response, not once per calculation version."""
+        if supplier_id not in self.suppliers:
+            self.suppliers[supplier_id] = self.db.scalar(
+                select(Counterparty.name).where(Counterparty.id == supplier_id)
+            )
+        return self.suppliers[supplier_id]
 
     def allows(self, request_id, permission) -> bool:
         key = (request_id, permission)
@@ -289,6 +299,9 @@ def calculation_view(db, user, calculation: Calculation, context: CalculationLis
                 result["wave_stale"] = True
                 result["wave_recalculation_error"] = problem
         result["snapshot"] = filter_calculation_snapshot(db, user, calculation.request_id, snapshot, context.access)
+        result.update(calculation_commerce_summary(
+            result["snapshot"], context.access.supplier_name
+        ))
 
     if not context.access.allows(calculation.request_id, "finance.calculations.read"):
         result.pop("reason", None)
@@ -406,14 +419,33 @@ def wave_selections(db, wave_id: str, *, exclude_request_id=None, exclude_quote_
     return result, unknown_quantity, {}
 
 
-def forecast_selections(db, wave: Wave, selections: list[dict], targets: dict | None = None) -> list[dict]:
+def _wave_existing_group(selections: list[dict], existing_quantity) -> str | None:
+    """The only product group an aggregate of unrestorable accepted positions can belong to."""
+    if not dec(existing_quantity):
+        return None
+    groups = {row["product_group"]["id"] for row in selections}
+    if len(groups) != 1:
+        error("WAVE_BASIS_REQUIRED",
+              "Для планового объёма необходимо восстановить товарные группы ранее принятых позиций волны",
+              field="planned_volume")
+    return next(iter(groups))
+
+
+def forecast_selections(db, wave: Wave, selections: list[dict], targets: dict | None = None,
+                        existing_quantity=dec("0"), existing_group_id: str | None = None) -> list[dict]:
     """The planned volume not ordered yet. `targets` replaces the planned pieces of some product groups."""
     quantities = {}
     for row in selections:
         group_id = row["product_group"]["id"]
         quantities[group_id] = quantities.get(group_id, dec("0")) + dec(row["quote_item"]["quantity"])
+    forecasts = db.scalars(select(WaveForecast).where(
+        WaveForecast.wave_id == wave.id, WaveForecast.active.is_(True)
+    )).all()
+    if forecasts and dec(existing_quantity):
+        group_id = existing_group_id or _wave_existing_group(selections, existing_quantity)
+        quantities[group_id] = quantities.get(group_id, dec("0")) + dec(existing_quantity)
     result = []
-    for forecast in db.scalars(select(WaveForecast).where(WaveForecast.wave_id == wave.id, WaveForecast.active.is_(True))):
+    for forecast in forecasts:
         group = db.get(ProductGroup, forecast.product_group_id)
         target = (targets or {}).get(group.id, forecast.target_quantity)
         quantity = max(dec("0"), target - quantities.get(group.id, dec("0")))
@@ -521,9 +553,7 @@ def wave_financial_summary(db, wave_id: str) -> dict:
     selections, unknown_quantity, components = wave_selections(db, wave_id)
     validate_unknown_wave_basis(profile, expenses or [], unknown_quantity)
     real_quantity = sum((dec(row["quote_item"]["quantity"]) for row in selections), unknown_quantity)
-    if unknown_quantity and db.scalar(select(WaveForecast.id).where(WaveForecast.wave_id == wave.id, WaveForecast.active.is_(True))):
-        error("WAVE_BASIS_REQUIRED", "Для прогноза необходимо восстановить группы ранее принятых позиций")
-    selections += forecast_selections(db, wave, selections)
+    selections += forecast_selections(db, wave, selections, existing_quantity=unknown_quantity)
     if not selections:
         from .itemized import _bracket_amount, _money, _rate_map
         fee = _money(_bracket_amount(profile["customs_fee_brackets"], dec("0"), field="customs_fee_brackets"), profile.get("rounding", "half_up"))
@@ -809,6 +839,7 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             error('IMPORT_COUNTRY_REQUIRED', 'Выберите действующую страну ввоза из справочника', field='profile_id')
         wave, planned_volume = None, None
         peer_selections, existing_quantity, existing_components = [], dec('0'), {}
+        existing_share = dec('1')
         wave_expenses, wave_expense_source = None, None
         if not data.divide_wave_expenses:
             if not importing:
@@ -830,21 +861,23 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
                 peer_selections, existing_quantity, existing_components = wave_selections(
                     db, wave.id, exclude_request_id=request_id,
                     replacement_quantities={row["quote_item"]["id"]: dec(row["quote_item"]["quantity"]) for row in selections})
-                if existing_quantity and db.scalar(select(WaveForecast.id).where(WaveForecast.wave_id == wave.id, WaveForecast.active.is_(True))):
-                    error("WAVE_BASIS_REQUIRED", "Для прогноза необходимо восстановить группы ранее принятых позиций")
                 # Business remark of 22 October 2026: requests gathered into a working wave still assembled
                 # share its costs with its orders and with the rest of its plan, as the wave counts itself.
                 volume_targets, extra_volume, planned_volume = calculation_planned_volume(
-                    db, wave, data, selections, peer_selections)
+                    db, wave, data, selections, peer_selections, existing_quantity=existing_quantity)
                 counted = [*selections, *peer_selections]
                 if planned_volume:
-                    calculation_shares(selections, [*counted, *other_plan_orders(db, wave)],
-                                       {**(volume_targets or {}), **(extra_volume or {})}, planned_volume,
-                                       wave_rows=counted)
-                peer_selections += (planned_rest(db, wave, counted, volume_targets)
+                    existing_share = calculation_shares(
+                        selections, [*counted, *other_plan_orders(db, wave)],
+                        {**(volume_targets or {}), **(extra_volume or {})}, planned_volume,
+                        wave_rows=counted, existing_quantity=existing_quantity)
+                peer_selections += (planned_rest(db, wave, counted, volume_targets,
+                                                 existing_quantity=existing_quantity)
                                     if wave.kind == "work" and wave.plan_id
-                                    else forecast_selections(db, wave, counted, volume_targets))
-                peer_selections += manual_forecasts(selections, counted, extra_volume)
+                                    else forecast_selections(db, wave, counted, volume_targets,
+                                                             existing_quantity=existing_quantity))
+                peer_selections += manual_forecasts(selections, counted, extra_volume,
+                                                    existing_quantity=existing_quantity)
             elif data.planned_volume is not None:
                 calculation_planned_volume(db, wave, data, selections)
             wave_expenses, wave_expense_source = latest_wave_expenses(db, wave.id)
@@ -891,6 +924,7 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             wave_existing_quantity=existing_quantity,
             wave_existing_components=existing_components,
             wave_existing_selections=peer_selections,
+            wave_existing_share=existing_share,
         )
         if wave:
             snapshot["wave"] = {"id": wave.id, "number": wave.number, "supplier_id": wave.supplier_id,
@@ -1240,7 +1274,8 @@ def actual_costs(db, wave: Wave, calculations: list[Calculation], profile, expen
         "proposal"
 
 
-def planned_rest(db, wave: Wave, selections: list[dict], targets: dict | None = None) -> list[dict]:
+def planned_rest(db, wave: Wave, selections: list[dict], targets: dict | None = None,
+                 existing_quantity=dec("0")) -> list[dict]:
     """The planned volume not ordered yet, while the wave still takes orders: a working wave shares its costs
     with the rest of its plan, as the proposals priced on the plan did. A closed wave carries them alone."""
     if wave.status not in OPEN_WAVES:
@@ -1248,7 +1283,10 @@ def planned_rest(db, wave: Wave, selections: list[dict], targets: dict | None = 
     plan = wave if wave.kind == "plan" else db.get(Wave, wave.plan_id) if wave.plan_id else None
     if not plan or plan.archived:
         return []
-    return forecast_selections(db, plan, [*selections, *other_plan_orders(db, wave)], targets)
+    current_groups = {row["product_group"]["id"] for row in selections}
+    existing_group_id = next(iter(current_groups)) if dec(existing_quantity) and len(current_groups) == 1 else None
+    return forecast_selections(db, plan, [*selections, *other_plan_orders(db, wave)], targets,
+                               existing_quantity=existing_quantity, existing_group_id=existing_group_id)
 
 
 def other_plan_orders(db, wave: Wave) -> list[dict]:
@@ -1265,13 +1303,20 @@ def other_plan_orders(db, wave: Wave) -> list[dict]:
 
 
 def calculation_shares(selections: list[dict], ordered: list[dict], targets: dict, record: dict,
-                       *, wave_rows: list[dict] | None = None) -> None:
+                       *, wave_rows: list[dict] | None = None, existing_quantity=dec("0")) -> Decimal:
     """Business remark of 3 November 2026: «клиент просит КП на 5 шт., но возьмёт только 3».
 
     The entered volume is the denominator for the scenario, even when it is below the orders already in the
     working wave (remark of 14 November). First reduce this calculation's counted pieces; below the other orders
     reduce every position's counted share proportionally. Offered and allocated quantities stay unchanged.
-    Zero retains its earlier meaning: no additional planned pieces. The snapshot records both quantities."""
+    Zero retains its earlier meaning: no additional planned pieces. The snapshot records both quantities.
+
+    An aggregate of accepted positions without recoverable rows joins the same scenario in an unambiguous
+    one-group wave. Its actual quantity remains unchanged; the returned share scales only its expense basis.
+    """
+    existing_share = dec("1")
+    current_rows = wave_rows if wave_rows is not None else ordered
+    existing_group = _wave_existing_group(current_rows, existing_quantity) if targets else None
     for group_id, target in targets.items():
         own = [row for row in selections if row["product_group"]["id"] == group_id
                and row.get("calculation_type", "IMPORT") == "IMPORT"]
@@ -1282,22 +1327,25 @@ def calculation_shares(selections: list[dict], ordered: list[dict], targets: dic
         peers = [row for row in ordered
                  if row["product_group"]["id"] == group_id and row["quote_item"]["id"] not in own_ids
                  and not row.get("_forecast")]
-        others = sum((dec(row["quote_item"]["quantity"]) for row in peers), dec("0"))
+        aggregate = dec(existing_quantity) if group_id == existing_group else dec("0")
+        others = sum((dec(row["quote_item"]["quantity"]) for row in peers), aggregate)
         if target >= own_quantity + others or target == 0:
             continue
         if target <= others:
             # Sibling working waves consume the common plan, but they are not part of this supply's
             # expense denominator. Only scale positions actually included in this scenario.
-            peers = [row for row in (wave_rows if wave_rows is not None else ordered)
+            peers = [row for row in current_rows
                      if row["product_group"]["id"] == group_id and row["quote_item"]["id"] not in own_ids
                      and not row.get("_forecast")]
-            others = sum((dec(row["quote_item"]["quantity"]) for row in peers), dec("0"))
+            others = sum((dec(row["quote_item"]["quantity"]) for row in peers), aggregate)
             if target >= own_quantity + others:
                 continue
             share = target / (own_quantity + others)
             for row in [*own, *peers]:
                 row["_share"] = str(share)
                 row["_scenario_volume"] = True
+            if aggregate:
+                existing_share = share
             counted = own_quantity * share
         else:
             counted = target - others
@@ -1306,6 +1354,7 @@ def calculation_shares(selections: list[dict], ordered: list[dict], targets: dic
         for entry in record["rows"]:
             if entry["product_group_id"] == group_id:
                 entry.update(offered_quantity=str(own_quantity), counted_quantity=str(counted))
+    return existing_share
 
 
 def calculation_customs_fees(data: CalculationIn, selections: list[dict], profile: dict) -> dict | None:
@@ -1361,7 +1410,8 @@ def planned_volume_rows(db, wave: Wave) -> list[dict]:
     return rows
 
 
-def calculation_planned_volume(db, wave: Wave, data: CalculationIn, selections: list[dict], peers=()) -> tuple:
+def calculation_planned_volume(db, wave: Wave, data: CalculationIn, selections: list[dict], peers=(),
+                               existing_quantity=dec("0")) -> tuple:
     """Business remark of 28 October 2026: the planned volume of the wave is changed by hand inside a
     calculation. It changes only this calculation, never the wave, and is kept only with a comment.
 
@@ -1370,8 +1420,9 @@ def calculation_planned_volume(db, wave: Wave, data: CalculationIn, selections: 
 
     Returns the pieces by product group of the plan, the pieces of groups outside the plan, and what the
     snapshot records."""
-    if data.planned_volume is None:
+    if not data.planned_volume:
         return None, None, None
+    existing_group = _wave_existing_group([*selections, *peers], existing_quantity)
     known = {row["product_group_id"]: row for row in planned_volume_rows(db, wave)}
     for row in selections:
         group = row["product_group"]
@@ -1390,6 +1441,8 @@ def calculation_planned_volume(db, wave: Wave, data: CalculationIn, selections: 
     for row in [*selections, *peers]:
         group_id = row["product_group"]["id"]
         ordered[group_id] = ordered.get(group_id, dec("0")) + dec(row["quote_item"]["quantity"])
+    if existing_group is not None:
+        ordered[existing_group] = ordered.get(existing_group, dec("0")) + dec(existing_quantity)
     changed = {group_id: quantity for group_id, quantity in targets.items()
                if quantity != dec(known[group_id]["wave_quantity"])
                or 0 < quantity < ordered.get(group_id, dec("0"))}
@@ -1411,14 +1464,17 @@ def calculation_planned_volume(db, wave: Wave, data: CalculationIn, selections: 
     return in_plan, extra, record
 
 
-def manual_forecasts(selections: list[dict], counted: list[dict], extra: dict | None) -> list[dict]:
+def manual_forecasts(selections: list[dict], counted: list[dict], extra: dict | None,
+                     existing_quantity=dec("0")) -> list[dict]:
     """Planned pieces of a group outside the plan: the rest of the entered volume, priced and weighed per piece
     like the calculation's first position of that group."""
+    existing_group = _wave_existing_group(counted, existing_quantity) if extra else None
     result = []
     for group_id, target in (extra or {}).items():
         model = next(row for row in selections if row["product_group"]["id"] == group_id)
+        aggregate = dec(existing_quantity) if group_id == existing_group else dec("0")
         ordered = sum((dec(row["quote_item"]["quantity"]) for row in counted
-                       if row["product_group"]["id"] == group_id), dec("0"))
+                       if row["product_group"]["id"] == group_id), aggregate)
         rest = target - ordered
         if rest <= 0:
             continue

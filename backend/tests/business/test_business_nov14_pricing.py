@@ -5,9 +5,10 @@ from decimal import Decimal
 
 import pytest
 
-from app.commerce.financial import calculation_shares
+from app.commerce.financial import calculation_shares, manual_forecasts
 from app.commerce.itemized import calculate_itemized, itemized_profile
-from app.commerce.models import CalculationProfile
+from app.commerce.models import Calculation, CalculationProfile
+from app.core.errors import DomainError
 from tests.business.test_business_oct28 import planned
 from tests.support.business import cmd, issue, peer_request, release, structured, wave_row
 from tests.support.itemized import quote_selection
@@ -206,3 +207,88 @@ def test_working_wave_volume_can_be_smaller_than_its_23_existing_pieces(crm, tar
     assert Decimal(saved["snapshot"]["wave_distribution"]["total_quantity"]) == Decimal(target)
     assert Decimal(wave_row(crm, working_id)["allocations"][0]["quantity"]) == 23
     assert Decimal(wave_row(crm, plan["id"])["forecasts"][0]["target_quantity"]) == 10
+
+
+def test_unrecoverable_existing_wave_rows_join_the_explicit_volume_scenario(crm):
+    req, data, seller, supplier, plan, group_id, item = planned(crm)
+    data["selections"][0]["quantity"] = "45"
+    first = cmd(crm, f"/requests/{req['id']}/calculations", data)
+    _, execution = release(crm, req, first, "45")
+    approval = cmd(crm, f"/requests/{req['id']}/approvals", {
+        "execution_ids": [execution["id"]], "reviewer_id": crm["admin"].id})
+    cmd(crm, f"/approvals/{approval['id']}/decision", {
+        "version": approval["version"], "decision": "approved", "reason": "В работу", "wave_id": plan["id"]})
+    working_id = crm["client"].get(f"/api/v1/requests/{req['id']}").json()["wave_id"]
+    allocations_before = wave_row(crm, working_id)["allocations"]
+
+    # Simulate an old accepted snapshot whose product group cannot be restored. The 45 pieces remain
+    # a quantity aggregate rather than a detailed peer selection.
+    with crm["sessions"].begin() as db:
+        old = db.get(Calculation, first["id"])
+        snapshot = deepcopy(old.snapshot)
+        snapshot["lines"][0]["product_group"] = None
+        old.snapshot = snapshot
+        profile = db.get(CalculationProfile, data["profile_id"])
+        definition = deepcopy(profile.definition)
+        definition["customs_fee_brackets"] = [{"from_amount": "0", "to_amount": None, "fee": "0"}]
+        definition["customs_fee_overrides"] = []
+        profile.definition = definition
+
+    peer, quote = peer_request(crm, seller, supplier, item, working_id)
+    payload = {**data, "request_version": peer["version"],
+               "selections": [{"quote_item_id": quote["id"], "quantity": "4"}],
+               "planned_volume": [{"product_group_id": group_id, "quantity": "9"}],
+               "planned_volume_comment": "Сценарий повторного заказа на девять штук"}
+    preview = cmd(crm, f"/requests/{peer['id']}/calculations/preview", payload)["snapshot"]
+    distribution = preview["wave_distribution"]
+    assert Decimal(distribution["total_quantity"]) == 9
+    assert Decimal(distribution["offered_quantity"]) == 4
+    assert Decimal(distribution["existing_quantity"]) == 45
+    assert Decimal(distribution["forecast_quantity"]) == 0
+    assert Decimal(preview["lines"][0]["quantity"]) == 4
+    assert Decimal(preview["totals"]["international_logistics"]) == Decimal("444.44")
+    assert Decimal(preview["wave"]["planned_volume"]["rows"][0]["offered_quantity"]) == 4
+
+    saved = cmd(crm, f"/requests/{peer['id']}/calculations", {
+        **payload, "expected_wave_digest": distribution["digest"]})["snapshot"]
+    assert Decimal(saved["wave_distribution"]["total_quantity"]) == 9
+    assert Decimal(saved["wave_distribution"]["existing_quantity"]) == 45
+    assert Decimal(saved["wave_distribution"]["forecast_quantity"]) == 0
+    assert Decimal(saved["totals"]["international_logistics"]) == Decimal("444.44")
+    assert wave_row(crm, working_id)["allocations"] == allocations_before
+    assert Decimal(wave_row(crm, plan["id"])["forecasts"][0]["target_quantity"]) == 10
+
+
+def test_aggregate_existing_wave_quantity_keeps_zero_and_overfilled_target_semantics():
+    own = quote_selection("own", "reference_standards", "4", "1000", "1")
+    own["product_group"].update(id="group", name="Стандарты")
+    own["currency_code"] = "RUB"
+    for target, expected_total, expected_forecast in (("0", 49, 0), ("60", 60, 11)):
+        record = {"rows": [{"product_group_id": "group"}]}
+        scenario = deepcopy(own)
+        existing_share = calculation_shares([scenario], [scenario], {"group": Decimal(target)}, record,
+                                            wave_rows=[scenario], existing_quantity=Decimal("45"))
+        assert existing_share == 1
+        assert "_share" not in scenario
+        forecast = manual_forecasts([scenario], [scenario], {"group": Decimal(target)},
+                                    existing_quantity=Decimal("45"))
+        assert sum((Decimal(row["quote_item"]["quantity"]) for row in forecast), Decimal("0")) == expected_forecast
+        profile = itemized_profile()
+        profile.update(import_country_id="RU", customs_fee_overrides=[],
+                       customs_fee_brackets=[{"from_amount": "0", "to_amount": None, "fee": "0"}])
+        result = calculate_itemized(profile, [scenario], [], [], wave_existing_quantity=Decimal("45"),
+                                    wave_existing_selections=forecast, wave_existing_share=existing_share)
+        assert Decimal(result["wave_distribution"]["total_quantity"]) == expected_total
+        assert Decimal(result["wave_distribution"]["existing_quantity"]) == 45
+
+
+def test_aggregate_existing_wave_quantity_rejects_ambiguous_multiple_groups():
+    first = quote_selection("first", "reference_standards", "4", "1000", "1")
+    second = quote_selection("second", "other", "1", "1000", "1")
+    first["product_group"]["id"] = "first-group"
+    second["product_group"]["id"] = "second-group"
+    with pytest.raises(DomainError, match="товарные группы") as raised:
+        calculation_shares([first, second], [first, second], {"first-group": Decimal("9")},
+                           {"rows": [{"product_group_id": "first-group"}]},
+                           wave_rows=[first, second], existing_quantity=Decimal("45"))
+    assert raised.value.code == "WAVE_BASIS_REQUIRED"

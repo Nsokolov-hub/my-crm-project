@@ -677,6 +677,7 @@ export function WorkflowApprovals() {
   const [selected, setSelected] = useState<Entity>();
   const [revision, setRevision] = useState(0);
   const [deciding, setDeciding] = useState(false);
+  const reduction = String(selected?.kind || '').startsWith('price_reduction_');
   return (
     <>
       <Collection
@@ -699,9 +700,9 @@ export function WorkflowApprovals() {
             {Boolean(selected.request_id) && (
               <Link
                 className="button secondary"
-                to={`/requests/${selected.request_id}?tab=calculations`}
+                to={`/requests/${selected.request_id}?tab=${reduction ? 'price-reductions' : 'calculations'}`}
               >
-                Открыть расчёт и заявку
+                {reduction ? 'Открыть запрос и заявку' : 'Открыть расчёт и заявку'}
               </Link>
             )}
             {selected.kind === 'calculation' && (
@@ -726,6 +727,43 @@ export function WorkflowApprovals() {
                 выбранной сохранённой версии.
               </p>
             )}
+            {reduction && (
+              <>
+                <DetailPairs
+                  values={{
+                    'Клиент ждёт до': date((selected.snapshot as Entity)?.client_due_date),
+                    Комментарий: (selected.snapshot as Entity)?.comment,
+                  }}
+                />
+                <DataTable<Entity>
+                  rows={(((selected.snapshot as Entity)?.items || []) as Entity[]).map((item) => ({
+                    ...item,
+                    id: String(item.quote_item_id),
+                  }))}
+                  columns={[
+                    { key: 'nomenclature_name', label: 'Номенклатура' },
+                    { key: 'supplier_name', label: 'Поставщик' },
+                    { key: 'article', label: 'Артикул' },
+                    {
+                      key: 'unit_price',
+                      label: 'Текущий закуп',
+                      render: (item) =>
+                        `${decimal(item.unit_price)} ${String(item.currency_code || '')}`,
+                    },
+                    {
+                      key: 'target_sale_price',
+                      label: 'Желаемая продажа, ₽',
+                      render: (item) => decimal(item.target_sale_price),
+                    },
+                    {
+                      key: 'required_purchase_rub',
+                      label: 'Нужный закуп, ₽',
+                      render: (item) => decimal(item.required_purchase_rub),
+                    },
+                  ]}
+                />
+              </>
+            )}
             {selected.kind === 'calendar' && (
               <DetailPairs
                 values={{
@@ -741,9 +779,10 @@ export function WorkflowApprovals() {
             {selected.kind === 'task' && (
               <p>Результат: {String((selected.snapshot as Entity)?.result || '—')}</p>
             )}
-            {auth.can('approvals.decide') && selected.status === 'pending' && (
-              <Button onClick={() => setDeciding(true)}>Принять решение</Button>
-            )}
+            {(selected.can_decide ?? auth.can('approvals.decide')) &&
+              selected.status === 'pending' && (
+                <Button onClick={() => setDeciding(true)}>Принять решение</Button>
+              )}
           </div>
         </Modal>
       )}

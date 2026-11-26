@@ -166,7 +166,7 @@ def mail_list(request_id: str, db: DB, user: Actor):
     return page(
         db,
         select(SupplierMail)
-        .where(SupplierMail.request_id == request_id)
+        .where(SupplierMail.request_id == request_id, SupplierMail.kind == "rfq")
         .order_by(SupplierMail.created_at.desc()),
         1,
         100,

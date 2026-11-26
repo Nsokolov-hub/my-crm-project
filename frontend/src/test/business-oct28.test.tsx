@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { api } from '../lib/api';
@@ -288,6 +288,8 @@ it('saves a picked but unsaved wave when a new calculation is opened', async () 
       };
     if (path === '/requests/request/wave' && options?.method === 'PUT')
       return { wave_id: 'asnail-plan', version: 5 };
+    if (path.includes('/quote-items'))
+      return { items: [{ id: 'quote', supplier_name: 'Beijing Asnail' }] };
     return { items: [] };
   });
   render(
@@ -296,8 +298,10 @@ it('saves a picked but unsaved wave when a new calculation is opened', async () 
     </MemoryRouter>,
   );
   const picker = screen.getByLabelText('Волна поставки');
-  await waitFor(() => expect(picker).toHaveTextContent('Плановая Аснаил'));
-  fireEvent.change(picker, { target: { value: 'asnail-plan' } });
+  fireEvent.click(picker);
+  const dialog = await screen.findByRole('dialog', { name: 'Выбор волны поставки' });
+  fireEvent.click(await within(dialog).findByRole('button', { name: /Плановая Аснаил/ }));
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Выбрать волну' }));
   expect(screen.getByText(/Волна выбрана, но не сохранена/)).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: /Новый расчёт/ }));
   expect(await screen.findByRole('heading', { name: 'Новый расчёт' })).toBeVisible();

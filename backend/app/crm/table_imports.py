@@ -18,6 +18,11 @@ from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.business.price_reductions import (
+    apply_reduction_quotes,
+    attach_reduction_plan,
+    reduction_for_import,
+)
 from app.commerce.calculator import convert
 from app.commerce.files import put_file
 from app.commerce.models import Manufacturer, ManufacturerAlias
@@ -37,6 +42,7 @@ from app.crm.models import (
     Nomenclature,
     Packing,
     ProductGroup,
+    QuoteItem,
     QuoteSheet,
     Request,
     RequestItem,
@@ -369,19 +375,18 @@ class Positions:
         return leaders[0], None
 
 
-def quote_plan(db, request_id, columns, rows, mapping, catalog_write=True):
+def quote_plan(db, request_id, columns, rows, mapping, catalog_write=True, include_quote_only=False):
     """Checks every quote row; a group named in the file reclassifies the nomenclature it names.
 
     Without the right to change the catalogue, a file may only classify a nomenclature that is still
     without a group or in «Другое»; moving it from another group needs that right.
     """
-    items = list(
-        db.scalars(
-            select(RequestItem)
-            .where(RequestItem.request_id == request_id, RequestItem.archived.is_(False), RequestItem.quote_only.is_(False))
-            .order_by(RequestItem.created_at, RequestItem.id)
-        )
+    item_query = select(RequestItem).where(
+        RequestItem.request_id == request_id, RequestItem.archived.is_(False)
     )
+    if not include_quote_only:
+        item_query = item_query.where(RequestItem.quote_only.is_(False))
+    items = list(db.scalars(item_query.order_by(RequestItem.created_at, RequestItem.id)))
     catalogue = defaultdict(list)
     for n in db.scalars(select(Nomenclature)):
         if n.article:
@@ -711,6 +716,7 @@ def batch_view(batch):
 def preview(
     request_id: str,
     kind: str = Form("items"),
+    price_reduction_id: str | None = Form(None),
     file: UploadFile = File(),
     mapping: str = Form("{}"),
     user: User = Depends(current_user),
@@ -723,6 +729,9 @@ def preview(
         raise DomainError("REQUEST_ARCHIVED", "Заявка в архиве", 409)
     if kind == "quotes":
         require_permission(db, user, "finance.purchase.read", request_id)
+    if price_reduction_id and kind != "quotes":
+        raise DomainError("IMPORT_KIND", "Снижение цены загружается только вместе с квотами", 422)
+    reduction = reduction_for_import(db, user, request_id, price_reduction_id)
     content = file.file.read(settings.max_file_size + 1)
     if len(content) > settings.max_file_size:
         raise DomainError("FILE_TOO_LARGE", "Файл превышает допустимый размер", 413)
@@ -739,16 +748,21 @@ def preview(
         ) from None
     chosen = infer_mapping(columns, chosen, kind)
     plan = (
-        quote_plan(db, request_id, columns, rows, chosen, can(db, user, "catalog.write"))
+        quote_plan(db, request_id, columns, rows, chosen, can(db, user, "catalog.write"),
+                   include_quote_only=bool(reduction))
         if kind == "quotes"
         else request_plan(columns, rows, chosen)
     )
+    attach_reduction_plan(db, reduction, plan)
     batch = TableImport(
         request_id=request_id,
         author_id=user.id,
         kind=kind,
         source_name=Path(file.filename).name[:250],
-        file_metadata=put_file(content, Path(file.filename).suffix.lstrip(".")),
+        file_metadata={
+            **put_file(content, Path(file.filename).suffix.lstrip(".")),
+            **({"price_reduction_id": reduction.id} if reduction else {}),
+        },
         columns=columns,
         rows=rows,
         mapping=chosen,
@@ -818,8 +832,14 @@ def update_row_transport(
         mapping[key] = column
         rows[row_index][columns.index(column)] = getattr(body, key).strip()
     batch.columns, batch.mapping, batch.rows = columns, mapping, rows
-    batch.plan = renumbered(quote_plan(db, request_id, columns, rows, mapping,
-                                     can(db, user, "catalog.write")), batch)
+    plan = renumbered(quote_plan(
+        db, request_id, columns, rows, mapping, can(db, user, "catalog.write"),
+        include_quote_only=bool((batch.file_metadata or {}).get("price_reduction_id"))
+    ), batch)
+    reduction = reduction_for_import(
+        db, user, request_id, (batch.file_metadata or {}).get("price_reduction_id")
+    )
+    batch.plan = attach_reduction_plan(db, reduction, plan)
     batch.summary = {**summarize(batch.plan), **uncovered_positions(db, request_id, batch.plan)}
     batch.version += 1
     audit(db, user, "table_import", batch.id, "transport_edited",
@@ -856,11 +876,15 @@ def remove_rows(
         metadata["source_rows"] = [metadata["source_rows"][index] for index in keep]
     batch.rows, batch.file_metadata = rows, metadata
     plan = renumbered(
-        quote_plan(db, request_id, batch.columns, rows, batch.mapping, can(db, user, "catalog.write"))
+        quote_plan(db, request_id, batch.columns, rows, batch.mapping, can(db, user, "catalog.write"),
+                   include_quote_only=bool((batch.file_metadata or {}).get("price_reduction_id")))
         if batch.kind == "quotes" else request_plan(batch.columns, rows, batch.mapping),
         batch,
     )
-    batch.plan = plan
+    reduction = reduction_for_import(
+        db, user, request_id, (batch.file_metadata or {}).get("price_reduction_id")
+    )
+    batch.plan = attach_reduction_plan(db, reduction, plan)
     batch.summary = {**summarize(plan), **(uncovered_positions(db, request_id, plan) if batch.kind == "quotes" else {})}
     batch.version += 1
     audit(db, user, "table_import", batch.id, "rows_removed", after={"row_numbers": sorted(drop), **batch.summary})
@@ -895,23 +919,37 @@ def error_file(
 
 
 @router.get("/requests/{request_id}/quote-import/template.xlsx")
-def quote_template(request_id: str, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
+def quote_template(
+    request_id: str,
+    price_reduction_id: str | None = None,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db, scope="function"),
+):
     check_request(db, user, request_id, "quotes.write")
     require_permission(db, user, "exports.download", request_id)
+    reduction = reduction_for_import(db, user, request_id, price_reduction_id)
     rows = []
-    items = db.scalars(
-        select(RequestItem)
-        .where(RequestItem.request_id == request_id, RequestItem.archived.is_(False), RequestItem.quote_only.is_(False))
-        .order_by(RequestItem.created_at, RequestItem.id)
+    item_query = select(RequestItem).where(
+        RequestItem.request_id == request_id, RequestItem.archived.is_(False)
     )
+    if not reduction:
+        item_query = item_query.where(RequestItem.quote_only.is_(False))
+    all_items = list(db.scalars(item_query.order_by(RequestItem.created_at, RequestItem.id)))
+    selected = reduction.items if reduction else []
+    items = [db.get(RequestItem, item["source_request_item_id"]) for item in selected] if reduction else all_items
+    old_quotes = [db.get(QuoteItem, item["quote_item_id"]) for item in selected] if reduction else []
     for index, item in enumerate(items, 1):
+        old = old_quotes[index - 1] if reduction else None
         n = db.get(Nomenclature, item.nomenclature_id) if item.nomenclature_id else None
-        p = db.get(Packing, item.packing_id) if item.packing_id else None
+        p = db.get(Packing, old.packing_id) if old else (db.get(Packing, item.packing_id) if item.packing_id else None)
         group_id = n.product_group_id if n else item.product_group_id
         group = db.get(ProductGroup, group_id) if group_id else None
         maker = db.get(Manufacturer, n.manufacturer_id) if n and n.manufacturer_id else None
+        supplier = db.get(Counterparty, old.supplier_id) if old else None
+        currency = db.get(Currency, old.currency_id) if old else None
         values = {
-            "source_row": str(index),
+            "source_row": str(all_items.index(item) + 1),
+            "supplier_code": str(supplier.internal_code) if supplier else "",
             "article": n.article if n else item.article,
             "name": n.name if n else item.description,
             # The registry number: the form names manufacturers by number.
@@ -919,7 +957,10 @@ def quote_template(request_id: str, user: User = Depends(current_user), db: Sess
             "cas": n.cas if n else item.cas,
             "packing_value": p.value if p else "0",
             "packing_unit": p.unit if p else "0",
-            "quantity": item.quantity,
+            "quantity": old.quantity if old else item.quantity,
+            "unit_price": old.unit_price if old else "",
+            "currency": currency.code if currency else "",
+            "delivery_days": old.delivery_days if old else "",
             "product_group": group.name if group else "",
             "storage_temperature": n.storage_temperature if n else "",
             "transport_hazard": n.transport_hazard if n else "",
@@ -1067,6 +1108,8 @@ def confirm(
                 if (row.file_metadata["sha256"] == batch.file_metadata["sha256"]
                     or (batch.kind == "items" and row.columns == batch.columns and row.rows == batch.rows))
                 and quote_mapping(row.mapping) == quote_mapping(batch.mapping)
+                and (row.file_metadata or {}).get("price_reduction_id")
+                == (batch.file_metadata or {}).get("price_reduction_id")
                 # A file whose quotes were all deleted may be loaded again, e.g. to place its rows anew.
                 and (batch.kind != "quotes" or live_quotes(db, row))
             ),
@@ -1078,8 +1121,14 @@ def confirm(
             if batch.kind == "quotes":
                 if any(row["data"].get("transport_properties_changed") for row in batch.plan):
                     advisory(db, "catalog.article-import")
-                    fresh = renumbered(quote_plan(db, request_id, batch.columns, batch.rows, batch.mapping,
-                                                 can(db, user, "catalog.write")), batch)
+                    fresh = renumbered(quote_plan(
+                        db, request_id, batch.columns, batch.rows, batch.mapping, can(db, user, "catalog.write"),
+                        include_quote_only=bool((batch.file_metadata or {}).get("price_reduction_id"))
+                    ), batch)
+                    reduction = reduction_for_import(
+                        db, user, request_id, (batch.file_metadata or {}).get("price_reduction_id")
+                    )
+                    attach_reduction_plan(db, reduction, fresh)
                     if fresh != batch.plan:
                         raise DomainError("IMPORT_STALE", "Данные изменились после проверки. Загрузите файл ещё раз", 409)
                 regroup_nomenclatures(db, user, batch)
@@ -1107,8 +1156,14 @@ def confirm(
                 )
         else:
             advisory(db, "catalog.article-import")
-            fresh = renumbered(quote_plan(db, request_id, batch.columns, batch.rows, batch.mapping,
-                                          can(db, user, "catalog.write")), batch)
+            fresh = renumbered(quote_plan(
+                db, request_id, batch.columns, batch.rows, batch.mapping, can(db, user, "catalog.write"),
+                include_quote_only=bool((batch.file_metadata or {}).get("price_reduction_id"))
+            ), batch)
+            reduction = reduction_for_import(
+                db, user, request_id, (batch.file_metadata or {}).get("price_reduction_id")
+            )
+            attach_reduction_plan(db, reduction, fresh)
             if fresh != batch.plan:
                 raise DomainError(
                     "IMPORT_STALE", "Данные изменились после проверки. Загрузите файл ещё раз", 409
@@ -1222,7 +1277,12 @@ def confirm(
                     db.info.pop("quote_import_batch", None)
                 else:
                     db.info["quote_import_batch"] = previous_batch
-            batch.result = {"quote_sheet_ids": sheet_ids, "manufacturers_created": len(new_makers)}
+            reduction_map = apply_reduction_quotes(db, user, batch, fresh, sheet_ids)
+            batch.result = {
+                "quote_sheet_ids": sheet_ids,
+                "manufacturers_created": len(new_makers),
+                **({"price_reduction_map": reduction_map} if reduction_map else {}),
+            }
         parent.version += 1
         batch.status = "completed"
         batch.result = {**batch.result, "imported": len(batch.rows), "nomenclatures_created": created}

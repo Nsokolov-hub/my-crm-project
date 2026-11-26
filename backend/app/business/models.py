@@ -33,6 +33,8 @@ class WorkflowReview(Entity):
     status: Mapped[str] = mapped_column(String(20), default="pending")
     submitted_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     decided_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
+    # Price reductions are assigned to one particular person; other review kinds keep their existing rules.
+    reviewer_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reason: Mapped[str] = mapped_column(Text, default="")
     snapshot: Mapped[dict] = mapped_column(JSON)
@@ -119,6 +121,32 @@ class SupplierOrderLine(Entity):
     cancelled_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
 
 
+class PriceReductionRequest(Entity):
+    """An approved request to ask suppliers for lower purchase prices.
+
+    The selected quote lines and calculation hints are immutable JSON snapshots. Monetary values in
+    the snapshot are decimal strings, just as they are in calculation snapshots.
+    """
+
+    __tablename__ = "price_reduction_requests"
+    __table_args__ = (Index("ix_price_reduction_requests_request_status", "request_id", "status"),)
+    request_id: Mapped[str] = mapped_column(ForeignKey("requests.id"), index=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending_leader", index=True)
+    leader_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    manager_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    author_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    client_due_date: Mapped[date] = mapped_column(Date)
+    comment: Mapped[str] = mapped_column(Text, default="", server_default="")
+    source_calculation_id: Mapped[str | None] = mapped_column(ForeignKey("calculations.id"))
+    items: Mapped[list[dict]] = mapped_column(JSON)
+    mail_subject: Mapped[str] = mapped_column(String(250), default="", server_default="")
+    mail_body: Mapped[str] = mapped_column(Text, default="", server_default="")
+    result_map: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, server_default="{}")
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class SupplierMail(Entity):
     __tablename__ = "supplier_mails"
     request_id: Mapped[str] = mapped_column(ForeignKey("requests.id"), index=True)
@@ -137,3 +165,8 @@ class SupplierMail(Entity):
     # A reply without prices, recorded by hand: positions without a quote then count as declined.
     replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reply_note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # RFQ analytics count only ordinary requests for quotes, never price-reduction letters.
+    kind: Mapped[str] = mapped_column(String(30), default="rfq", server_default="rfq", index=True)
+    price_reduction_id: Mapped[str | None] = mapped_column(
+        ForeignKey("price_reduction_requests.id"), index=True
+    )

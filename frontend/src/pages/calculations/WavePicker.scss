@@ -1,0 +1,311 @@
+.modal.wave-picker-modal {
+  width: min(1440px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+}
+
+.wave-picker-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.75fr) minmax(430px, 2fr) minmax(250px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.wave-picker-suppliers,
+.wave-picker-waves,
+.wave-picker-supplier-card {
+  min-width: 0;
+}
+
+.wave-picker-column-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  margin-bottom: 10px;
+
+  h3,
+  h4 {
+    margin: 0;
+  }
+
+  h3 {
+    font-size: 14px;
+  }
+}
+
+.wave-picker-supplier-list,
+.wave-picker-kind,
+.wave-picker-waves {
+  display: grid;
+  gap: 10px;
+}
+
+.wave-picker-supplier-list {
+  max-height: 62vh;
+  overflow: auto;
+  padding-right: 3px;
+}
+
+.wave-picker-supplier-list button {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #e3deeb;
+  border-radius: 9px;
+  background: #fff;
+  color: #3c354b;
+  text-align: left;
+
+  svg {
+    flex: none;
+    margin-top: 2px;
+    color: #7762a4;
+  }
+
+  &.chosen {
+    border-color: #9a82cf;
+    background: #f5f0ff;
+    box-shadow: 0 0 0 1px #9a82cf inset;
+  }
+}
+
+.wave-picker-kind {
+  margin-top: 4px;
+
+  h4 {
+    margin: 7px 0 0;
+    color: #61576e;
+    font-size: 12px;
+  }
+}
+
+.wave-picker-wave,
+.wave-picker-none {
+  display: grid;
+  gap: 9px;
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid #e5e0ec;
+  border-radius: 11px;
+  background: #fff;
+  color: #373042;
+  text-align: left;
+
+  &:not(:disabled):hover {
+    border-color: #b7a6d8;
+    background: #fcfbff;
+  }
+
+  &.chosen {
+    border-color: #8d73c3;
+    background: #f8f4ff;
+    box-shadow: 0 0 0 1px #8d73c3 inset;
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.82;
+  }
+
+  small {
+    color: #6e667a;
+    line-height: 1.45;
+  }
+}
+
+.wave-picker-none {
+  background: #faf9fc;
+}
+
+.wave-picker-wave-title,
+.wave-picker-badges,
+.wave-picker-route {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wave-picker-wave-title {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.wave-picker-badges {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.wave-picker-route {
+  color: #554b64;
+  font-size: 12px;
+
+  svg {
+    flex: none;
+    color: #7d68ac;
+  }
+}
+
+.wave-picker-schedule {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+
+  > span {
+    display: grid;
+    gap: 2px;
+    padding: 8px;
+    border-radius: 7px;
+    background: #f7f5fa;
+  }
+
+  b {
+    font-size: 11px;
+  }
+
+  small {
+    font-size: 9px;
+  }
+}
+
+.wave-picker-forecast {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border-left: 3px solid #b5a0dd;
+  background: #faf8fd;
+
+  b,
+  small {
+    font-size: 11px;
+  }
+}
+
+.wave-picker-supplier-card {
+  padding: 14px;
+  border: 1px solid #e5deef;
+  border-radius: 12px;
+  background: #faf8fd;
+
+  h4 {
+    margin: 3px 0 12px;
+    font-size: 16px;
+  }
+
+  dl {
+    display: grid;
+    gap: 10px;
+    margin: 0 0 14px;
+  }
+
+  dl > div {
+    display: grid;
+    gap: 3px;
+  }
+
+  dt {
+    color: #776e83;
+    font-size: 10px;
+  }
+
+  dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .error-box {
+    margin-bottom: 12px;
+    font-size: 11px;
+  }
+}
+
+.wave-picker-comment {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding-top: 11px;
+  border-top: 1px solid #e5deef;
+  color: #61576e;
+  font-size: 12px;
+  line-height: 1.5;
+
+  svg {
+    flex: none;
+    margin-top: 2px;
+  }
+
+  p {
+    margin: 0;
+    white-space: pre-wrap;
+  }
+}
+
+.wave-picker-selection {
+  margin-right: auto;
+  color: #6d6479;
+  font-size: 12px;
+}
+
+.calculation-transport {
+  display: grid;
+  gap: 2px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: #f4f1f8;
+}
+
+.transport-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  padding: 10px 12px;
+  border: 1px solid #e5deef;
+  border-radius: 9px;
+  background: #faf8fd;
+  font-size: 11px;
+
+  strong {
+    width: 100%;
+  }
+}
+
+@media (width <= 1100px) {
+  .wave-picker-layout {
+    grid-template-columns: minmax(170px, 0.7fr) minmax(0, 2fr);
+  }
+
+  .wave-picker-supplier-card {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (width <= 720px) {
+  .wave-picker-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wave-picker-supplier-list {
+    max-height: 190px;
+  }
+
+  .wave-picker-schedule {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wave-picker-wave-title {
+    display: grid;
+  }
+
+  .wave-picker-badges {
+    justify-content: flex-start;
+  }
+
+  .wave-picker-selection {
+    width: 100%;
+    margin-bottom: 6px;
+  }
+}

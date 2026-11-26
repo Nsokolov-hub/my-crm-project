@@ -4,7 +4,7 @@ from app.core.service import audit
 
 COMMERCIAL_STAGES = (
     "new", "clarification", "collecting_quotes", "quote_given", "calculation",
-    "proposal_sent", "composition_agreed", "awaiting_payment", "sale_confirmed",
+    "proposal_sent", "awaiting_price_reduction", "composition_agreed", "awaiting_payment", "sale_confirmed",
 )
 
 

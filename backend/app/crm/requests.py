@@ -254,7 +254,8 @@ def supplier_counts(db: Session, request_ids: list[str]) -> dict[str, dict[str, 
         .where(QuoteSheet.request_id.in_(request_ids), QuoteSheet.archived.is_(False), QuoteItem.archived.is_(False))
         .distinct()).tuples())
     mails = db.execute(select(SupplierMail.request_id, SupplierMail.supplier_id, SupplierMail.replied_at).where(
-        SupplierMail.request_id.in_(request_ids), SupplierMail.sent_at.is_not(None))).tuples().all()
+        SupplierMail.request_id.in_(request_ids), SupplierMail.sent_at.is_not(None),
+        SupplierMail.kind == "rfq")).tuples().all()
     asked = {(request_id, supplier_id) for request_id, supplier_id, _ in mails}
     answered = quoted | {(request_id, supplier_id) for request_id, supplier_id, replied in mails if replied}
     result: dict[str, dict[str, int]] = {}

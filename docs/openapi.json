@@ -6597,6 +6597,22 @@
               "type": "string",
               "title": "Request Id"
             }
+          },
+          {
+            "name": "price_reduction_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Price Reduction Id"
+            }
           }
         ],
         "responses": {
@@ -12363,6 +12379,295 @@
         }
       }
     },
+    "/api/v1/requests/{request_id}/price-reduction-options": {
+      "get": {
+        "tags": [
+          "Запросы на снижение цены"
+        ],
+        "summary": "Reduction Options",
+        "operationId": "reduction_options_api_v1_requests__request_id__price_reduction_options_get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "quote_item_ids",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Quote Item Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/requests/{request_id}/price-reduction-hints": {
+      "post": {
+        "tags": [
+          "Запросы на снижение цены"
+        ],
+        "summary": "Reduction Hints",
+        "operationId": "reduction_hints_api_v1_requests__request_id__price_reduction_hints_post",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReductionHints"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/requests/{request_id}/price-reductions": {
+      "post": {
+        "tags": [
+          "Запросы на снижение цены"
+        ],
+        "summary": "Create Reduction",
+        "operationId": "create_reduction_api_v1_requests__request_id__price_reductions_post",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReductionCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Запросы на снижение цены"
+        ],
+        "summary": "List Reductions",
+        "operationId": "list_reductions_api_v1_requests__request_id__price_reductions_get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/price-reductions/{reduction_id}": {
+      "get": {
+        "tags": [
+          "Запросы на снижение цены"
+        ],
+        "summary": "Get Reduction",
+        "operationId": "get_reduction_api_v1_price_reductions__reduction_id__get",
+        "parameters": [
+          {
+            "name": "reduction_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Reduction Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
+    "/api/v1/price-reductions/{reduction_id}/mail": {
+      "post": {
+        "tags": [
+          "Запросы на снижение цены"
+        ],
+        "summary": "Reduction Mail",
+        "operationId": "reduction_mail_api_v1_price_reductions__reduction_id__mail_post",
+        "parameters": [
+          {
+            "name": "reduction_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Reduction Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReductionMail"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Сеанс отсутствует или отозван"
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "409": {
+            "description": "Конфликт версии или повторяемости"
+          },
+          "422": {
+            "description": "Ошибка предметной валидации"
+          }
+        }
+      }
+    },
     "/api/v1/employee-absences": {
       "get": {
         "tags": [
@@ -15258,6 +15563,17 @@
             "type": "string",
             "title": "Kind",
             "default": "items"
+          },
+          "price_reduction_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Reduction Id"
           },
           "file": {
             "type": "string",
@@ -20642,6 +20958,159 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ReadInput"
+      },
+      "ReductionCreate": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "request_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Request Version"
+          },
+          "quote_item_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Quote Item Ids"
+          },
+          "leader_id": {
+            "type": "string",
+            "title": "Leader Id"
+          },
+          "manager_id": {
+            "type": "string",
+            "title": "Manager Id"
+          },
+          "client_due_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Client Due Date"
+          },
+          "comment": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Comment"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/ReductionTarget"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Targets"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "request_version",
+          "quote_item_ids",
+          "leader_id",
+          "manager_id",
+          "client_due_date",
+          "comment",
+          "targets"
+        ],
+        "title": "ReductionCreate"
+      },
+      "ReductionHints": {
+        "properties": {
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/ReductionTarget"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Targets"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "targets"
+        ],
+        "title": "ReductionHints"
+      },
+      "ReductionMail": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 250,
+            "minLength": 1,
+            "title": "Subject"
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 12000,
+            "minLength": 3,
+            "title": "Body"
+          },
+          "send": {
+            "type": "boolean",
+            "title": "Send",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "version",
+          "subject",
+          "body"
+        ],
+        "title": "ReductionMail"
+      },
+      "ReductionTarget": {
+        "properties": {
+          "quote_item_id": {
+            "type": "string",
+            "title": "Quote Item Id"
+          },
+          "target_sale_price": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,16}|(?=[\\d.]{1,25}0*$)\\d{0,16}\\.\\d{0,8}0*$)"
+              }
+            ],
+            "title": "Target Sale Price"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "quote_item_id",
+          "target_sale_price"
+        ],
+        "title": "ReductionTarget"
       },
       "RejectInput": {
         "properties": {

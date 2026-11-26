@@ -742,9 +742,11 @@ function QuoteSheetEditor({
 export function RequestQuotes({
   requestId,
   onCalculate,
+  onPriceReduction,
 }: {
   requestId: string;
   onCalculate: (quoteItemIds: string[]) => void;
+  onPriceReduction?: (quoteItemIds: string[]) => void;
 }) {
   const auth = useAuth();
   const [importing, setImporting] = useState(false);
@@ -833,6 +835,16 @@ export function RequestQuotes({
         >
           Сформировать расчёт
         </Button>
+        {onPriceReduction && auth.can('documents.write') && auth.can('finance.purchase.read') && (
+          <Button
+            variant="secondary"
+            disabled={!selectedIds.size || selectedIds.size > 100}
+            title={!selectedIds.size ? 'Сначала выберите позиции квот' : undefined}
+            onClick={() => onPriceReduction([...selectedIds])}
+          >
+            Создать запрос на снижение
+          </Button>
+        )}
         {selectedIds.size > 100 && (
           <small className="field-error">Один расчёт содержит до 100 позиций.</small>
         )}
@@ -885,7 +897,24 @@ export function RequestQuotes({
           { key: 'packing_name', label: 'Фасовка' },
           { key: 'quantity', label: 'Количество', render: (row) => decimal(row.quantity) },
           { key: 'supplier_name', label: 'Поставщик' },
-          { key: 'unit_price', label: 'Цена', render: (row) => decimal(row.unit_price) },
+          {
+            key: 'unit_price',
+            label: 'Цена',
+            render: (row) => (
+              <span className={row.price_reduction_id ? 'quote-price-reduced' : undefined}>
+                {decimal(row.unit_price)}
+                {Boolean(row.previous_unit_price) && (
+                  <small className="previous-price">
+                    {' '}
+                    · была {decimal(row.previous_unit_price)}
+                  </small>
+                )}
+                {Boolean(row.discount_percent) && (
+                  <Badge value={`Снижение −${decimal(row.discount_percent)}%`} tone="green" />
+                )}
+              </span>
+            ),
+          },
           { key: 'currency_code', label: 'Валюта' },
           {
             key: 'unit_price_rub',

@@ -240,6 +240,25 @@ def test_a11_a12_partial_acceptance_and_invoice_snapshot(commerce):
     }
     invoice = command(env, f"/requests/{env['request_id']}/invoices", invoice_body)
     assert Decimal(invoice["total"]) == Decimal("2156.25")
+    listed = get(env, f"/requests/{env['request_id']}/invoices")["items"][0]
+    source_line = state["calc"]["snapshot"]["lines"][0]
+    detail = source_line["detail"]
+    purchase = Decimal(detail.get("purchase_rub", detail.get("purchase", "0"))) * Decimal("0.6")
+    profit = (
+        Decimal(detail["profit"])
+        if "profit" in detail
+        else Decimal(source_line["net"]) - Decimal(detail["cost"])
+    ) * Decimal("0.6")
+    sale_net = Decimal(invoice["snapshot"]["totals"]["net"])
+    assert listed["sale_amount"] == "2156.25"
+    assert Decimal(listed["purchase_amount"]) == purchase.quantize(Decimal("0.01"))
+    assert Decimal(listed["profitability_percent"]) == (profit / sale_net * 100).quantize(Decimal("0.01"))
+    assert listed["supplier_names"] == ["Поставщик"]
+    proposal_list = get(env, f"/requests/{env['request_id']}/proposals")["items"][0]
+    assert Decimal(proposal_list["sale_amount"]) == Decimal(state["proposal"]["total"])
+    assert Decimal(proposal_list["purchase_amount"]) == Decimal(
+        detail.get("purchase_rub", detail.get("purchase", "0"))
+    ).quantize(Decimal("0.01"))
     assert (
         command(env, f"/requests/{env['request_id']}/invoices", invoice_body, expected=422)["code"]
         == "QUANTITY_EXCEEDED"

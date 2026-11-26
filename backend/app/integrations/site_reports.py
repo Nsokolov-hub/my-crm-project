@@ -43,9 +43,9 @@ router = APIRouter(tags=['Заявки с сайта'])
 XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 KIND_NAMES = {'product_rfq': 'Корзина', 'one_click': 'В 1 клик', 'service': 'Услуга', 'general': 'Общая форма'}
 STATUS_NAMES = {'new': 'Новая', 'in_work': 'В работе', 'converted': 'Преобразована', 'rejected': 'Отклонена'}
-QUALIFIED = ('collecting_quotes', 'quote_given', 'calculation', 'proposal_sent', 'composition_agreed',
-             'awaiting_payment', 'sale_confirmed')
-PROPOSED = ('proposal_sent', 'composition_agreed', 'awaiting_payment', 'sale_confirmed')
+QUALIFIED = ('collecting_quotes', 'quote_given', 'calculation', 'proposal_sent', 'awaiting_price_reduction',
+             'composition_agreed', 'awaiting_payment', 'sale_confirmed')
+PROPOSED = ('proposal_sent', 'awaiting_price_reduction', 'composition_agreed', 'awaiting_payment', 'sale_confirmed')
 CHANNELS = ('cpc', 'organic', 'referral', 'direct', 'email', 'social', 'unknown')
 CHANNEL_NAMES = {'cpc': 'Реклама', 'organic': 'Поиск', 'referral': 'Переходы с сайтов', 'direct': 'Прямые заходы',
                  'email': 'Рассылки', 'social': 'Соцсети', 'unknown': 'Не определён', None: 'Не определён'}
