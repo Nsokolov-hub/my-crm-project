@@ -15852,6 +15852,22 @@
             "title": "Planned Volume Comment",
             "default": ""
           },
+          "calculation_quantity": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,24}|(?=[\\d.]{1,25}0*$)\\d{0,24}\\.\\d{0,0}0*$)"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calculation Quantity"
+          },
           "customs_fees": {
             "anyOf": [
               {

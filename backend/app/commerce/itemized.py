@@ -333,7 +333,8 @@ class _Wave:
         self.forecast_quantity = sum(row["quantity"] for row in rows if row["source"].get("_forecast"))
         peer_quantity = sum(row["quantity"] * row["share"] for row in rows if row["id"] not in selected_ids)
         self.total_quantity = self.selected_quantity + peer_quantity + self.existing_basis_quantity
-        if existing_share != 1 or any(row["share"] != 1 for row in rows if row["id"] not in selected_ids):
+        if existing_share != 1 or any(row['source'].get('_scenario_volume') for row in rows) or any(
+                row["share"] != 1 for row in rows if row["id"] not in selected_ids):
             # A scenario may scale existing positions by a repeating ratio. Keep its displayed denominator
             # at quantity precision instead of exposing e.g. 9.9999999999999999999999999996 pieces.
             self.total_quantity = self.total_quantity.quantize(Decimal("0.000001"))

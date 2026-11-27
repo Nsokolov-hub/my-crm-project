@@ -4159,6 +4159,8 @@ export interface components {
              * @default
              */
             planned_volume_comment: string;
+            /** Calculation Quantity */
+            calculation_quantity?: number | string | null;
             /** Customs Fees */
             customs_fees?: components["schemas"]["CustomsFeeIn"][] | null;
             /**

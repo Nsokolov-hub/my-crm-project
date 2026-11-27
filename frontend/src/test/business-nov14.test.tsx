@@ -39,7 +39,11 @@ const quote = {
   delivery_days: 14,
   calculation_type: 'IMPORT',
 };
-type Input = { selections: { sale_unit_price?: string }[]; planned_volume?: unknown };
+type Input = {
+  selections: { sale_unit_price?: string }[];
+  planned_volume?: unknown;
+  calculation_quantity?: string;
+};
 
 function mockCalculator(copy = false) {
   vi.mocked(api).mockImplementation(async (path, options) => {
@@ -242,26 +246,18 @@ it('keeps the manually set price when copying a saved calculation', async () => 
 it('accepts a calculation volume below the 23 pieces already ordered in a working wave', async () => {
   openCalculation();
   await chooseProfile();
-  fireEvent.change(screen.getByLabelText('Плановый объём в расчёте: Колонки'), {
+  fireEvent.change(screen.getByLabelText('Расчётное количество поставки'), {
     target: { value: '2' },
   });
-  fireEvent.change(screen.getByLabelText(/Комментарий к плановому объёму/), {
+  fireEvent.change(screen.getByLabelText(/Комментарий к расчётному количеству/), {
     target: { value: 'Повторный заказ по прежней цене' },
   });
-  await waitFor(() =>
-    expect(previewInputs().at(-1)?.planned_volume).toEqual([
-      { product_group_id: 'columns', quantity: '2' },
-    ]),
-  );
+  await waitFor(() => expect(previewInputs().at(-1)?.calculation_quantity).toBe('2'));
   // Re-entering the plan's number must keep an explicit basis, even when the working wave has grown past it.
-  fireEvent.change(screen.getByLabelText('Плановый объём в расчёте: Колонки'), {
+  fireEvent.change(screen.getByLabelText('Расчётное количество поставки'), {
     target: { value: '10' },
   });
-  await waitFor(() =>
-    expect(previewInputs().at(-1)?.planned_volume).toEqual([
-      { product_group_id: 'columns', quantity: '10' },
-    ]),
-  );
+  await waitFor(() => expect(previewInputs().at(-1)?.calculation_quantity).toBe('10'));
 });
 
 it('keeps the scenario basis separate from the actual number of pieces in the saved calculation', () => {

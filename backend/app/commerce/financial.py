@@ -120,7 +120,7 @@ LINE_FIELDS = frozenset({
     "unit", "unit_price", "sale_unit_price",
 })
 PURCHASE_LINE_FIELDS = frozenset({"purchase_currency", "quote", "quote_item", "supplier_id", "supplier_name"})
-WAVE_FIELDS = frozenset({"divided", "existing_quantity", "financial_digest", "id", "number", "planned_volume",
+WAVE_FIELDS = frozenset({"calculation_quantity", "divided", "existing_quantity", "financial_digest", "id", "number", "planned_volume",
                          "revision_digest"})
 
 
@@ -837,7 +837,7 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
                   'волна и её расходы относятся только к импорту', field='selections')
         if importing and (not country or not country.active):
             error('IMPORT_COUNTRY_REQUIRED', 'Выберите действующую страну ввоза из справочника', field='profile_id')
-        wave, planned_volume = None, None
+        wave, planned_volume, quantity_record = None, None, None
         peer_selections, existing_quantity, existing_components = [], dec('0'), {}
         existing_share = dec('1')
         wave_expenses, wave_expense_source = None, None
@@ -845,6 +845,12 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
             if not importing:
                 error("WAVE_NOT_USED", "Расходы волны делятся только в импортном расчёте", field="divide_wave_expenses")
             require_permission(db, user, "waves.write", request_id)
+        if data.calculation_quantity is not None:
+            if not importing or not data.divide_wave_expenses:
+                error('CALCULATION_QUANTITY_UNUSED', 'Расчётное количество используется при делении расходов импортной волны',
+                      field='calculation_quantity')
+            if data.planned_volume:
+                error('CALCULATION_QUANTITY_CONFLICT', 'Укажите одно общее расчётное количество', field='calculation_quantity')
         if importing:
             if not req.wave_id:
                 error('WAVE_REQUIRED', 'Руководитель должен назначить волну поставки до расчёта', field='wave_id')
@@ -878,6 +884,10 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
                                                              existing_quantity=existing_quantity))
                 peer_selections += manual_forecasts(selections, counted, extra_volume,
                                                     existing_quantity=existing_quantity)
+                if data.calculation_quantity is not None:
+                    existing_share, quantity_record = common_calculation_quantity(
+                        selections, peer_selections, existing_quantity, data.calculation_quantity,
+                        data.planned_volume_comment)
             elif data.planned_volume is not None:
                 calculation_planned_volume(db, wave, data, selections)
             wave_expenses, wave_expense_source = latest_wave_expenses(db, wave.id)
@@ -934,6 +944,8 @@ def build_calculation(db, user, request_id: str, data: CalculationIn) -> dict:
                                 "revision_digest": wave_revision_digest(db, wave)}
             if planned_volume:
                 snapshot["wave"]["planned_volume"] = planned_volume
+            if quantity_record:
+                snapshot['wave']['calculation_quantity'] = quantity_record
             digest_rows = [selection_from_saved_line(line, request_id) for line in snapshot["lines"]]
             for index, row in enumerate(digest_rows):
                 row["weight"] = selections[index].get("weight")
@@ -1300,6 +1312,35 @@ def other_plan_orders(db, wave: Wave) -> list[dict]:
         if other != wave.id:
             ordered += wave_selections(db, other)[0]
     return ordered
+
+
+def common_calculation_quantity(selections: list[dict], peers: list[dict], existing: Decimal,
+                                target: Decimal, comment: str) -> tuple[Decimal, dict]:
+    """One scenario volume for the whole supply, including every product group and existing order."""
+    if len(comment.strip()) < 3:
+        error('PLANNED_VOLUME_COMMENT', 'Укажите причину изменения расчётного количества',
+              field='planned_volume_comment')
+    rows = [*selections, *peers]
+    base = sum((dec(row['quote_item']['quantity']) for row in rows), existing)
+    existing_share = dec('1')
+    if target < base:
+        existing_share = target / base
+        for row in rows:
+            row['_share'] = str(existing_share)
+            row['_scenario_volume'] = True
+    elif target > base:
+        offered = sum((dec(row['quote_item']['quantity']) for row in selections), dec('0'))
+        factor = (target - base) / offered
+        for model in selections:
+            row = deepcopy(model)
+            quote = row['quote_item']
+            quote.update(id='scenario:' + quote['id'], quantity=str(dec(quote['quantity']) * factor))
+            row['_forecast'] = True
+            row['_scenario_volume'] = True
+            if row.get('weight') is not None:
+                row['weight'] = str(dec(row['weight']) * factor)
+            peers.append(row)
+    return existing_share, {'quantity': str(target), 'base_quantity': str(base), 'comment': comment.strip()}
 
 
 def calculation_shares(selections: list[dict], ordered: list[dict], targets: dict, record: dict,

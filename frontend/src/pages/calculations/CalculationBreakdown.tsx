@@ -86,6 +86,13 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
           . Комментарий: {String((wave.planned_volume as Entity).comment || '')}
         </p>
       )}
+      {Boolean(wave.calculation_quantity) && (
+        <p className="info-note">
+          Общее расчётное количество поставки:{' '}
+          {decimal((wave.calculation_quantity as Entity).quantity)} шт. Комментарий:{' '}
+          {String((wave.calculation_quantity as Entity).comment || '')}
+        </p>
+      )}
       {Boolean(snapshot.customs_fee_adjustment) && (
         <p className="info-note">
           Таможенный сбор изменён в расчёте:{' '}
@@ -139,11 +146,15 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
           { key: 'quantity', label: 'Кол-во', render: (row) => decimal(row.quantity) },
           ...(['cost', 'sale_total', 'profit'] as const).map((key) => ({
             key,
-            label: detailLabels[key],
+            label: detailLabels[key].replace(', ₽', ', ₽/шт.'),
             render: (row: Entity) =>
               (row.detail as Entity | undefined)?.[key] == null
                 ? '—'
-                : metric((row.detail as Entity)[key]),
+                : metric(
+                    Number(row.quantity) > 0
+                      ? Number((row.detail as Entity)[key]) / Number(row.quantity)
+                      : undefined,
+                  ),
           })),
           {
             key: 'profitability_percent',
@@ -153,16 +164,33 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
           },
         ]}
       />
-      <h4>Расшифровка каждой позиции</h4>
+      <h4>Расшифровка каждой позиции за 1 шт.</h4>
       {lines.map((line) => {
         const detail = (line.detail || {}) as Entity;
         const rule = (line.customs_rule || {}) as Entity;
         const expenses = (line.expense_details || {}) as Entity;
         const quote = (line.quote_item || {}) as Entity;
+        const perUnit = (value: unknown) =>
+          value == null || value === ''
+            ? value
+            : Number(line.quantity) > 0
+              ? Number(value) / Number(line.quantity)
+              : undefined;
+        const unitDetail = Object.fromEntries(
+          Object.entries(detail).map(([key, value]) => [
+            key,
+            key === 'purchase_foreign' ||
+            (detailLabels[key]?.endsWith(', ₽') &&
+              !['duty_per_unit', 'customs_fee_per_unit', 'sale_unit_gross'].includes(key))
+              ? perUnit(value)
+              : value,
+          ]),
+        );
         return (
           <details key={String(line.line_id)}>
             <summary>
-              {String(line.description)} · {decimal(line.quantity)} шт. · {decimal(line.total)} ₽
+              {String(line.description)} · {decimal(line.quantity)} шт. ·{' '}
+              {metric(perUnit(line.total))} ₽/шт.
             </summary>
             {line.sale_unit_price != null && (
               <p className="info-note">
@@ -170,18 +198,17 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
               </p>
             )}
             <p>
-              Закупка: {decimal(quote.unit_price)} {String(line.purchase_currency || '')} ×{' '}
-              {decimal(line.quantity)} шт. × курс {decimal(detail.exchange_rate)} ={' '}
-              {decimal(detail.purchase_rub)} ₽.
+              Закупка: {decimal(quote.unit_price)} {String(line.purchase_currency || '')} × 1 шт. ×
+              курс {decimal(detail.exchange_rate)} = {metric(unitDetail.purchase_rub)} ₽ за 1 шт.
             </p>
             <p>
               Пошлина:{' '}
               {rule.type === 'FIXED_GROUP'
-                ? `${decimal(rule.value)} ₽ × ${decimal(line.quantity)} / ${decimal(detail.fixed_group_quantity)} шт. группы`
+                ? `${decimal(rule.value)} ₽ / ${decimal(detail.fixed_group_quantity)} шт. группы`
                 : rule.type === 'PERCENTAGE'
-                  ? `${decimal(detail.customs_base)} ₽ × ${decimal(rule.value)}%`
+                  ? `${metric(unitDetail.customs_base)} ₽ × ${decimal(rule.value)}%`
                   : 'без пошлины'}{' '}
-              = {decimal(detail.duty)} ₽.
+              = {metric(unitDetail.duty)} ₽ за 1 шт.
             </p>
             <DetailPairs
               formulas={{
@@ -199,20 +226,20 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
                 'Цена с наценкой, ₽':
                   'База наценки × коэффициент, до добавления перевыставляемых расходов',
                 'Логистика РФ — вывоз из аэропорта, ₽':
-                  'Общая логистика РФ × количество строки / количество всей волны',
+                  'Общая логистика РФ / количество всей волны',
                 'Доставка клиенту — СДЭК и Москва, ₽':
-                  '(СДЭК + доставка в Москве) × количество строки / количество этого расчёта',
+                  '(СДЭК + доставка в Москве) / количество этого расчёта',
                 'Логистика внутри РФ всего, ₽': 'Доля вывоза из аэропорта + доля доставки клиенту',
                 'Прибавка от наценки, ₽': 'База наценки × (коэффициент − 1)',
                 'Валовая прибыль, ₽': 'Продажа без НДС − себестоимость',
                 'Рентабельность, %': 'Валовая прибыль / продажа без НДС × 100%',
                 'Доходность затрат, %': 'Валовая прибыль / себестоимость × 100%',
-                'Денежные затраты на заказ, ₽':
-                  'Полная сумма денежных расходов на выполнение заказа. Предоплата клиента из неё не вычитается.',
+                'Денежные затраты на 1 шт., ₽':
+                  'Денежные расходы позиции / количество товара. Предоплата клиента из неё не вычитается.',
               }}
               values={Object.fromEntries(
-                Object.entries(displayCalculationMetrics(detail)).map(([key, value]) => [
-                  detailLabels[key] || key,
+                Object.entries(displayCalculationMetrics(unitDetail)).map(([key, value]) => [
+                  key === 'cash_need' ? 'Денежные затраты на 1 шт., ₽' : detailLabels[key] || key,
                   metric(value),
                 ]),
               )}
@@ -220,7 +247,10 @@ export function CalculationBreakdown({ snapshot }: { snapshot: Entity }) {
             {Object.keys(expenses).length > 0 && (
               <DetailPairs
                 values={Object.fromEntries(
-                  Object.entries(expenses).map(([key, value]) => [key + ', ₽', metric(value)]),
+                  Object.entries(expenses).map(([key, value]) => [
+                    key + ', ₽/шт.',
+                    metric(perUnit(value)),
+                  ]),
                 )}
               />
             )}

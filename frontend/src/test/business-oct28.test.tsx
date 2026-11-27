@@ -95,26 +95,26 @@ it('changes the planned volume of the wave inside a calculation only with a comm
   fireEvent.change(await screen.findByLabelText('Профиль расчёта'), {
     target: { value: 'profile' },
   });
-  const volume = await screen.findByLabelText('Плановый объём в расчёте: Стандартные образцы');
-  expect(volume).toHaveValue('10');
+  const volume = await screen.findByLabelText('Расчётное количество поставки');
+  expect(volume).toHaveValue('');
   await waitFor(() => expect(previews()).toHaveLength(1));
   expect(previews()[0].planned_volume).toBeUndefined();
 
   fireEvent.change(volume, { target: { value: '20' } });
-  const comment = screen.getByLabelText(/Комментарий к плановому объёму/);
+  const comment = screen.getByLabelText(/Комментарий к расчётному количеству/);
   // Without a comment the changed volume is neither calculated nor saved.
   await new Promise((resolve) => setTimeout(resolve, 600));
   expect(previews()).toHaveLength(1);
   fireEvent.change(comment, { target: { value: 'Клиент берёт ещё 10 шт. в ноябре' } });
   await waitFor(() => expect(previews()).toHaveLength(2));
   expect(previews()[1]).toMatchObject({
-    planned_volume: [{ product_group_id: 'standards', quantity: '20' }],
+    calculation_quantity: '20',
     planned_volume_comment: 'Клиент берёт ещё 10 шт. в ноябре',
   });
 
-  fireEvent.click(screen.getByRole('button', { name: 'Вернуть объём волны' }));
-  expect(volume).toHaveValue('10');
-  expect(screen.queryByLabelText(/Комментарий к плановому объёму/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Вернуть автоматический объём' }));
+  expect(volume).toHaveValue('');
+  expect(screen.queryByLabelText(/Комментарий к расчётному количеству/)).not.toBeInTheDocument();
 });
 
 it('asks the leader for the wave of the approved orders', async () => {
@@ -234,23 +234,22 @@ it('offers a planned volume for a group the plan has none for, right under the p
   fireEvent.change(await screen.findByLabelText('Профиль расчёта'), {
     target: { value: 'profile' },
   });
-  const heading = await screen.findByRole('heading', { name: 'Плановый объём волны' });
+  const heading = await screen.findByRole('heading', { name: 'Расчётное количество поставки' });
   // The block follows the positions and comes before the exchange rates.
   const rates = screen.getByRole('heading', { name: 'Курсы валют из профиля' });
   expect(heading.compareDocumentPosition(rates) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  const volume = screen.getByLabelText('Плановый объём в расчёте: Колонки');
-  expect(volume).toHaveValue('0');
-  expect(screen.getByText('нет в плане')).toBeVisible();
+  const volume = screen.getByLabelText('Расчётное количество поставки');
+  expect(volume).toHaveValue('');
   await waitFor(() => expect(previews()).toHaveLength(1));
   expect(await screen.findByText('1 шт.')).toBeVisible();
 
   fireEvent.change(volume, { target: { value: '10' } });
-  fireEvent.change(screen.getByLabelText(/Комментарий к плановому объёму/), {
+  fireEvent.change(screen.getByLabelText(/Комментарий к расчётному количеству/), {
     target: { value: 'План Asnail на ноябрь' },
   });
   await waitFor(() => expect(previews()).toHaveLength(2));
   expect(previews()[1]).toMatchObject({
-    planned_volume: [{ product_group_id: 'columns', quantity: '10' }],
+    calculation_quantity: '10',
     planned_volume_comment: 'План Asnail на ноябрь',
   });
 });
@@ -265,8 +264,10 @@ it('tells where to assign a wave when the request has none', async () => {
   fireEvent.change(await screen.findByLabelText('Профиль расчёта'), {
     target: { value: 'profile' },
   });
-  expect(await screen.findByRole('heading', { name: 'Плановый объём волны' })).toBeVisible();
-  expect(screen.getByText(/Заявке не назначена волна/)).toBeVisible();
+  expect(
+    await screen.findByRole('heading', { name: 'Расчётное количество поставки' }),
+  ).toBeVisible();
+  expect(screen.getByText(/Выберите волну расчёта/)).toBeVisible();
 });
 
 it('saves a picked but unsaved wave when a new calculation is opened', async () => {

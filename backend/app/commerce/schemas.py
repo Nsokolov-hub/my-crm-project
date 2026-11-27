@@ -274,6 +274,7 @@ class CalculationIn(Command):
     # (product group → pieces); it is kept only with a comment saying why it differs from the wave.
     planned_volume: list[PlannedVolumeIn] | None = Field(default=None, max_length=200)
     planned_volume_comment: str = Field(default="", max_length=2000)
+    calculation_quantity: Annotated[Decimal, Field(gt=0, max_digits=24, decimal_places=0)] | None = None
     # Business remark of 3 November 2026: the fixed customs fee of a group (73 800 ₽ for columns) changed for
     # this calculation only, e.g. 0 when another client's order of the same supply has paid it.
     customs_fees: list[CustomsFeeIn] | None = Field(default=None, max_length=20)
